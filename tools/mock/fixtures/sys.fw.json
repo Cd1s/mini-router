@@ -1,0 +1,10 @@
+{
+ "sysupgrade": true,
+ "factory_reset": true,
+ "tmp_free": 230686720,
+ "max_image": 134217728,
+ "max_chunk": 2097152,
+ "run": {
+  "state": ""
+ }
+}

@@ -1,0 +1,60 @@
+#!/bin/sh
+# factory-reset [-y] [--no-reboot] — erase every setting and reboot into the factory configuration
+# (platform, docs/modules/platform.md).
+#
+# rootfs_data (UBIFS, the overlay upper layer) is in use while the system runs, so this only marks it:
+# /overlay/.mr-factory-reset. At the next boot /sbin/mr-preinit wipes the volume (ubiupdatevol -t)
+# before mounting it; UBIFS formats the empty volume and the router comes up with the image's
+# factory router.yaml (LAN 192.168.31.1, WiFi off, web UI asks for a new admin password).
+# Refused on a RAM (kexec test) system: rootfs_data there belongs to whatever is on the flash.
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+yes=0 reboot=1
+for a in "$@"; do
+	case $a in
+	-y | --yes) yes=1 ;;
+	--no-reboot) reboot=0 ;;
+	-h | --help)
+		sed -n '2,9p' "$0"
+		exit 0
+		;;
+	*)
+		echo "factory-reset: unknown argument $a" >&2
+		exit 2
+		;;
+	esac
+done
+
+[ "$(id -u)" = 0 ] || { echo "factory-reset: must run as root" >&2; exit 1; }
+fstype=$(awk '$2 == "/overlay" { t = $3 } END { print t }' /proc/mounts)
+case $fstype in
+ubifs) ;;
+tmpfs)
+	echo "factory-reset: rootfs_data is not mounted (settings already live in RAM); a reboot starts from the factory configuration" >&2
+	exit 1
+	;;
+*)
+	echo "factory-reset: not running from flash (no UBIFS at /overlay); refusing to touch rootfs_data" >&2
+	exit 1
+	;;
+esac
+
+if [ "$yes" = 0 ]; then
+	if [ ! -t 0 ]; then
+		echo "factory-reset: pass -y to confirm (non-interactive)" >&2
+		exit 2
+	fi
+	printf 'Erase ALL settings (router.yaml, secrets, SSH keys, service state) and reboot? Type YES: '
+	read -r ans
+	[ "$ans" = YES ] || { echo "aborted"; exit 1; }
+fi
+
+: > /overlay/.mr-factory-reset || exit 1
+sync
+logger -t factory-reset "rootfs_data will be wiped at the next boot" 2>/dev/null
+echo "factory-reset: rootfs_data will be wiped at the next boot"
+if [ "$reboot" = 1 ]; then
+	reboot
+fi
+exit 0

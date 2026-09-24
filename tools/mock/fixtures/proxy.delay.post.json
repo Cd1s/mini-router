@@ -1,0 +1,1 @@
+{"results": {"sg1": 72, "jp1": 140, "us-trojan": -1, "hk-reality": 54, "vmess-ws": 188, "hy2": 47, "tuic": -1}, "errors": {"us-trojan": "An error occurred in the delay test", "tuic": "context deadline exceeded"}}

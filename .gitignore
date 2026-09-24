@@ -1,0 +1,13 @@
+*.bin
+*.itb
+*.tar.gz
+*.tgz
+backups/
+openwrt/files/usr/sbin/tailscaled
+openwrt/files/usr/bin/dstatus-agent
+openwrt/files/usr/bin/lucky
+openwrt/files/usr/bin/lucky-dns-sync
+.DS_Store
+out/
+.claude/
+out/

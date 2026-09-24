@@ -1,0 +1,2 @@
+# sourced by dhcpcd-run-hooks
+/usr/sbin/mr hook dhcpcd >/dev/null 2>&1 || true

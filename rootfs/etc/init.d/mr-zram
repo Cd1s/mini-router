@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+# compressed swap in RAM (zstd); sized at 1/4 of memory
+description="zram swap"
+depend() {
+	need localmount
+}
+start() {
+	ebegin "Enabling zram swap"
+	modprobe -q zram 2>/dev/null
+	[ -e /sys/block/zram0 ] || { eend 1 "no zram"; return 1; }
+	if ! grep -q '^/dev/zram0 ' /proc/swaps; then
+		echo zstd > /sys/block/zram0/comp_algorithm 2>/dev/null || echo lzo > /sys/block/zram0/comp_algorithm
+		echo $(( $(awk '/MemTotal/{print $2}' /proc/meminfo) * 1024 / 4 )) > /sys/block/zram0/disksize
+		mkswap /dev/zram0 >/dev/null && swapon -p 100 /dev/zram0
+	fi
+	eend $?
+}
+stop() {
+	swapoff /dev/zram0 2>/dev/null
+	echo 1 > /sys/block/zram0/reset 2>/dev/null
+	return 0
+}

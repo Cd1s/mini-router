@@ -1,0 +1,9 @@
+#!/sbin/openrc-run
+description="Lucky domains -> dnsmasq hosts"
+supervisor=supervise-daemon
+command=/usr/bin/lucky-dns-inotify
+respawn_delay=60
+respawn_max=0
+depend() {
+	need lucky dnsmasq
+}

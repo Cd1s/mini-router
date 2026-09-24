@@ -1,0 +1,30 @@
+{
+ "upstream": "isp",
+ "leases": 6,
+ "leases6": 1,
+ "querylog_until": 0,
+ "dnsmasq": {
+  "cache_size": 8000,
+  "insertions": 15230,
+  "evictions": 0,
+  "hits": 84211,
+  "misses": 15874,
+  "servers": [
+   {
+    "server": "198.51.100.53#53",
+    "queries": 9120,
+    "failed": 3
+   },
+   {
+    "server": "198.51.100.54#53",
+    "queries": 5301,
+    "failed": 1
+   },
+   {
+    "server": "127.0.0.1#5453",
+    "queries": 1453,
+    "failed": 12
+   }
+  ]
+ }
+}

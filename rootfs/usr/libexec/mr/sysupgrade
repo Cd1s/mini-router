@@ -1,0 +1,479 @@
+#!/bin/sh
+# sysupgrade — install a mini-router image on the flash (platform; docs/flash.md, docs/modules/platform.md)
+#
+#   sysupgrade [-T] [-y] [-n | --data TGZ] [--sha256 HEX] [--no-reboot] IMAGE
+#     -T           verify only (format, board, checksums, sizes); changes nothing
+#     -y           do not ask for confirmation
+#     -n           wipe rootfs_data (every setting) instead of keeping it
+#     --data TGZ   start rootfs_data from this overlay tarball (tools/provision.sh); implies -n
+#     --sha256 HEX also require sha256(IMAGE) = HEX (from the build's SHA256SUMS)
+#     --no-reboot  (RAM system only) do not reboot when done
+#
+# IMAGE is the build's *-sysupgrade.tar (OpenWrt sysupgrade-tar layout, so the hanwckf U-Boot web
+# failsafe can take it too): sysupgrade-<board>/{CONTROL,kernel,root,mr-meta}. kernel = FIT for the UBI
+# volume "kernel", root = squashfs for the volume "rootfs", mr-meta = sizes, sha256 and the FIT offsets
+# of the kernel/DTB. Refused unless every size, checksum and magic matches and the board is this one.
+#
+# There are no A/B slots and "rootfs" cannot be rewritten while it is the mounted root, so from flash
+# the new kernel is kexec'd with a small installer initramfs (busybox, ubi tools, this script and the
+# payload). The installer writes rootfs, then kernel, reads both back, and reboots. On a RAM system
+# (kexec test image) the volumes are written directly. rootfs_data is kept unless -n / --data; if the
+# volumes must grow, it is backed up to RAM, recreated smaller and restored.
+#
+# Internal: `sysupgrade --install DIR` is the installer (PID 1 of the installer initramfs).
+set -u
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 022 # the upper dir and its etc/ become / and /etc of the new system: never 0700
+
+BOARD=xiaomi,redmi-router-ax6000-hanwckf        # DT compatible of the only supported board
+PREFIX=sysupgrade-xiaomi_redmi-router-ax6000-hanwckf
+WORK=${MR_SYSUPGRADE_WORK:-/tmp/mr-sysupgrade}
+KEXEC_CMDLINE="console=ttyS0,115200n1 earlycon=uart8250,mmio32,0x11002000 watchdog.stop_on_reboot=0 loglevel=6"
+MIN_DATA_BYTES=$((8 * 1024 * 1024)) # rootfs_data must keep at least this much
+KERNEL_HEADROOM=8                   # LEBs added when a volume has to grow (~1 MiB / ~4 MiB)
+ROOTFS_HEADROOM=32
+
+msg() { echo "sysupgrade: $*"; }
+die() {
+	echo "sysupgrade: $*" >&2
+	exit 1
+}
+is_uint() { case ${1:-x} in *[!0-9]*) return 1 ;; esac; }
+is_sha256() { printf '%s' "$1" | grep -qE '^[0-9a-f]{64}$'; }
+sha() { sha256sum "$1" | cut -d' ' -f1; }
+fsize() { wc -c < "$1" | tr -d ' '; }
+magic() { head -c 4 "$1" | od -An -tx1 | tr -d ' \n'; }
+
+# root_is_ram: true when / is the kernel's RAM rootfs (kexec test system / installer).
+root_is_ram() {
+	case $(awk '$2 == "/" { t = $3 } END { print t }' /proc/mounts) in
+	rootfs | tmpfs | ramfs) return 0 ;;
+	esac
+	return 1
+}
+
+# meta KEY: value of KEY= in the extracted mr-meta (keys are constants from this script).
+meta() { sed -n "s/^$1=//p" "$WORK/meta" | head -n 1; }
+
+# ---------------------------------------------------------------- verification
+# verify_image IMAGE: extract and check everything; leaves kernel/root/meta/fdt in $WORK.
+verify_image() {
+	img=$1
+	[ -f "$img" ] && [ -r "$img" ] || die "$img: no such file"
+	rm -rf "$WORK" && mkdir -p "$WORK" && chmod 0700 "$WORK" || die "cannot create $WORK"
+	if [ -n "$want_sha" ]; then
+		[ "$(sha "$img")" = "$want_sha" ] || die "sha256($img) does not match --sha256"
+	fi
+	tar -tf "$img" > "$WORK/list" 2>/dev/null || die "$img is not a sysupgrade tar"
+	while read -r n; do
+		case $n in
+		"$PREFIX/" | "$PREFIX/CONTROL" | "$PREFIX/kernel" | "$PREFIX/root" | "$PREFIX/mr-meta") ;;
+		sysupgrade-*/*) die "image is for another board (${n%%/*}), this is $PREFIX" ;;
+		*) die "unexpected member in image: $(printf '%s' "$n" | head -c 80 | tr -c 'A-Za-z0-9_./-' '?')" ;;
+		esac
+	done < "$WORK/list"
+	for m in CONTROL kernel root mr-meta; do
+		grep -qxF "$PREFIX/$m" "$WORK/list" || die "image has no $m"
+	done
+	tar -xOf "$img" "$PREFIX/CONTROL" | head -c 4096 > "$WORK/CONTROL"
+	grep -qx "BOARD=${PREFIX#sysupgrade-}" "$WORK/CONTROL" || die "CONTROL: wrong BOARD"
+	tar -xOf "$img" "$PREFIX/mr-meta" | head -c 8192 > "$WORK/meta"
+	if grep -qvE '^([A-Z0-9_]+=[A-Za-z0-9,._+:-]*)?$' "$WORK/meta"; then die "mr-meta: malformed"; fi
+	[ "$(meta MR_FORMAT)" = 1 ] || die "mr-meta: unsupported format $(meta MR_FORMAT)"
+	[ "$(meta MR_BOARD)" = "$BOARD" ] || die "image is for board '$(meta MR_BOARD)', not $BOARD"
+	check_board
+	for k in KERNEL_SIZE ROOT_SIZE FIT_KERNEL_OFFSET FIT_KERNEL_SIZE FIT_FDT_OFFSET FIT_FDT_SIZE; do
+		is_uint "$(meta $k)" || die "mr-meta: $k missing or not a number"
+	done
+	for k in KERNEL_SHA256 ROOT_SHA256 FIT_KERNEL_SHA256 FIT_FDT_SHA256; do
+		is_sha256 "$(meta $k)" || die "mr-meta: $k missing or malformed"
+	done
+	[ "$(meta FIT_KERNEL_COMP)" = lzma ] || die "mr-meta: unsupported kernel compression"
+	version=$(meta MR_VERSION)
+	[ -n "$version" ] || die "mr-meta: MR_VERSION missing"
+
+	tar -xOf "$img" "$PREFIX/kernel" > "$WORK/kernel" || die "cannot extract kernel"
+	tar -xOf "$img" "$PREFIX/root" > "$WORK/root" || die "cannot extract root (out of RAM in /tmp?)"
+	check_part kernel "$(meta KERNEL_SIZE)" "$(meta KERNEL_SHA256)" d00dfeed
+	check_part root "$(meta ROOT_SIZE)" "$(meta ROOT_SHA256)" 68737173 # "hsqs"
+	fit_extract "$(meta FIT_FDT_OFFSET)" "$(meta FIT_FDT_SIZE)" "$(meta FIT_FDT_SHA256)" fdt
+	[ "$(magic "$WORK/fdt")" = d00dfeed ] || die "FIT: device tree has a bad magic"
+	tr '\0' '\n' < "$WORK/fdt" | grep -qxF "$BOARD" || die "FIT: device tree is not for $BOARD"
+	fit_extract "$(meta FIT_KERNEL_OFFSET)" "$(meta FIT_KERNEL_SIZE)" "$(meta FIT_KERNEL_SHA256)" kernel.lzma
+	check_capacity
+	msg "image OK: mini-router $version, kernel $(meta MR_KERNEL), FIT $(meta KERNEL_SIZE) B, squashfs $(meta ROOT_SIZE) B"
+}
+
+# check_board: the running device tree must list $BOARD. -T accepts MR_SYSUPGRADE_TEST_COMPAT (CI).
+check_board() {
+	if [ "$test_only" = 1 ] && [ -n "${MR_SYSUPGRADE_TEST_COMPAT:-}" ]; then
+		compat=$MR_SYSUPGRADE_TEST_COMPAT
+	else
+		compat=$(tr '\0' ' ' < /proc/device-tree/compatible 2>/dev/null)
+	fi
+	case " $compat " in
+	*" $BOARD "*) ;;
+	*) die "this device ($compat) is not $BOARD" ;;
+	esac
+}
+
+# check_part NAME SIZE SHA256 MAGIC
+check_part() {
+	[ "$(fsize "$WORK/$1")" = "$2" ] || die "$1: size differs from mr-meta"
+	[ "$(sha "$WORK/$1")" = "$3" ] || die "$1: sha256 mismatch (corrupt download?)"
+	[ "$(magic "$WORK/$1")" = "$4" ] || die "$1: bad magic"
+}
+
+# fit_extract OFFSET SIZE SHA256 OUT: one sub-image of the FIT (offsets precomputed by the build).
+fit_extract() {
+	[ "$1" -ge 4 ] && [ "$2" -ge 4 ] && [ $(($1 + $2)) -le "$(meta KERNEL_SIZE)" ] || die "mr-meta: FIT offset out of range"
+	tail -c +$(($1 + 1)) "$WORK/kernel" | head -c "$2" > "$WORK/$4"
+	[ "$(sha "$WORK/$4")" = "$3" ] || die "FIT: $4 does not match mr-meta"
+}
+
+# check_capacity: the image must fit in the UBI device with rootfs_data >= MIN_DATA_BYTES.
+check_capacity() {
+	ubi_find || { msg "no UBI device here: flash capacity not checked"; return 0; }
+	total=0
+	for v in /sys/class/ubi/"$UBI"_*; do
+		[ -r "$v/reserved_ebs" ] || continue
+		case $(cat "$v/name") in kernel | rootfs | rootfs_data) total=$((total + $(cat "$v/reserved_ebs"))) ;; esac
+	done
+	total=$((total + $(cat "/sys/class/ubi/$UBI/avail_eraseblocks")))
+	need=$(($(lebs "$(meta KERNEL_SIZE)") + $(lebs "$(meta ROOT_SIZE)") + $(lebs "$MIN_DATA_BYTES")))
+	[ "$need" -le "$total" ] || die "image needs $need LEBs, the flash has $total"
+}
+
+# ---------------------------------------------------------------- UBI helpers
+# ubi_find: set UBI (ubiN) to the device holding the "rootfs" volume, LEB to its LEB size.
+ubi_find() {
+	UBI=
+	for v in /sys/class/ubi/ubi*_*; do
+		[ -r "$v/name" ] || continue
+		n=${v##*/}
+		if [ "$(cat "$v/name")" = rootfs ] && { [ -z "${MR_UBI:-}" ] || [ "${n%_*}" = "$MR_UBI" ]; }; then
+			UBI=${n%_*}
+			break
+		fi
+	done
+	[ -n "$UBI" ] || return 1
+	LEB=$(cat "/sys/class/ubi/$UBI/eraseblock_size")
+	is_uint "$LEB" && [ "$LEB" -gt 0 ]
+}
+lebs() { echo $((($1 + LEB - 1) / LEB)); }
+# vol NAME: volume id of NAME on $UBI (empty if missing)
+vol() {
+	for v in /sys/class/ubi/"$UBI"_*; do
+		[ -r "$v/name" ] && [ "$(cat "$v/name")" = "$1" ] && { echo "${v##*_}"; return 0; }
+	done
+	return 1
+}
+vol_lebs() { cat "/sys/class/ubi/${UBI}_$1/reserved_ebs"; }
+# node PATH: make sure the char device for sysfs entry PATH (ubiN or ubiN_M) exists in /dev
+node() {
+	[ -c "/dev/$1" ] && return 0
+	d=$(cat "/sys/class/ubi/$1/dev") || return 1
+	mknod "/dev/$1" c "${d%:*}" "${d#*:}"
+}
+unblock() { # drop the ubiblock of a volume so it can be rewritten / resized
+	if [ -e "/sys/block/ubiblock${UBI#ubi}_$1" ]; then
+		node "${UBI}_$1" && ubiblock -r "/dev/${UBI}_$1" || return 1
+	fi
+	return 0
+}
+# mounted_vol NAME ID: is the volume mounted (by name or by node)?
+mounted_vol() {
+	awk -v a="$UBI:$1" -v b="/dev/${UBI}_$2" '$1 == a || $1 == b { f = 1 } END { exit !f }' /proc/mounts
+}
+
+# retry CMD...: UBI volume operations fail with EBUSY while something (a hotplug helper probing a
+# new volume) briefly holds the volume open; try up to 5 times, 1 s apart.
+retry() {
+	_try=0
+	until "$@"; do
+		_try=$((_try + 1))
+		[ $_try -lt 5 ] || return 1
+		sleep 1
+	done
+}
+
+# write_vol ID FILE SHA256: write FILE into the volume and read it back.
+write_vol() {
+	n=0
+	while [ $n -lt 3 ]; do
+		n=$((n + 1))
+		if retry ubiupdatevol "/dev/${UBI}_$1" "$2" &&
+			[ "$(head -c "$(fsize "$2")" "/dev/${UBI}_$1" | sha256sum | cut -d' ' -f1)" = "$3" ]; then
+			return 0
+		fi
+		msg "write/verify of volume $1 failed (attempt $n)"
+		sleep 1
+	done
+	return 1
+}
+
+# flash_install DIR: write DIR/{root,kernel} (checked against DIR/meta), handle rootfs_data per
+# DIR/flags (wipe=1) and DIR/data.tgz. Every failure before the first write leaves the flash untouched.
+flash_install() {
+	d=$1
+	WORK=$d
+	ubi_find || { msg "no UBI device with a rootfs volume"; return 1; }
+	node "$UBI" || return 1
+	ks=$(meta KERNEL_SIZE) rs=$(meta ROOT_SIZE)
+	[ "$(sha "$d/kernel")" = "$(meta KERNEL_SHA256)" ] && [ "$(sha "$d/root")" = "$(meta ROOT_SHA256)" ] ||
+		{ msg "payload does not match mr-meta"; return 1; }
+	wipe=0
+	grep -qx 'wipe=1' "$d/flags" 2>/dev/null && wipe=1
+	[ -f "$d/data.tgz" ] && wipe=1
+	K=$(vol kernel) R=$(vol rootfs) || { msg "UBI volumes kernel/rootfs missing"; return 1; }
+	D=$(vol rootfs_data) || D=
+	for v in "$K" "$R" ${D:+"$D"}; do
+		node "${UBI}_$v" || return 1
+	done
+	if [ -n "$D" ] && mounted_vol rootfs_data "$D"; then
+		msg "rootfs_data is mounted; refusing"
+		return 1
+	fi
+	unblock "$R" || { msg "cannot remove ubiblock of rootfs"; return 1; }
+
+	ck=$(vol_lebs "$K") cr=$(vol_lebs "$R")
+	nk=$(lebs "$ks") nr=$(lebs "$rs")
+	gk=0 gr=0
+	[ "$nk" -le "$ck" ] || gk=$((nk + KERNEL_HEADROOM - ck))
+	[ "$nr" -le "$cr" ] || gr=$((nr + ROOTFS_HEADROOM - cr))
+	avail=$(cat "/sys/class/ubi/$UBI/avail_eraseblocks")
+	backup=
+	if [ $((gk + gr)) -gt "$avail" ]; then
+		# growing needs the space of rootfs_data: back it up to RAM (unless it is wiped anyway)
+		if [ -n "$D" ] && [ "$wipe" = 0 ]; then
+			msg "saving rootfs_data to RAM (the volumes must be resized)"
+			mkdir -p /mnt/mr-data && mount -t ubifs -o ro "$UBI:rootfs_data" /mnt/mr-data &&
+				tar -C /mnt/mr-data -cf "$d/data-backup.tar" . && umount /mnt/mr-data ||
+				{ umount /mnt/mr-data 2>/dev/null; msg "cannot back up rootfs_data"; return 1; }
+			backup=$d/data-backup.tar
+		fi
+		if [ -n "$D" ]; then
+			retry ubirmvol "/dev/$UBI" -n "$D" || { msg "ubirmvol rootfs_data failed"; return 1; }
+			D=
+		fi
+		avail=$(cat "/sys/class/ubi/$UBI/avail_eraseblocks")
+		[ $((gk + gr)) -le "$avail" ] || { gk=$((nk > ck ? nk - ck : 0)) gr=$((nr > cr ? nr - cr : 0)); }
+		[ $((gk + gr)) -le "$avail" ] || { msg "not enough space in UBI"; return 1; }
+	fi
+	# ---- point of no return: the old system is gone from here on
+	if [ "$gr" -gt 0 ]; then
+		msg "resizing rootfs: $cr -> $((cr + gr)) LEBs"
+		retry ubirsvol "/dev/$UBI" -n "$R" -S $((cr + gr)) || { msg "ubirsvol rootfs failed"; return 1; }
+	fi
+	if [ "$gk" -gt 0 ]; then
+		msg "resizing kernel: $ck -> $((ck + gk)) LEBs"
+		retry ubirsvol "/dev/$UBI" -n "$K" -S $((ck + gk)) || { msg "ubirsvol kernel failed"; return 1; }
+	fi
+	msg "writing rootfs ($rs bytes)"
+	write_vol "$R" "$d/root" "$(meta ROOT_SHA256)" || return 1
+	msg "writing kernel ($ks bytes)"
+	write_vol "$K" "$d/kernel" "$(meta KERNEL_SHA256)" || return 1
+	if [ -z "$D" ]; then
+		retry ubimkvol "/dev/$UBI" -N rootfs_data -m || { msg "ubimkvol rootfs_data failed"; return 1; }
+		D=$(vol rootfs_data) && node "${UBI}_$D" || return 1
+	elif [ "$wipe" = 1 ]; then
+		msg "wiping rootfs_data"
+		retry ubiupdatevol "/dev/${UBI}_$D" -t || { msg "wiping rootfs_data failed"; return 1; }
+	fi
+	if [ -f "$d/data.tgz" ] || [ -n "$backup" ] || [ "$wipe" = 0 ]; then
+		mkdir -p /mnt/mr-data && mount -t ubifs -o noatime "$UBI:rootfs_data" /mnt/mr-data ||
+			{ msg "cannot mount the new rootfs_data"; return 1; }
+		if [ -n "$backup" ]; then
+			tar -C /mnt/mr-data -xf "$backup" || msg "restoring rootfs_data failed"
+		fi
+		mkdir -p /mnt/mr-data/mr/upper/etc /mnt/mr-data/mr/work
+		if [ -f "$d/data.tgz" ]; then
+			tar -C /mnt/mr-data/mr/upper -xzf "$d/data.tgz" || msg "unpacking the data tarball failed"
+		fi
+		echo "$(cat "$d/when" 2>/dev/null || echo '-') sysupgrade: installed mini-router $(meta MR_VERSION) (kernel $(meta MR_KERNEL))" \
+			>> /mnt/mr-data/mr/upper/etc/router-changes.log
+		chmod 0644 /mnt/mr-data/mr/upper/etc/router-changes.log
+		sync
+		umount /mnt/mr-data
+	fi
+	sync
+	msg "done: mini-router $(meta MR_VERSION)"
+	return 0
+}
+
+# ---------------------------------------------------------------- installer (kexec'd initramfs)
+installer() {
+	dir=$1
+	root_is_ram || die "--install only runs from a RAM root"
+	[ -x /bin/busybox ] && /bin/busybox --install -s /bin 2>/dev/null
+	mdev -s 2>/dev/null
+	exec < /dev/console > /dev/console 2>&1
+	msg "installer started"
+	[ -c /dev/watchdog ] && watchdog -t 5 -T 30 /dev/watchdog
+	if flash_install "$dir"; then
+		msg "rebooting into the new system"
+	else
+		msg "INSTALL FAILED — rebooting (if the old system was already overwritten, use the U-Boot web failsafe; docs/flash.md)"
+	fi
+	sync
+	sleep 3
+	reboot -f
+	sleep 30
+}
+
+# copy_bin FILE STAGING: copy an executable and the shared libraries it needs.
+copy_bin() {
+	mkdir -p "$2${1%/*}" && cp "$1" "$2$1" || return 1
+	/lib/ld-musl-aarch64.so.1 --list "$1" 2>/dev/null | sed -n 's/.*=> \(\/[^ ]*\) .*/\1/p' |
+		while read -r lib; do
+			[ -e "$2$lib" ] || { mkdir -p "$2${lib%/*}" && cp "$lib" "$2$lib"; }
+		done
+}
+
+# kexec_installer: build the installer initramfs around the verified payload and kexec it.
+kexec_installer() {
+	command -v kexec > /dev/null || die "kexec not found"
+	S=$WORK/initrd
+	I=$S/mr-install
+	mkdir -p "$I" "$S/bin" "$S/sbin" "$S/lib" "$S/proc" "$S/sys" "$S/dev" "$S/tmp" "$S/mnt" "$S/usr/libexec/mr" || die "no space in $WORK"
+	for f in kernel root meta; do mv "$WORK/$f" "$I/$f" || die "staging failed"; done
+	[ -n "$data" ] && { cp "$data" "$I/data.tgz" || die "staging failed"; }
+	[ "$wipe" = 1 ] && echo wipe=1 > "$I/flags"
+	date '+%Y-%m-%d %H:%M:%S' > "$I/when"
+	copy_bin /bin/busybox "$S" || die "staging busybox failed"
+	cp /lib/ld-musl-aarch64.so.1 "$S/lib/" && ln -sf ld-musl-aarch64.so.1 "$S/lib/libc.musl-aarch64.so.1"
+	ln -s busybox "$S/bin/sh"
+	for t in ubiupdatevol ubirsvol ubirmvol ubimkvol ubiblock; do
+		copy_bin "$(command -v "$t")" "$S" || die "staging $t failed"
+	done
+	cp /sbin/mr-preinit "$S/sbin/mr-preinit" && cp "$0" "$S/usr/libexec/mr/sysupgrade" || die "staging scripts failed"
+	chmod 0755 "$S/sbin/mr-preinit" "$S/usr/libexec/mr/sysupgrade"
+	ln -s /sbin/mr-preinit "$S/init"
+	mknod -m 0600 "$S/dev/console" c 5 1 && mknod -m 0666 "$S/dev/null" c 1 3 || die "mknod failed"
+	(cd "$S" && find . | cpio -o -H newc 2>/dev/null) > "$WORK/initrd.cpio" || die "cpio failed (out of RAM?)"
+	rm -rf "$S"
+	unlzma -c "$WORK/kernel.lzma" > "$WORK/Image" || die "cannot unpack the kernel"
+	rm -f "$WORK/kernel.lzma"
+	msg "loading the new kernel with the installer ($(fsize "$WORK/initrd.cpio") bytes)"
+	kexec -l "$WORK/Image" --dtb="$WORK/fdt" --initrd="$WORK/initrd.cpio" --command-line="$KEXEC_CMDLINE" ||
+		die "kexec load failed (nothing was changed)"
+	rm -f "$WORK/Image" "$WORK/initrd.cpio"
+	logger -t sysupgrade "installing mini-router $version via kexec" 2>/dev/null
+	echo "$(date '+%Y-%m-%d %H:%M:%S') sysupgrade: installing mini-router $version (kexec)" >> /etc/router-changes.log
+	# mt76 keeps DMA-writing RX buffers after kexec into memory the new kernel (installer) reuses:
+	# stop WiFi and unload the driver first (the installer never loads it; the reboot brings it back)
+	rc-service --ifstarted mr-hostapd stop > /dev/null 2>&1
+	sleep 1
+	for m in mt7915e mt76_connac_lib mt76; do rmmod "$m" 2> /dev/null; done
+	# Hand the hardware watchdog to the new kernel: stop the watchdog service (magic close), then
+	# re-arm MT7986 TOPRGU directly (30 s, single-stage reset) so the kernel does not stop it at
+	# kexec; the new kernel keeps it fed until the installer opens it. A hang reboots the old flash.
+	if [ -x /usr/libexec/mr/devmem ]; then
+		rc-service watchdog stop > /dev/null 2>&1
+		sleep 1
+		/usr/libexec/mr/devmem 0x1001c004 0xF008 > /dev/null &&
+			/usr/libexec/mr/devmem 0x1001c008 0x1971 > /dev/null &&
+			/usr/libexec/mr/devmem 0x1001c000 0x22000001 > /dev/null ||
+			msg "could not arm the hardware watchdog"
+	fi
+	sync
+	kexec -e
+	die "kexec -e returned"
+}
+
+# ---------------------------------------------------------------- main
+test_only=0 yes=0 wipe=0 data='' want_sha='' reboot=1 img=''
+while [ $# -gt 0 ]; do
+	case $1 in
+	--install)
+		[ $# -ge 2 ] || die "--install DIR"
+		installer "$2"
+		exit 1
+		;;
+	-T | --test) test_only=1 ;;
+	-y | --yes) yes=1 ;;
+	-n | --wipe-data) wipe=1 ;;
+	--data)
+		[ $# -ge 2 ] || die "--data TGZ"
+		data=$2 wipe=1
+		shift
+		;;
+	--sha256)
+		[ $# -ge 2 ] || die "--sha256 HEX"
+		want_sha=$(printf '%s' "$2" | tr 'A-F' 'a-f')
+		is_sha256 "$want_sha" || die "--sha256: expected 64 hex digits"
+		shift
+		;;
+	--no-reboot) reboot=0 ;;
+	-h | --help)
+		sed -n '2,11p' "$0"
+		exit 0
+		;;
+	-*) die "unknown option $1" ;;
+	*)
+		[ -z "$img" ] || die "only one image"
+		img=$1
+		;;
+	esac
+	shift
+done
+[ -n "$img" ] || die "usage: sysupgrade [-T] [-y] [-n | --data TGZ] [--sha256 HEX] IMAGE"
+[ "$(id -u)" = 0 ] || die "must run as root"
+
+if [ -n "$data" ]; then
+	[ -f "$data" ] || die "$data: no such file"
+	# only plain files and directories, relative paths, nothing outside the tree (as provision.sh makes)
+	list=$(tar -tvzf "$data" 2>/dev/null) || die "$data is not a .tar.gz"
+	if ! printf '%s\n' "$list" | awk '{ t = substr($1, 1, 1); n = $0; for (i = 0; i < 5; i++) sub(/^[^ ]+ +/, "", n) }
+		t != "-" && t != "d" { bad = 1 }
+		n ~ /^\// || n ~ /(^|\/)\.\.(\/|$)/ { bad = 1 }
+		END { exit bad }'; then
+		die "$data: unsafe member (not a plain file or directory, absolute path or ..)"
+	fi
+fi
+
+verify_image "$img"
+if [ "$test_only" = 1 ]; then
+	rm -rf "$WORK"
+	exit 0
+fi
+ubi_find || die "no UBI device with a rootfs volume"
+if root_is_ram; then
+	mode="write the flash directly (RAM system)"
+else
+	mode="kexec into the installer (the router is offline for about 2 minutes)"
+	[ -x /sbin/mr-preinit ] || die "/sbin/mr-preinit missing: cannot build the installer"
+fi
+if [ "$wipe" = 1 ]; then keep="rootfs_data is WIPED${data:+ and started from $data}"; else keep="settings are kept"; fi
+msg "will install mini-router $version: $mode; $keep"
+if [ "$yes" = 0 ]; then
+	[ -t 0 ] || die "pass -y to confirm (non-interactive)"
+	printf 'Type YES to continue: '
+	read -r ans
+	[ "$ans" = YES ] || die "aborted"
+fi
+
+if root_is_ram; then
+	# the kexec test system reboots to flash after 600 s without /tmp/keep: never in the middle of a write
+	: > /tmp/keep
+	[ -n "$data" ] && { cp "$data" "$WORK/data.tgz" || die "no space in $WORK"; }
+	[ "$wipe" = 1 ] && echo wipe=1 > "$WORK/flags"
+	date '+%Y-%m-%d %H:%M:%S' > "$WORK/when"
+	flash_install "$WORK" || die "INSTALL FAILED (see the messages above; docs/flash.md)"
+	rm -rf "$WORK"
+	if [ "$reboot" = 1 ]; then
+		msg "rebooting"
+		sync
+		reboot
+	fi
+	exit 0
+fi
+
+# from flash: free RAM first (the payload is staged twice while the installer is built)
+for s in mr-proxy mr-proxy-dns tailscale lucky lucky-dns-inotify dstatus-agent mr-mon; do
+	rc-service --ifstarted "$s" stop > /dev/null 2>&1
+done
+sync
+echo 3 > /proc/sys/vm/drop_caches 2>/dev/null
+kexec_installer

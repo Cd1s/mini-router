@@ -1,0 +1,21 @@
+#!/sbin/openrc-run
+# links, LAN bridge, WiFi AP netdevs, policy rules — from router.yaml (gen/network.sh)
+description="mini-router network"
+depend() {
+	provide net
+	need localmount
+	after modules sysctl
+}
+start() {
+	ebegin "Configuring network"
+	# runtime dirs dnsmasq's resolv-file polling and the WAN hooks expect (tmpfs /run is empty at boot)
+	mkdir -p /run/mini-router /run/ppp
+	sysctl -q -p /etc/sysctl.d/90-mini-router.conf 2>/dev/null
+	sh /etc/mini-router/gen/network.sh
+	rc=$?
+	/usr/sbin/mr routes >/dev/null 2>&1	# WANs that are already up (service restart)
+	eend $rc
+}
+stop() {
+	return 0	# keep links up across restarts; nothing to tear down
+}

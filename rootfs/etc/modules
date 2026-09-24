@@ -1,0 +1,9 @@
+# mini-router (platform): kernel modules loaded early by the `modules` service (boot runlevel, before
+# `sysctl`). Everything else loads on demand: nft_* with the ruleset, pppoe by mr-pppoe, zram by
+# mr-zram, nft_tproxy / nft_socket by mr-proxy, tcp_bbr when a sysctl selects it.
+# conntrack first, so the net.netfilter.nf_conntrack_* sysctls (90-mini-router.conf) apply at boot
+nf_conntrack
+# WiFi: mt76 + WED (module options in /etc/modprobe.d/mt7915e.conf, rendered by mr)
+mt7915e
+# /dev/net/tun for tailscale
+tun

@@ -1,0 +1,469 @@
+{
+ "lines": [
+  [
+   "Sep 24 11:22:00",
+   4,
+   "authpriv",
+   "dropbear",
+   "Bad password attempt for 'root' from 192.168.1.137:50512"
+  ],
+  [
+   "Sep 24 11:21:11",
+   3,
+   "daemon",
+   "pppd",
+   "Connection terminated."
+  ],
+  [
+   "Sep 24 11:21:10",
+   4,
+   "daemon",
+   "pppd",
+   "LCP: timeout sending Config-Requests"
+  ],
+  [
+   "Sep 24 11:20:01",
+   6,
+   "daemon",
+   "mr",
+   "schedule: restart mr-hostapd"
+  ],
+  [
+   "Sep 24 11:20:01",
+   6,
+   "cron",
+   "crond",
+   "USER root pid 4411 cmd /usr/sbin/mr sys run restart mr-hostapd"
+  ],
+  [
+   "Sep 24 11:25:49",
+   6,
+   "authpriv",
+   "dropbear",
+   "Exit (root) from <192.168.1.233:61600>: Disconnect received"
+  ],
+  [
+   "Sep 24 11:25:49",
+   5,
+   "authpriv",
+   "dropbear",
+   "Pubkey auth succeeded for 'root' with ssh-ed25519 key SHA256:+uyA4fc1Q5lwKfZKEj7rCzt4u/sevOWLdAzWDaKuXc4 from 192.168.1.233:61600"
+  ],
+  [
+   "Sep 24 11:25:49",
+   6,
+   "authpriv",
+   "dropbear",
+   "Child connection from 192.168.1.233:61600"
+  ],
+  [
+   "Sep 24 11:25:37",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:25:37",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:24:49",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:24:49",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:24:04",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:24:04",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:23:29",
+   6,
+   "daemon",
+   "dhcpcd",
+   "pppoe-wan2: changing default route via fe80::e5:f2ff:fe06:d9df"
+  ],
+  [
+   "Sep 24 11:23:11",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:23:11",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:22:16",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:22:16",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:21:30",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:21:30",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:20:31",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:20:31",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:19:41",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:19:41",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:18:46",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:18:46",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:18:09",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:18:09",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:18:09",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-SOLICIT(br-lan) 02:e3:50:10:6a:63"
+  ],
+  [
+   "Sep 24 11:18:08",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "DHCPACK(br-lan) 192.168.1.233 02:e3:50:10:6a:63 laptop"
+  ],
+  [
+   "Sep 24 11:18:08",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "DHCPREQUEST(br-lan) 192.168.1.233 02:e3:50:10:6a:63 "
+  ],
+  [
+   "Sep 24 11:18:07",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "DHCPOFFER(br-lan) 192.168.1.233 02:e3:50:10:6a:63 "
+  ],
+  [
+   "Sep 24 11:18:07",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "DHCPDISCOVER(br-lan) 02:e3:50:10:6a:63 "
+  ],
+  [
+   "Sep 24 11:18:06",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "DHCPOFFER(br-lan) 192.168.1.233 02:e3:50:10:6a:63 "
+  ],
+  [
+   "Sep 24 11:18:06",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "DHCPDISCOVER(br-lan) 02:e3:50:10:6a:63 "
+  ],
+  [
+   "Sep 24 11:18:05",
+   6,
+   "daemon",
+   "hostapd",
+   "phy0-ap0: STA 02:e3:50:10:6a:63 WPA: pairwise key handshake completed (RSN)"
+  ],
+  [
+   "Sep 24 11:18:05",
+   6,
+   "daemon",
+   "hostapd",
+   "phy0-ap0: STA 02:e3:50:10:6a:63 RADIUS: starting accounting session 3BD20F57F08B142A"
+  ],
+  [
+   "Sep 24 11:18:05",
+   6,
+   "daemon",
+   "hostapd",
+   "phy0-ap0: STA 02:e3:50:10:6a:63 IEEE 802.11: associated (aid 1)"
+  ],
+  [
+   "Sep 24 11:18:05",
+   5,
+   "daemon",
+   "hostapd",
+   "phy0-ap0: STA 02:e3:50:10:6a:63 IEEE 802.11: did not acknowledge authentication response"
+  ],
+  [
+   "Sep 24 11:17:49",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:17:49",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:17:02",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:17:02",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:16:13",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:16:13",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:15:18",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:15:18",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:14:32",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:14:32",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:13:34",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:13:34",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:12:45",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:12:45",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:11:57",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:11:57",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:11:44",
+   6,
+   "daemon",
+   "hostapd",
+   "phy1-ap0: STA 02:e3:50:10:6a:63 IEEE 802.11: deauthenticated due to inactivity (timer DEAUTH/REMOVE)"
+  ],
+  [
+   "Sep 24 11:11:43",
+   6,
+   "daemon",
+   "hostapd",
+   "phy1-ap0: STA 02:e3:50:10:6a:63 IEEE 802.11: disassociated"
+  ],
+  [
+   "Sep 24 11:11:02",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:11:02",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:10:08",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:10:08",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ],
+  [
+   "Sep 24 11:10:05",
+   6,
+   "authpriv",
+   "dropbear",
+   "Exit (root) from <192.168.1.137:58135>: Disconnect received"
+  ],
+  [
+   "Sep 24 11:09:53",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8b0a::"
+  ],
+  [
+   "Sep 24 11:09:53",
+   6,
+   "daemon",
+   "dnsmasq-dhcp",
+   "RTR-ADVERT(br-lan) 2001:db8:1:8d11::"
+  ]
+ ],
+ "total": 65,
+ "tags": {
+  "dnsmasq-dhcp": 49,
+  "dropbear": 5,
+  "hostapd": 6,
+  "dhcpcd": 1,
+  "crond": 1,
+  "mr": 1,
+  "pppd": 2
+ }
+}

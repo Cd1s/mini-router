@@ -1,0 +1,19 @@
+#!/sbin/openrc-run
+description="Tailscale (subnet router)"
+supervisor=supervise-daemon
+command=/usr/sbin/tailscaled
+# TS_PORT: services.tailscale.port, from /etc/conf.d/tailscale (rendered by mr; the firewall opens
+# the same UDP port on the WANs)
+command_args="--port ${TS_PORT:-41641} --state /etc/tailscale/tailscaled.state"
+supervise_daemon_args="--env TS_DEBUG_FIREWALL_MODE=nftables --env GOGC=50 --env GOMEMLIMIT=24MiB"
+respawn_delay=5
+respawn_max=0
+depend() {
+	need net
+	after mr-firewall
+}
+start_pre() {
+	mkdir -p /var/run/tailscale
+	/usr/sbin/tailscaled --cleanup >/dev/null 2>&1
+	return 0
+}

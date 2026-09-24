@@ -1,0 +1,12 @@
+{
+ "dir": "/etc/mini-router/proxy",
+ "files": [
+  {"name": "ai.domains", "path": "/etc/mini-router/proxy/ai.domains", "entries": 3, "size": 61},
+  {"name": "telegram.cidrs", "path": "/etc/mini-router/proxy/telegram.cidrs", "entries": 2, "size": 48}
+ ],
+ "file": "ai.domains",
+ "path": "/etc/mini-router/proxy/ai.domains",
+ "exists": true,
+ "content": "# AI services\nopenai.com\noaistatic.com\nanthropic.com\n",
+ "ok": true
+}

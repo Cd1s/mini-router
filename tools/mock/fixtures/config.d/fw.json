@@ -1,0 +1,34 @@
+{
+ "config": {
+  "firewall": {
+   "offload": "hardware",
+   "synflood_protect": true,
+   "wan_ping": true,
+   "drop_invalid": true,
+   "log_drops": true,
+   "forwards": [
+    {"name": "vps-45000-45100", "enabled": true, "proto": ["tcp", "udp"], "port": "45000-45100", "to": "192.168.1.241", "to_port": ""},
+    {"name": "desktop-7443", "enabled": true, "proto": ["tcp"], "port": "7443", "to": "192.168.1.66", "to_port": "9999"},
+    {"name": "workstation", "enabled": true, "proto": ["tcp", "udp"], "port": "46001-46020", "to": "192.168.1.237", "to_port": ""},
+    {"name": "nas-ssh-office", "enabled": false, "proto": ["tcp"], "port": "2222", "to": "192.168.1.241", "to_port": "22", "wan": ["wan2"], "src_ip": ["203.0.113.0/24"], "desc": "office -> NAS ssh"}
+   ],
+   "open": [
+    {"name": "lucky-https", "enabled": true, "proto": ["tcp"], "port": "443"},
+    {"name": "wg-office", "enabled": true, "proto": ["udp"], "port": "51820", "wan": ["wan"], "src_ip": ["203.0.113.0/24", "2001:db8:100::/48"], "desc": "WireGuard from the office"}
+   ],
+   "ipv6_allow": [
+    {"name": "nas-https", "enabled": true, "iid": "::211:32ff:fe12:3456", "proto": ["tcp"], "port": "443"},
+    {"name": "desktop-ssh", "enabled": true, "mac": "02:c3:06:d6:7f:8a", "proto": ["tcp"], "port": "22", "src_ip": ["2001:db8:100::/48"]}
+   ],
+   "rules": [
+    {"name": "no-smtp-out", "enabled": true, "action": "reject", "src": "lan", "dest": "wan", "proto": ["tcp"], "dest_port": "25", "counter": true},
+    {"name": "iot-quiet-hours", "enabled": true, "action": "drop", "src": "lan", "dest": "wan", "src_ip": ["192.168.1.160/28"], "schedule": [{"time": "01:00-06:00"}], "counter": true},
+    {"name": "tv-no-router-ssh", "enabled": false, "action": "drop", "dest": "router", "src_mac": ["aa:bb:cc:00:11:22"], "proto": ["tcp"], "dest_port": "22"}
+   ],
+   "access": [
+    {"name": "kid-bedtime", "enabled": true, "macs": ["02:c8:61:52:f4:45"], "schedule": [{"days": ["sun", "mon", "tue", "wed", "thu"], "time": "21:30-07:00"}, {"days": ["fri", "sat"], "time": "23:00-08:00"}], "desc": "tablet"},
+    {"name": "blocked-tv", "enabled": true, "macs": ["aa:bb:cc:dd:ee:03"]}
+   ]
+  }
+ }
+}

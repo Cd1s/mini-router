@@ -1,0 +1,220 @@
+{
+ "services": [
+  {
+   "name": "tailscale",
+   "label": "Tailscale",
+   "cfg": "tailscale",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "lucky",
+   "label": "Lucky",
+   "cfg": "lucky",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "lucky-dns-inotify",
+   "label": "Lucky 域名 → dnsmasq",
+   "cfg": "lucky",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "dstatus-agent",
+   "label": "dstatus 探针",
+   "cfg": "dstatus",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "stubby",
+   "label": "stubby (DoT)",
+   "cfg": "stubby",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "dropbear",
+   "label": "SSH (dropbear)",
+   "cfg": "ssh",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "mr-panel",
+   "label": "Web 管理 (httpd)",
+   "cfg": "panel",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "ntpd",
+   "label": "NTP (ntpd)",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "crond",
+   "label": "计划任务 (crond)",
+   "cfg": "schedules",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "mr-zram",
+   "label": "zram 压缩内存",
+   "cfg": "zram",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  }
+ ],
+ "others": [
+  {
+   "name": "mr-network",
+   "label": "mr-network",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "mr-firewall",
+   "label": "mr-firewall",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "watchdog",
+   "label": "watchdog",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "mr-pppoe.wan",
+   "label": "mr-pppoe.wan",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "mr-pppoe.wan2",
+   "label": "mr-pppoe.wan2",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "dhcpcd",
+   "label": "dhcpcd",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "mr-hostapd",
+   "label": "mr-hostapd",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "dnsmasq",
+   "label": "dnsmasq",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
+   "name": "mr-mon",
+   "label": "mr-mon",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  }
+ ],
+ "lucky_port": 16601,
+ "ssh_port": 22,
+ "tailscale_port": 41641,
+ "lan_ip": "192.168.1.6",
+ "tailscale": {
+  "state": "Running",
+  "tailnet": "example@github",
+  "suffix": "tail1234.ts.net",
+  "peers_online": 2,
+  "peers_total": 3,
+  "self": {
+   "host": "mini-router",
+   "dns": "mini-router.tail1234.ts.net.",
+   "os": "linux",
+   "ips": [
+    "100.101.1.1",
+    "fd7a:115c:a1e0::1"
+   ],
+   "online": true
+  },
+  "peers": [
+   {
+    "host": "desktop",
+    "dns": "desktop.tail1234.ts.net.",
+    "os": "macOS",
+    "ips": [
+     "100.101.1.2"
+    ],
+    "online": true,
+    "active": true,
+    "direct": "203.0.113.5:41641",
+    "relay": "hkg",
+    "rx": 123456789,
+    "tx": 9876543,
+    "last_seen": "0001-01-01T00:00:00Z",
+    "routes": []
+   },
+   {
+    "host": "peer-sg",
+    "dns": "peer-sg.tail1234.ts.net.",
+    "os": "linux",
+    "ips": [
+     "100.101.1.3"
+    ],
+    "online": true,
+    "exit_node_option": true,
+    "direct": "",
+    "relay": "sin",
+    "rx": 5242880,
+    "tx": 1048576,
+    "last_seen": "0001-01-01T00:00:00Z",
+    "routes": [
+     "10.8.0.0/24"
+    ]
+   },
+   {
+    "host": "iphone",
+    "dns": "iphone.tail1234.ts.net.",
+    "os": "iOS",
+    "ips": [
+     "100.101.1.4"
+    ],
+    "online": false,
+    "direct": "",
+    "relay": "",
+    "rx": 0,
+    "tx": 0,
+    "last_seen": "2026-09-20T10:00:00Z",
+    "routes": []
+   }
+  ]
+ }
+}

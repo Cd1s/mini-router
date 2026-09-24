@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+description="mini-router firewall (nftables, flow offload)"
+depend() {
+	need mr-network
+	before mr-pppoe dnsmasq
+}
+start() {
+	ebegin "Loading firewall"
+	/usr/sbin/mr fw
+	eend $?
+}
+stop() {
+	ebegin "Unloading firewall"
+	nft delete table inet mr 2>/dev/null
+	eend 0
+}

@@ -1,0 +1,341 @@
+// mini-router web UI core: DOM helper, API client, state, form widgets, page registry, layout,
+// apply flow (validate → plan → apply → confirm/revert), login. Module pages live in ui/<module>.js
+// and only use what is defined here. Contract: docs/MODULES.md.
+"use strict";
+// ---------- tiny DOM helper ----------
+function h(tag, attrs, ...kids){
+  const e = document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs||{})){
+    if (v === undefined || v === null || v === false) continue;
+    if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (k === "class") e.className = v;
+    else if (k === "html") e.innerHTML = v;
+    else if (k in e && typeof v !== "string") e[k] = v;
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const k of kids.flat(Infinity)){
+    if (k === null || k === undefined || k === false) continue;
+    e.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  }
+  return e;
+}
+const $ = s => document.querySelector(s);
+function toast(msg, ms){ const t=h("div",{class:"toast"},msg); document.body.append(t); setTimeout(()=>t.remove(), ms||2500); }
+function fmtBytes(n){ n=+n||0; const u=["B","KB","MB","GB","TB"]; let i=0; while(n>=1024&&i<4){n/=1024;i++} return (i?n.toFixed(1):n)+" "+u[i]; }
+function fmtRate(bps){ bps=+bps||0; if(bps<1e3) return bps.toFixed(0)+" bps"; if(bps<1e6) return (bps/1e3).toFixed(1)+" Kbps"; if(bps<1e9) return (bps/1e6).toFixed(1)+" Mbps"; return (bps/1e9).toFixed(2)+" Gbps"; }
+function fmtDur(s){ s=Math.floor(+s||0); const d=Math.floor(s/86400),hh=Math.floor(s%86400/3600),m=Math.floor(s%3600/60); return (d?d+"天 ":"")+(d||hh?hh+"时 ":"")+m+"分"; }
+const clone = o => JSON.parse(JSON.stringify(o));
+
+// ---------- API ----------
+async function api(action, body){
+  const opt = {method: body===undefined?"GET":"POST", headers:{"X-MR":"1"}, credentials:"same-origin"};
+  if (body!==undefined){ opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
+  const r = await fetch("/cgi-bin/api?a="+action, opt);
+  let j = {}; try { j = await r.json(); } catch(e) {}
+  if (r.status===401 && action!=="login"){ S.auth=false; renderLogin(); throw new Error("未登录"); }
+  if (!r.ok) { const e=new Error(j.error || (j.errors||[]).join("; ") || ("HTTP "+r.status)); e.data=j; throw e; }
+  return j;
+}
+
+// ---------- state ----------
+const S = {
+  auth:false, page:"overview", cfg:null, orig:"", secrets:{}, secretsSet:{},
+  status:null, prevWan:{}, net:null, timer:null, tabs:{},
+};
+const dirty = () => S.cfg && (JSON.stringify(S.cfg)!==S.orig || Object.keys(S.secrets).length>0);
+function touch(){ const p=$("#pending"); if(!p) return; p.classList.toggle("on", dirty()); }
+
+async function loadConfig(){
+  const j = await api("config");
+  S.cfg = j.config; S.secretsSet = j.secrets_set||{}; S.secrets = {};
+  const c = S.cfg;
+  c.wan ||= []; c.policy_routes ||= []; c.static_routes ||= [];
+  c.firewall ||= {}; c.firewall.forwards ||= []; c.firewall.open ||= []; c.firewall.ipv6_allow ||= []; c.firewall.rules ||= []; c.firewall.access ||= [];
+  c.dhcp ||= {}; c.dhcp.hosts ||= []; c.dns ||= {}; c.dns.split ||= []; c.dns.addn_hosts ||= [];
+  c.wifi ||= {}; c.wifi.radios ||= []; c.system ||= {}; c.system.ntp ||= []; c.system.sysctl ||= {};
+  c.multicast ||= {}; c.lan ||= {}; c.lan.ports ||= []; c.networks ||= []; c.proxy ||= {}; c.multiwan ||= {}; c.schedules ||= []; c.services ||= {};
+  for (const r of c.wifi.radios) r.ssids ||= [];
+  S.orig = JSON.stringify(S.cfg);
+  touch();
+}
+
+// ---------- form widgets (bound to obj[key]) ----------
+function inText(obj, key, attrs){ return h("input",Object.assign({type:"text", value: obj[key]??"", oninput:e=>{obj[key]=e.target.value; touch();}}, attrs||{})); }
+function inNum(obj, key, attrs){ return h("input",Object.assign({type:"number", value: obj[key]??0, oninput:e=>{obj[key]=e.target.value===""?0:Number(e.target.value); touch();}}, attrs||{})); }
+function inBool(obj, key, onchange){ return h("label",{class:"sw"}, h("input",{type:"checkbox", checked:!!obj[key], onchange:e=>{obj[key]=e.target.checked; touch(); onchange&&onchange(e.target.checked);}}), h("span")); }
+function inSel(obj, key, opts, onchange){
+  const s = h("select",{onchange:e=>{obj[key]=e.target.value; touch(); onchange&&onchange(e.target.value);}},
+    opts.map(o=>{ const [v,l]=Array.isArray(o)?o:[o,o]; return h("option",{value:v, selected: String(obj[key]??"")===String(v)}, l); }));
+  if (obj[key]!==undefined && !opts.some(o=>String(Array.isArray(o)?o[0]:o)===String(obj[key]))) s.prepend(h("option",{value:obj[key],selected:true},obj[key]));
+  return s;
+}
+function inList(obj, key, attrs){ // array of strings as comma/space separated text
+  return h("input",Object.assign({type:"text", value:(obj[key]||[]).join(", "), oninput:e=>{obj[key]=e.target.value.split(/[\s,]+/).filter(Boolean); touch();}}, attrs||{}));
+}
+function inProto(obj, key){
+  obj[key] ||= [];
+  return h("span",{class:"row"}, ["tcp","udp"].map(p=>h("label",{}, h("input",{type:"checkbox", checked:obj[key].includes(p), onchange:e=>{
+    const s=new Set(obj[key]); e.target.checked?s.add(p):s.delete(p); obj[key]=["tcp","udp"].filter(x=>s.has(x)); touch();}}), " "+p.toUpperCase())));
+}
+function inSecret(obj, key){ // obj[key] is the secret NAME; the value goes to S.secrets
+  const name = obj[key];
+  return h("input",{type:"password", autocomplete:"new-password",
+    placeholder: name && S.secretsSet[name] ? "已设置（留空不变）" : "未设置",
+    value: name && S.secrets[name] || "",
+    oninput:e=>{ const n=obj[key]; if(!n) return; if(e.target.value) S.secrets[n]=e.target.value; else delete S.secrets[n]; touch(); }});
+}
+function field(label, input, hint){ return [h("label",{class:"l"},label), input, hint?h("div",{class:"hint"},hint):null]; }
+function form(...rows){ return h("div",{class:"form"}, rows); }
+function card(title, body, extra, flush){ return h("div",{class:"card"}, h("h2",{}, title, h("span",{class:"sp"}), extra||null), h("div",{class:"body"+(flush?" flush":"")}, body)); }
+
+// editable table: cols = [{k, l, t:'text'|'num'|'bool'|'sel'|'proto'|'secret'|'list', o:[options], w, ph}]
+function etable(arr, cols, blank, opts){
+  opts ||= {};
+  const tb = h("tbody");
+  const draw = ()=>{
+    tb.replaceChildren();
+    if (!arr.length) tb.append(h("tr",{}, h("td",{colspan:cols.length+1, class:"mut"}, "（空）")));
+    arr.forEach((row,i)=>{
+      tb.append(h("tr",{}, cols.map(c=>{
+        let w;
+        const a = {placeholder:c.ph||""};
+        switch(c.t){
+          case "num": w=inNum(row,c.k,a); break;
+          case "bool": w=inBool(row,c.k); break;
+          case "sel": w=inSel(row,c.k,typeof c.o==="function"?c.o():c.o); break;
+          case "proto": w=inProto(row,c.k); break;
+          case "secret": w=inSecret(row,c.k); break;
+          case "list": w=inList(row,c.k,a); break;
+          case "ro": w=h("span",{class:"mono"}, row[c.k]??""); break;
+          default: w=inText(row,c.k,a);
+        }
+        return h("td",{style:c.w?"width:"+c.w:null}, w);
+      }), h("td",{style:"width:1%;white-space:nowrap"},
+        opts.noMove?null:h("button",{class:"btn sm",title:"上移",disabled:i===0,onclick:()=>{[arr[i-1],arr[i]]=[arr[i],arr[i-1]];touch();draw();}},"↑"), " ",
+        h("button",{class:"btn sm d",onclick:()=>{arr.splice(i,1);touch();draw();}},"删除"))));
+    });
+  };
+  draw();
+  const t = h("div",{class:"tw"}, h("table",{}, h("thead",{}, h("tr",{}, cols.map(c=>h("th",{},c.l)), h("th",{}))), tb));
+  const add = h("button",{class:"btn sm p",onclick:()=>{arr.push(typeof blank==="function"?blank():clone(blank)); touch(); draw();}},"+ 添加");
+  return {el:t, add, redraw:draw};
+}
+function tableCard(title, arr, cols, blank, note){
+  const t = etable(arr, cols, blank);
+  return card(title, [note?h("div",{class:"mut",style:"padding:10px 16px 0"},note):null, t.el], t.add, true);
+}
+function roTable(cols, rows){
+  return h("div",{class:"tw"}, h("table",{}, h("thead",{}, h("tr",{}, cols.map(c=>h("th",{},c)))),
+    h("tbody",{}, rows.length? rows.map(r=>h("tr",{}, r.map(x=>h("td",{},x)))) : h("tr",{}, h("td",{colspan:cols.length,class:"mut"},"（空）")))));
+}
+
+// ---------- page registry & layout ----------
+// Modules register pages with registerPage(group, id, title, order, render). render() returns a Node
+// (or a Promise of one); it may set S.timer = setInterval(...) for live refresh (cleared on navigation).
+const NAV_GROUPS = [
+  ["status","状态"], ["network","网络"], ["wireless","无线"], ["proxy","代理"], ["firewall","防火墙"],
+  ["routing","路由"], ["services","服务"], ["system","系统"],
+];
+const PAGES = {};
+const NAVREG = [];
+function registerPage(group, id, title, order, render){
+  if (PAGES[id]) throw new Error("duplicate page id "+id);
+  if (!NAV_GROUPS.some(g=>g[0]===group)) throw new Error("unknown nav group "+group);
+  PAGES[id] = render;
+  NAVREG.push({group, id, title, order});
+}
+function pageTitle(id){ const p=NAVREG.find(x=>x.id===id); return p?p.title:""; }
+
+function renderShell(){
+  const nav = h("nav",{id:"nav"}, h("div",{class:"brand"},"mini-router", h("small",{id:"brandsub"}, "")),
+    NAV_GROUPS.map(([g,label])=>{
+      const items = NAVREG.filter(p=>p.group===g).sort((a,b)=>a.order-b.order);
+      return items.length ? [h("div",{class:"grp"},label), items.map(p=>h("a",{href:"#"+p.id, "data-p":p.id},p.title))] : null;
+    }),
+    h("div",{class:"grp"},"账户"),
+    h("a",{href:"#", onclick:async e=>{e.preventDefault(); await api("logout",{}).catch(()=>{}); location.reload();}},"退出登录"));
+  const pend = h("div",{id:"pending"},
+    h("span",{class:"t"}, h("b",{},"有未应用的更改。"), h("span",{class:"mut"}," 应用前会先校验并显示变更计划，应用后需在倒计时内确认，否则自动回滚。")),
+    h("button",{class:"btn",onclick:async()=>{ await loadConfig(); show(S.page); toast("已放弃更改"); }},"放弃"),
+    h("button",{class:"btn p",onclick:startApply},"保存并应用"));
+  $("#root").replaceChildren(h("div",{id:"app"}, nav,
+    h("main",{}, h("header",{}, h("button",{id:"menu",onclick:()=>$("#nav").classList.toggle("open")},"☰"), h("h1",{id:"title"},""), h("span",{class:"meta",id:"hmeta"},"")),
+      h("div",{class:"content",id:"page"}))), pend);
+  touch();
+}
+window.addEventListener("hashchange", ()=>show(location.hash.slice(1)||"overview"));
+
+function show(p){
+  if (!PAGES[p]) p="overview";
+  S.page=p;
+  clearInterval(S.timer); S.timer=null;
+  document.querySelectorAll("nav a[data-p]").forEach(a=>a.classList.toggle("act", a.dataset.p===p));
+  $("#nav").classList.remove("open");
+  $("#title").textContent = pageTitle(p);
+  const pg = $("#page"); pg.replaceChildren(h("div",{class:"mut"},"加载中…"));
+  Promise.resolve().then(()=>PAGES[p]()).then(el=>{ if(S.page===p) pg.replaceChildren(el); })
+    .catch(e=>pg.replaceChildren(h("div",{class:"err"},"加载失败："+e.message)));
+}
+
+// ---------- extra shared widgets ----------
+// addCSS: modules add their own styles (prefix class names with the module name).
+function addCSS(text){ document.head.append(h("style",{}, text)); }
+// tabs([["id","标题", ()=>Node], ...]) → Node with a tab strip; remembers the active tab per page.
+function tabs(list){
+  const key = "tab:"+S.page; let cur = S.tabs[key] || list[0][0];
+  const strip = h("div",{class:"tabs"}); const body = h("div");
+  const draw = ()=>{
+    strip.replaceChildren(...list.map(([id,l])=>h("a",{class:id===cur?"act":"", onclick:()=>{ cur=id; S.tabs[key]=id; draw(); }}, l)));
+    const t = list.find(x=>x[0]===cur) || list[0];
+    body.replaceChildren(h("div",{class:"mut"},"加载中…"));
+    const id = t[0];
+    Promise.resolve().then(()=>t[2]()).then(el=>{ if (cur===id) body.replaceChildren(el); })
+      .catch(e=>{ if (cur===id) body.replaceChildren(h("div",{class:"err"},"加载失败："+e.message)); });
+  };
+  draw();
+  return h("div",{}, strip, body);
+}
+// lineChart(series, opts): tiny SVG chart. series = [{label, color, points:[[t, v], ...]}];
+// opts = {height, fmt: v=>string, max}. Returns an SVG element with a legend.
+function lineChart(series, opts){
+  opts ||= {}; const W=600, H=opts.height||160, P=34;
+  const all = series.flatMap(s=>s.points);
+  if (!all.length) return h("div",{class:"mut"},"（暂无数据）");
+  const t0=Math.min(...all.map(p=>p[0])), t1=Math.max(...all.map(p=>p[0]))||t0+1;
+  const vmax = opts.max || Math.max(1, ...all.map(p=>p[1]));
+  const X=t=>P+(W-P-4)*(t-t0)/Math.max(1,t1-t0), Y=v=>H-16-(H-24)*(v/vmax);
+  const ns="http://www.w3.org/2000/svg", el=(t,a)=>{ const e=document.createElementNS(ns,t); for(const k in a) e.setAttribute(k,a[k]); return e; };
+  const svg = el("svg",{viewBox:`0 0 ${W} ${H}`, width:"100%", preserveAspectRatio:"none", style:"display:block"});
+  for (let i=0;i<=4;i++){ const v=vmax*i/4, y=Y(v);
+    svg.append(el("line",{x1:P,x2:W,y1:y,y2:y,stroke:"var(--line)","stroke-width":1}));
+    const tx=el("text",{x:2,y:y+4,"font-size":10,fill:"var(--mut)"}); tx.textContent=(opts.fmt||String)(v); svg.append(tx); }
+  for (const s of series){ if(!s.points.length) continue;
+    svg.append(el("polyline",{points:s.points.map(p=>X(p[0]).toFixed(1)+","+Y(p[1]).toFixed(1)).join(" "),fill:"none",stroke:s.color||"var(--acc)","stroke-width":1.6})); }
+  return h("div",{}, svg, h("div",{class:"row",style:"font-size:12px;margin-top:4px"}, series.map(s=>h("span",{},h("span",{class:"dot",style:"background:"+(s.color||"var(--acc)")}), s.label))));
+}
+const COLORS = ["#2f6fed","#1f9d55","#d64545","#c98a0b","#8e44ad","#16a2b8","#e67e22","#7f8c8d"];
+// confirmBtn(label, question, fn): a red button that asks before running fn.
+function confirmBtn(label, question, fn){ return h("button",{class:"btn sm d",onclick:async()=>{ if(!confirm(question)) return; try{ await fn(); }catch(e){ toast(e.message,4000); } }}, label); }
+
+// ---------- core pages ----------
+registerPage("status", "overview", "总览", 10, async ()=>{
+  const wrap = h("div");
+  const draw = async ()=>{
+    const s = await api("status"); const now = Date.now()/1000;
+    const rates = {};
+    for (const w of s.wan||[]){ const p=S.prevWan[w.name]; if(p&&now>p.t){ rates[w.name]={rx:(w.rx-p.rx)*8/(now-p.t), tx:(w.tx-p.tx)*8/(now-p.t)}; } S.prevWan[w.name]={rx:w.rx,tx:w.tx,t:now}; }
+    S.status = s;
+    $("#brandsub").textContent = s.host||"";
+    $("#hmeta").textContent = (s.version||"")+" · "+(s.kernel||"");
+    const memUsed = s.mem_total_kb - s.mem_avail_kb;
+    const stat = (l,v,sub,pct)=>h("div",{class:"card stat"}, h("div",{class:"l"},l), h("div",{class:"v"},v), sub?h("div",{class:"s"},sub):null, pct!==undefined?h("div",{class:"bar"},h("i",{style:"width:"+Math.min(100,pct).toFixed(0)+"%"})):null);
+    const wanCards = (s.wan||[]).map(w=>card(h("span",{},h("span",{class:"dot "+(w.up?"ok":"bad")}),"WAN · "+w.name),
+      h("dl",{class:"kv"}, h("dt",{},"状态"),h("dd",{},w.up?"已连接 · "+fmtDur(w.uptime):"未连接"),
+        h("dt",{},"IPv4"),h("dd",{class:"mono"},w.ip||"-"), h("dt",{},"接口"),h("dd",{class:"mono"},w.dev),
+        h("dt",{},"实时"),h("dd",{}, rates[w.name]?"↓ "+fmtRate(rates[w.name].rx)+"  ↑ "+fmtRate(rates[w.name].tx):"…"),
+        h("dt",{},"累计"),h("dd",{},"↓ "+fmtBytes(w.rx)+"  ↑ "+fmtBytes(w.tx)))));
+    const wifiCards = (s.wifi||[]).map(w=>card(h("span",{},h("span",{class:"dot "+(w.up?"ok":"bad")}),w.ssid||w.ifname),
+      h("dl",{class:"kv"}, h("dt",{},"接口"),h("dd",{class:"mono"},w.ifname), h("dt",{},"信道"),h("dd",{},(w.channel||"-")+" · "+(w.htmode||"-")),
+        h("dt",{},"终端"),h("dd",{},w.clients))));
+    const ts = s.tailscale||{};
+    wrap.replaceChildren(
+      h("div",{class:"grid"},
+        stat("运行时间", fmtDur(s.uptime), "负载 "+s.load),
+        stat("内存", fmtBytes(memUsed*1024)+" / "+fmtBytes(s.mem_total_kb*1024), "可用 "+fmtBytes(s.mem_avail_kb*1024), memUsed/s.mem_total_kb*100),
+        stat("连接数", s.conntrack+" / "+s.conntrack_max, "硬件加速中 "+s.hnat_bind, s.conntrack/s.conntrack_max*100),
+        stat("温度", s.temp_mc?(s.temp_mc/1000).toFixed(1)+" °C":"-", "配置存储剩余 "+fmtBytes(s.overlay_free_kb*1024))),
+      h("div",{class:"grid",style:"margin-top:14px"}, wanCards, wifiCards,
+        card("Tailscale", h("dl",{class:"kv"}, h("dt",{},"状态"),h("dd",{},ts.state||"-"), h("dt",{},"地址"),h("dd",{class:"mono"},ts.ip||"-"), h("dt",{},"在线节点"),h("dd",{},(ts.peers_online??"-")+" / "+(ts.peers_total??"-"))))),
+      card("服务", h("div",{class:"row"}, (s.services||[]).map(x=>h("span",{class:"tag "+(x.running?"ok":"bad")}, x.name)))),
+      card("最近变更", h("pre",{}, (s.changes||[]).slice().reverse().join("\n")||"（无）")));
+  };
+  await draw();
+  S.timer = setInterval(()=>draw().catch(()=>{}), 3000);
+  return wrap;
+});
+
+registerPage("system", "history", "备份与回滚", 30, async ()=>{
+  const j = await api("history");
+  return card("配置快照（每次应用前自动保存）", roTable(["快照","操作"], (j.snapshots||[]).map(s=>[h("span",{class:"mono"},s),
+    h("button",{class:"btn sm d",onclick:async()=>{ if(!confirm("回滚到 "+s+"？当前配置会被替换。")) return;
+      await api("rollback",{snapshot:s}); toast("正在回滚…",4000); setTimeout(async()=>{ await loadConfig(); show("history"); }, 5000); }},"回滚到此")])), null, true);
+});
+
+// ---------- apply flow ----------
+function modal(title, body, buttons){
+  const m = h("div",{class:"modal"}, h("div",{class:"box"}, h("h3",{},title), h("div",{class:"b"}, body), h("div",{class:"f"}, buttons)));
+  document.body.append(m); return m;
+}
+async function startApply(){
+  const payload = {config:S.cfg, secrets:S.secrets};
+  let v;
+  try { v = await api("validate", payload); } catch(e){ return toast("校验请求失败："+e.message, 5000); }
+  if (v.errors && v.errors.length){
+    const m = modal("配置有误，未应用", h("ul",{class:"err"}, v.errors.map(x=>h("li",{},x))), [h("button",{class:"btn p",onclick:()=>m.remove()},"返回修改")]);
+    return;
+  }
+  const m = modal("确认应用", [h("div",{style:"margin-bottom:8px"}, v.empty?"没有文件变化（可能只改了域名列表以外的等价内容）。":"将执行以下变更："), h("pre",{}, v.plan||"(无)"),
+    h("p",{class:"mut"},"应用后有 120 秒确认时间；如果改动导致无法访问本页面，路由器会自动回滚到之前的配置。")],
+    [h("button",{class:"btn",onclick:()=>m.remove()},"取消"), h("button",{class:"btn p",onclick:()=>{ m.remove(); doApply(payload); }},"应用")]);
+}
+async function doApply(payload){
+  try { await api("apply", Object.assign({confirm:120}, payload)); } catch(e){
+    return modal("应用失败", h("pre",{}, e.data&&e.data.errors?e.data.errors.join("\n"):e.message), [h("button",{class:"btn p",onclick:ev=>ev.target.closest(".modal").remove()},"关闭")]);
+  }
+  const log = h("pre",{},"");
+  const stateEl = h("div",{style:"margin-bottom:8px"},"正在应用…");
+  const foot = h("div",{class:"row"});
+  const m = modal("应用配置", [stateEl, log], [foot]);
+  let seenOk = 0, fails = 0;
+  const poll = async ()=>{
+    let j;
+    try { j = await api("job"); fails = 0; } catch(e){ fails++; stateEl.textContent = "暂时连不上路由器（"+fails+"）… 如果是改了 LAN 地址，请到新地址访问；超时未确认会自动回滚。"; return setTimeout(poll, 2000); }
+    const job = j.job||{}; log.textContent = job.output||"";
+    if (job.state==="running") return setTimeout(poll, 1200);
+    if (job.state==="failed"){
+      stateEl.replaceChildren(h("b",{class:"err"},"应用失败，已自动回滚。"));
+      foot.replaceChildren(h("button",{class:"btn p",onclick:async()=>{ m.remove(); await loadConfig(); show(S.page);} },"关闭"));
+      return;
+    }
+    if (!j.confirm_pending){
+      stateEl.replaceChildren(h("b",{style:"color:var(--ok)"},"已应用并保留。"));
+      foot.replaceChildren(h("button",{class:"btn p",onclick:async()=>{ m.remove(); await loadConfig(); show(S.page);} },"完成"));
+      return;
+    }
+    if (!seenOk){
+      seenOk = Date.now();
+      const left = h("span",{});
+      const tick = setInterval(()=>{ const s=Math.max(0, (job.confirm||120) - Math.floor((Date.now()-seenOk)/1000)); left.textContent = s+" 秒后自动回滚"; if(!s) clearInterval(tick); }, 500);
+      stateEl.replaceChildren(h("b",{style:"color:var(--ok)"},"已应用。"), " 网络正常的话请点“保留”，否则 ", left, "。");
+      foot.replaceChildren(
+        h("button",{class:"btn d",onclick:async()=>{ clearInterval(tick); await api("revert",{}).catch(()=>{}); m.remove(); toast("正在回滚…",4000); setTimeout(async()=>{await loadConfig(); show(S.page);},5000); }},"立即回滚"),
+        h("button",{class:"btn p",onclick:async()=>{ clearInterval(tick); await api("confirm",{}); m.remove(); toast("已保留新配置"); await loadConfig(); show(S.page); }},"保留"));
+    }
+  };
+  poll();
+}
+
+// ---------- login ----------
+function renderLogin(setup){
+  clearInterval(S.timer);
+  const p = h("input",{type:"password",autocomplete:setup?"new-password":"current-password",placeholder:"密码"});
+  const p2 = setup ? h("input",{type:"password",autocomplete:"new-password",placeholder:"再次输入"}) : null;
+  const err = h("div",{class:"err"});
+  const go = async e=>{ e.preventDefault(); err.textContent="";
+    if (setup && p.value!==p2.value) return err.textContent="两次输入不一致";
+    try { await api(setup?"setup":"login",{password:p.value}); boot(); } catch(x){ err.textContent=x.message; } };
+  $("#root").replaceChildren(h("div",{class:"login"}, h("form",{onsubmit:go}, card(setup?"设置管理员密码":"登录 mini-router",
+    [setup?h("div",{class:"mut"},"首次使用：请设置管理员密码（至少 8 位，只能在内网设置）。"):null, p, p2, err, h("button",{class:"btn p",type:"submit"}, setup?"设置并登录":"登录")]))));
+  p.focus();
+}
+
+async function boot(){
+  let s;
+  try { s = await api("session"); } catch(e){ $("#root").replaceChildren(h("div",{class:"login"},h("div",{class:"err"},"无法连接路由器："+e.message))); return; }
+  if (!s.authenticated) return renderLogin(!s.password_set);
+  S.auth = true;
+  renderShell();
+  try { await loadConfig(); } catch(e){ toast("读取配置失败："+e.message, 5000); }
+  show(location.hash.slice(1)||"overview");
+}
+window.addEventListener("DOMContentLoaded", boot);

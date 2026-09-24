@@ -1,0 +1,87 @@
+#!/bin/sh
+# Multi-WAN health checker, run by mr-wanmon under supervise-daemon (router.yaml multiwan).
+# Every round each WAN pings the targets through its own interface (first answer wins); the WANs
+# are probed in parallel. A WAN is down after $FALL bad rounds in a row and up again after $RISE
+# good ones. Each round rewrites $STATE (read by the web UI, `mr status` and the route hooks); on a
+# change `mr wan health` moves the default-route metrics and re-renders the balance map.
+# Settings: /etc/mini-router/gen/wanmon.conf (generated from router.yaml; every value validated).
+CONF=${WANMON_CONF:-/etc/mini-router/gen/wanmon.conf}
+STATE=${WANMON_STATE:-/run/mini-router/wan-state.json}
+MR=${MR_BIN:-/usr/sbin/mr}
+ROUNDS=${WANMON_ROUNDS:-0} # tests: stop after N rounds (0 = run forever)
+INTERVAL=5 TIMEOUT=2 FALL=3 RISE=2 TARGETS='' WANS=''
+# shellcheck source=/dev/null
+. "$CONF"
+mkdir -p "${STATE%/*}"
+
+# per-WAN variables, indexed by position: n_I name, d_I device, s_I state (up|down), g_I / b_I
+# length of the current good / bad run, r_I last RTT in ms, t_I time of the last state change
+N=0
+for w in $WANS; do
+	N=$((N + 1))
+	eval "n_$N=\${w%%:*} d_$N=\${w#*:} s_$N=up g_$N=0 b_$N=0 r_$N='' t_$N=$(date +%s)"
+done
+
+probe() { # $1 = interface; prints the RTT (ms) of the first target that answers
+	for t in $TARGETS; do
+		r=$(ping -c 1 -W "$TIMEOUT" -I "$1" "$t" 2>/dev/null | sed -n 's/.*time=\([0-9][0-9]*\(\.[0-9]*\)\{0,1\}\) *ms.*/\1/p')
+		if [ -n "$r" ]; then
+			echo "$r"
+			return 0
+		fi
+	done
+	return 1
+}
+
+write_state() {
+	out='' i=1
+	while [ "$i" -le "$N" ]; do
+		eval "n=\$n_$i d=\$d_$i s=\$s_$i b=\$b_$i r=\$r_$i t=\$t_$i"
+		out="$out${out:+,}{\"name\":\"$n\",\"dev\":\"$d\",\"state\":\"$s\",\"rtt_ms\":${r:-null},\"since\":$t,\"fails\":$b}"
+		i=$((i + 1))
+	done
+	printf '{"time":%s,"interval":%s,"wans":[%s]}\n' "$(date +%s)" "$INTERVAL" "$out" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
+}
+
+# start clean: every WAN counts as up until proven otherwise (this also undoes a previous run's "down")
+write_state
+"$MR" wan health > /dev/null 2>&1
+round=0
+while :; do
+	i=1
+	while [ "$i" -le "$N" ]; do
+		eval "d=\$d_$i"
+		probe "$d" > "$STATE.p$i" &
+		i=$((i + 1))
+	done
+	wait
+	changed=''
+	i=1
+	while [ "$i" -le "$N" ]; do
+		eval "n=\$n_$i d=\$d_$i s=\$s_$i g=\$g_$i b=\$b_$i"
+		r=$(head -n 1 "$STATE.p$i" 2> /dev/null)
+		if [ -n "$r" ]; then
+			g=$((g + 1)) b=0
+			if [ "$s" = down ] && [ "$g" -ge "$RISE" ]; then
+				s=up changed=1
+				eval "t_$i=$(date +%s)"
+				logger -t wanmon "$n up again via $d ($r ms)"
+			fi
+		else
+			g=0 b=$((b + 1))
+			if [ "$s" = up ] && [ "$b" -ge "$FALL" ]; then
+				s=down changed=1
+				eval "t_$i=$(date +%s)"
+				logger -t wanmon "$n down: no reply from $TARGETS via $d for $b rounds"
+			fi
+		fi
+		eval "s_$i=\$s g_$i=\$g b_$i=\$b r_$i=\$r"
+		i=$((i + 1))
+	done
+	rm -f "$STATE".p*
+	write_state
+	[ -z "$changed" ] || "$MR" wan health > /dev/null 2>&1
+	round=$((round + 1))
+	[ "$ROUNDS" -gt 0 ] && [ "$round" -ge "$ROUNDS" ] && break
+	sleep "$INTERVAL"
+done

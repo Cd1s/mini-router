@@ -1,0 +1,148 @@
+{
+ "config": {
+  "dhcp": {
+   "start": 100,
+   "end": 249,
+   "lease": "12h",
+   "domain": "lan",
+   "dns": [],
+   "ntp": [],
+   "search": [],
+   "options": [
+    {
+     "code": 26,
+     "value": "1492"
+    }
+   ],
+   "ipv6": {
+    "mode": "slaac",
+    "start": "",
+    "end": "",
+    "lease": "12h",
+    "dns": [],
+    "ra_interval": 60,
+    "ra_lifetime": 1800,
+    "ra_priority": "",
+    "ra_mtu": 0
+   },
+   "hosts": [
+    {
+     "name": "nas",
+     "mac": "02:98:67:90:62:47",
+     "ip": "192.168.1.166"
+    },
+    {
+     "name": "server",
+     "mac": "02:bb:dd:96:49:e2",
+     "ip": "192.168.1.241"
+    },
+    {
+     "name": "workstation",
+     "mac": "02:9a:41:9d:fa:91",
+     "ip": "192.168.1.237"
+    },
+    {
+     "name": "desktop",
+     "mac": "02:c3:06:d6:7f:8a",
+     "ip": "192.168.1.66"
+    }
+   ],
+   "host_leases": {
+    "02:c3:06:d6:7f:8a": "infinite"
+   }
+  },
+  "dns": {
+   "cache_size": 8000,
+   "min_cache_ttl": 3600,
+   "use_stale_cache": 3600,
+   "no_negcache": true,
+   "edns_packet_max": 1232,
+   "upstream": "isp",
+   "servers": [],
+   "dot": {
+    "port": 5453,
+    "servers": [
+     {
+      "address": "1.1.1.1",
+      "name": "cloudflare-dns.com"
+     },
+     {
+      "address": "1.0.0.1",
+      "name": "cloudflare-dns.com"
+     }
+    ],
+    "bootstrap": []
+   },
+   "servers_file": "",
+   "addn_hosts": [
+    "/etc/lucky/dnsmasq.hosts"
+   ],
+   "rebind_protection": true,
+   "local_service": true,
+   "redirect": true,
+   "records": [
+    {
+     "name": "nas",
+     "type": "A",
+     "value": "192.168.1.10"
+    },
+    {
+     "name": "*.home.example.com",
+     "type": "A",
+     "value": "192.168.1.6"
+    },
+    {
+     "name": "photos.lan",
+     "type": "CNAME",
+     "value": "nas.lan"
+    },
+    {
+     "name": "_smb._tcp.lan",
+     "type": "SRV",
+     "value": "nas.lan:445"
+    }
+   ],
+   "split": [
+    {
+     "name": "cloudflare-dot",
+     "domains_file": "/etc/mini-router/dns/cloudflare-dot.domains",
+     "server": "127.0.0.1#5453"
+    }
+   ]
+  },
+  "networks": [
+   {
+    "name": "guest",
+    "ipv4": "192.168.20.1/24",
+    "zone": "guest",
+    "ipv6_ra": true,
+    "dhcp": {
+     "enabled": true,
+     "start": 100,
+     "end": 199,
+     "lease": "2h",
+     "dns": [],
+     "ntp": [],
+     "search": [],
+     "options": [],
+     "ipv6": {
+      "mode": "slaac",
+      "start": "",
+      "end": "",
+      "lease": "12h",
+      "dns": [],
+      "ra_interval": 60,
+      "ra_lifetime": 1800,
+      "ra_priority": "",
+      "ra_mtu": 0
+     }
+    }
+   },
+   {
+    "name": "iot",
+    "ipv4": "192.168.30.1/24",
+    "zone": "lan"
+   }
+  ]
+ }
+}

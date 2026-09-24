@@ -1,0 +1,170 @@
+{
+ "changes": [
+  "2026-09-24 10:29:01 mr apply: network.sh, hostapd-phy0.conf, hostapd-phy1.conf, services, firewall, +mr-zram",
+  "2026-09-24 10:32:15 mr apply: failed and rolled back — not confirmed within 180s",
+  "2026-09-24 10:35:16 mr apply: network.sh, hostapd-phy0.conf, hostapd-phy1.conf, services",
+  "2026-09-24 10:59:52 mr apply: 90-mini-router.conf, network.sh, hostapd-phy0.conf, wifi-post.sh",
+  "2026-09-24 11:03:27 mr apply: dnsmasq.conf",
+  "2026-09-24 11:03:45 mr rollback: 20260924-110325.tar.gz"
+ ],
+ "conntrack": 757,
+ "conntrack_max": 100000,
+ "hnat_bind": 26,
+ "host": "mini-router",
+ "kernel": "6.18.52",
+ "leases": [
+  {
+   "mac": "02:e3:50:10:6a:63",
+   "ip": "192.168.1.233",
+   "name": "laptop",
+   "expires": 1790291888
+  },
+  {
+   "mac": "02:13:2c:f7:cb:f2",
+   "ip": "192.168.1.167",
+   "name": "*",
+   "expires": 1790289177
+  },
+  {
+   "mac": "02:c8:61:52:f4:45",
+   "ip": "192.168.1.170",
+   "name": "tv-box",
+   "expires": 1790290795
+  },
+  {
+   "mac": "02:d9:44:2f:7a:85",
+   "ip": "192.168.1.217",
+   "name": "phone",
+   "expires": 1790290796
+  },
+  {
+   "mac": "02:e7:7f:2b:93:e6",
+   "ip": "192.168.1.246",
+   "name": "iPhone",
+   "expires": 1790290410
+  }
+ ],
+ "load": "0.32 0.70 0.54",
+ "mem_avail_kb": 153588,
+ "mem_total_kb": 494324,
+ "overlay_free_kb": 100152,
+ "overlay_total_kb": 231116,
+ "services": [
+  {
+   "name": "mr-network",
+   "running": true
+  },
+  {
+   "name": "mr-firewall",
+   "running": true
+  },
+  {
+   "name": "dnsmasq",
+   "running": true
+  },
+  {
+   "name": "dhcpcd",
+   "running": true
+  },
+  {
+   "name": "ntpd",
+   "running": true
+  },
+  {
+   "name": "watchdog",
+   "running": true
+  },
+  {
+   "name": "mr-pppoe.wan",
+   "running": true
+  },
+  {
+   "name": "mr-pppoe.wan2",
+   "running": true
+  },
+  {
+   "name": "mr-hostapd",
+   "running": true
+  },
+  {
+   "name": "dropbear",
+   "running": true
+  },
+  {
+   "name": "tailscale",
+   "running": true
+  },
+  {
+   "name": "lucky",
+   "running": true
+  },
+  {
+   "name": "lucky-dns-inotify",
+   "running": true
+  },
+  {
+   "name": "dstatus-agent",
+   "running": true
+  },
+  {
+   "name": "stubby",
+   "running": true
+  },
+  {
+   "name": "mr-panel",
+   "running": true
+  },
+  {
+   "name": "mr-zram",
+   "running": true
+  }
+ ],
+ "tailscale": {
+  "ip": "100.100.0.1",
+  "peers_online": 14,
+  "peers_total": 27,
+  "state": "Running"
+ },
+ "temp_mc": 54508,
+ "time": 1790249149,
+ "uptime": 4586,
+ "version": "mini-router dev (Alpine 3.24.2)",
+ "wan": [
+  {
+   "name": "wan",
+   "up": true,
+   "ip": "203.0.113.11",
+   "dev": "pppoe-wan",
+   "rx": 5930877,
+   "tx": 446430282,
+   "uptime": 3215
+  },
+  {
+   "name": "wan2",
+   "up": true,
+   "ip": "203.0.113.12",
+   "dev": "pppoe-wan2",
+   "rx": 13311313,
+   "tx": 13279425,
+   "uptime": 3215
+  }
+ ],
+ "wifi": [
+  {
+   "ifname": "phy0-ap0",
+   "up": true,
+   "ssid": "MiniRouter-2.4G",
+   "channel": "6",
+   "htmode": "40MHz",
+   "clients": 1
+  },
+  {
+   "ifname": "phy1-ap0",
+   "up": true,
+   "ssid": "MiniRouter-5G",
+   "channel": "36",
+   "htmode": "160MHz",
+   "clients": 3
+  }
+ ]
+}

@@ -1,0 +1,58 @@
+# lab config — proxy module fragment (proxy).
+# CI concatenates examples/lab.d/*.yaml into one router.yaml; keep only this module's top-level keys here.
+# Every proxy feature: one node of every structured type (Shadowsocks 2022 + AEAD, VLESS REALITY+Vision, VLESS ws+TLS
+# with 0-RTT, VMess gRPC+TLS+uTLS, VMess ws without TLS, Trojan httpupgrade / HTTP/2, Hysteria2 with obfs, Hysteria2 with
+# port hopping, TUIC, AnyTLS, SOCKS5, HTTPS proxy), custom JSON nodes (Trojan outbound, WireGuard endpoint), urltest +
+# selector groups, inline and file-based domain / CIDR rules (IPv4 + IPv6), a bypass device, a saved subscription.
+# Fake servers and keys (secrets.d/proxy.yaml). tools/ci.d/proxy.sh runs `sing-box check` on the result and an end-to-end
+# test in network namespaces that sends TCP and UDP through every node to real sing-box servers.
+
+proxy:
+  enabled: true
+  nodes:
+    - {name: sg1, server: sg1.example.net, port: 8388, method: 2022-blake3-aes-128-gcm, password_secret: proxy_sg1, tcp_only: true}
+    - {name: jp1, server: 203.0.113.7, port: 8389, method: aes-128-gcm, password_secret: proxy_jp1}
+    - {name: us-trojan, type: custom, json_secret: proxy_us_trojan}
+    - {name: hk-reality, type: vless, server: 203.0.113.20, port: 8443, uuid_secret: proxy_hk-reality_uuid, flow: xtls-rprx-vision,
+       tls: true, sni: www.example.com, fingerprint: chrome, reality_public_key: LHrjuwEq6GjVwsi-cALKBZ7shC7yUshr_0MQBbg5qQA,
+       reality_short_id: 6ba85179e30d4fc2}
+    - {name: vless-ws, type: vless, server: vl.example.net, port: 8444, uuid_secret: proxy_vless-ws_uuid, tls: true,
+       sni: vl.example.net, alpn: [http/1.1], transport: ws, path: /vl, host: vl.example.net, early_data: 2048}
+    - {name: vmess-grpc, type: vmess, server: vm.example.net, port: 8445, uuid_secret: proxy_vmess-grpc_uuid, tls: true,
+       fingerprint: firefox, alpn: [h2], transport: grpc, service_name: vmgrpc, packet_encoding: xudp}
+    - {name: vmess-ws, type: vmess, server: 203.0.113.21, port: 8446, uuid_secret: proxy_vmess-ws_uuid, security: aes-128-gcm,
+       transport: ws, path: /vm, host: vm.example.net}
+    - {name: trojan-hu, type: trojan, server: tr.example.net, port: 8447, password_secret: proxy_trojan-hu_password, tls: true,
+       transport: httpupgrade, path: /tr, host: tr.example.net}
+    - {name: trojan-h2, type: trojan, server: tr.example.net, port: 8448, password_secret: proxy_trojan-h2_password, tls: true,
+       alpn: [h2], transport: http, path: /h2, host: tr.example.net}
+    - {name: hy2, type: hysteria2, server: hy.example.net, port: 8449, password_secret: proxy_hy2_password, up_mbps: 50, down_mbps: 200,
+       obfs: salamander, obfs_password_secret: proxy_hy2_obfs, sni: hy.example.net}
+    - {name: hy2-hop, type: hysteria2, server: 203.0.113.22, port: 8450, password_secret: proxy_hy2-hop_password,
+       hop_ports: "20000-20010,20100", insecure: true}
+    - {name: tuic, type: tuic, server: tu.example.net, port: 8451, uuid_secret: proxy_tuic_uuid, password_secret: proxy_tuic_password,
+       congestion_control: bbr, udp_relay_mode: native, sni: tu.example.net, alpn: [h3]}
+    - {name: anytls, type: anytls, server: at.example.net, port: 8452, password_secret: proxy_anytls_password, sni: at.example.net}
+    - {name: socks, type: socks, server: 203.0.113.30, port: 1080, username: lab, password_secret: proxy_socks_password}
+    - {name: https-proxy, type: http, server: hp.example.net, port: 8453, username: lab, password_secret: proxy_https-proxy_password, tls: true}
+    - {name: wg, type: custom, json_secret: proxy_wg}
+  groups:
+    - {name: auto, type: urltest, nodes: [sg1, jp1], interval: 3m, url: "https://cp.cloudflare.com/generate_204"}
+    - name: pick
+      type: selector
+      nodes: [jp1, sg1, us-trojan, hk-reality, vless-ws, vmess-grpc, vmess-ws, trojan-hu, trojan-h2, hy2, hy2-hop, tuic, anytls,
+              socks, https-proxy, wg]
+  rules:
+    - name: ai
+      outbound: auto
+      domains: [openai.com, chatgpt.com, claude.ai, anthropic.com]
+      domains_file: @REPO@/mr/testdata/proxy.domains
+    - name: telegram
+      outbound: pick
+      domains: [telegram.org, t.me]
+      cidrs: [91.108.4.0/22, 149.154.160.0/20, "2001:67c:4e8::/48"]
+      cidr_file: @REPO@/mr/testdata/proxy.cidrs
+  bypass:
+    - {name: desktop, mac: "02:c3:06:d6:7f:8a"}
+  subscriptions:
+    - {name: airport, url_secret: proxy_sub_airport}

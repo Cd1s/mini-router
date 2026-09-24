@@ -1,0 +1,113 @@
+# mini-router config for the Redmi AX6000 — converted from the live OpenWrt config on 2026-09-24.
+# Secrets (PPPoE password, WiFi keys) live in secrets.yaml (0600), referenced by *_secret keys.
+
+system:
+  hostname: mini-router
+  timezone: "<+08>-8"          # UTC+8
+  ntp: [ntp.tencent.com, ntp1.aliyun.com, ntp.ntsc.ac.cn, cn.ntp.org.cn]
+  sysctl:
+    net.ipv4.tcp_congestion_control: bbr
+    net.ipv4.tcp_fin_timeout: "30"
+    net.ipv4.tcp_keepalive_time: "120"
+    net.ipv4.igmp_max_memberships: "100"
+  zram: true
+
+lan:
+  bridge: br-lan
+  ports: [lan2, lan3, lan4]
+  ipv4: 192.168.1.6/24
+  ipv6_ra: true
+
+wan:
+  - name: wan                   # primary
+    device: wan
+    mac: 02:55:a3:1c:8d:ed
+    proto: pppoe
+    username: "user@example-isp"
+    password_secret: pppoe_password
+    mtu: 1492
+    metric: 0
+    peerdns: true
+    ipv6: true
+    ipv6_pd: true
+  - name: wan2                  # backup; also carries desktop (policy below)
+    device: wan
+    proto: pppoe
+    username: "user@example-isp"
+    password_secret: pppoe_password
+    mtu: 1492
+    metric: 40
+    peerdns: false
+    ipv6: true
+    ipv6_pd: true
+    ipv6_srcroute: true
+
+policy_routes:
+  - name: desktop-via-wan2
+    mac: 02:c3:06:d6:7f:8a
+    via: wan2
+    table: 102
+    mark: "0x102"
+
+firewall:
+  offload: hardware
+  synflood_protect: true
+  forwards:
+    - {name: vps-45000-45100, proto: [tcp, udp], port: 45000-45100, to: 192.168.1.241}
+    - {name: desktop-7443,    proto: [tcp],      port: "7443",      to: 192.168.1.66, to_port: "9999"}
+    - {name: workstation,     proto: [tcp, udp], port: 46001-46020, to: 192.168.1.237}
+  open:
+    - {name: lucky-https, proto: [tcp], port: "443"}
+
+dhcp:
+  start: 100
+  end: 249
+  lease: 12h
+  domain: lan
+  hosts:
+    - {name: nas, mac: "02:98:67:90:62:47", ip: 192.168.1.166}
+    - {name: server,        mac: "02:bb:dd:96:49:e2", ip: 192.168.1.241}
+    - {name: workstation,    mac: "02:9a:41:9d:fa:91", ip: 192.168.1.237}
+    - {name: desktop,        mac: "02:c3:06:d6:7f:8a", ip: 192.168.1.66}
+
+dns:
+  cache_size: 8000
+  min_cache_ttl: 3600
+  use_stale_cache: 3600
+  no_negcache: true
+  edns_packet_max: 1232
+  rebind_protection: true
+  local_service: true
+  redirect: true
+  addn_hosts: [/etc/lucky/dnsmasq.hosts]
+  split:                        # DNS 分流
+    - name: cloudflare-dot
+      domains_file: /etc/mini-router/dns/cloudflare-dot.domains
+      server: "127.0.0.1#5453"  # stubby -> Cloudflare DoT
+
+wifi:
+  country: PA
+  radios:
+    - phy: phy0
+      band: 2g
+      channel: auto
+      channels: "1-11"
+      htmode: HE40
+      txpower: 30
+      ssids:
+        - {ssid: MiniRouter-2.4G, key_secret: wifi_key, encryption: sae-mixed}
+    - phy: phy1
+      band: 5g
+      channel: "36"
+      htmode: HE160
+      txpower: 30
+      ssids:
+        - {ssid: MiniRouter-5G, key_secret: wifi_key, encryption: sae-mixed}
+
+services:
+  tailscale: {enabled: true, port: 41641}
+  lucky: {enabled: true}
+  dstatus: {enabled: true}
+  stubby: {enabled: true}
+  ssh: {enabled: true, port: 22, password_login: false}
+  panel: {enabled: true}

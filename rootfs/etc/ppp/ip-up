@@ -1,0 +1,3 @@
+#!/bin/sh
+# pppd: ip-up IFNAME TTY SPEED LOCAL REMOTE IPPARAM
+exec /usr/sbin/mr hook ppp-up "$@"

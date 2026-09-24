@@ -1,0 +1,1 @@
+# per-module lab test secrets (fake values). CI concatenates testdata/secrets.yaml + secrets.d/*.yaml.

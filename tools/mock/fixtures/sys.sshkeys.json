@@ -1,0 +1,20 @@
+{
+ "file": "/root/.ssh/authorized_keys",
+ "exists": true,
+ "root_password": "locked",
+ "other_unparsed": 0,
+ "managed": [
+  {
+   "type": "ssh-ed25519",
+   "comment": "lab-laptop",
+   "fingerprint": "SHA256:7rjQh0gXl8o2vQ3o2mW9h8m3m1b7r9J6q2e8d0c4Q1k"
+  }
+ ],
+ "other": [
+  {
+   "type": "ssh-ed25519",
+   "comment": "user@laptop",
+   "fingerprint": "SHA256:Qm2p8s4c5ZJ1xgk0B7q9mY3n6V1r2t8w5e0u4i9o3aA"
+  }
+ ]
+}

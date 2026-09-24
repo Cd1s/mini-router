@@ -1,0 +1,139 @@
+{
+ "enabled": true,
+ "running": true,
+ "version": "1.14.1",
+ "secrets_set": {
+  "proxy_sg1": true,
+  "proxy_jp1": true,
+  "proxy_hk-reality_uuid": true,
+  "proxy_vmess-ws_uuid": true,
+  "proxy_hy2_password": true,
+  "proxy_hy2_obfs": true,
+  "proxy_tuic_uuid": true,
+  "proxy_tuic_password": true,
+  "proxy_us_trojan": false,
+  "proxy_airport_sub": true
+ },
+ "proxies": {
+  "sg1": {
+   "type": "Shadowsocks",
+   "udp": true,
+   "delay": 68
+  },
+  "jp1": {
+   "type": "Shadowsocks",
+   "udp": true,
+   "delay": 131
+  },
+  "us-trojan": {
+   "type": "Trojan",
+   "udp": true,
+   "delay": 0
+  },
+  "auto": {
+   "type": "URLTest",
+   "now": "hy2",
+   "all": [
+    "sg1",
+    "jp1",
+    "hk-reality",
+    "hy2"
+   ],
+   "udp": true,
+   "delay": 47
+  },
+  "pick": {
+   "type": "Selector",
+   "now": "hk-reality",
+   "all": [
+    "jp1",
+    "sg1",
+    "hk-reality",
+    "vmess-ws",
+    "hy2",
+    "tuic",
+    "us-trojan"
+   ],
+   "udp": true,
+   "delay": 54
+  },
+  "hk-reality": {
+   "type": "VLESS",
+   "udp": true,
+   "delay": 54
+  },
+  "vmess-ws": {
+   "type": "VMess",
+   "udp": true,
+   "delay": 188
+  },
+  "hy2": {
+   "type": "Hysteria2",
+   "udp": true,
+   "delay": 47
+  },
+  "tuic": {
+   "type": "TUIC",
+   "udp": true,
+   "delay": 0
+  }
+ },
+ "connections_total": 4,
+ "connections": [
+  {
+   "network": "tcp",
+   "src": "192.168.1.233:52814",
+   "dst": "chatgpt.com:443",
+   "chains": [
+    "sg1",
+    "auto"
+   ],
+   "rule": "domain_suffix=[openai.com chatgpt.com claude.ai anthropic.com] => route(auto)",
+   "up": 18234,
+   "down": 912345,
+   "age": 42
+  },
+  {
+   "network": "udp",
+   "src": "192.168.1.233:61234",
+   "dst": "chatgpt.com:443",
+   "chains": [
+    "sg1",
+    "auto"
+   ],
+   "rule": "domain_suffix=[openai.com chatgpt.com claude.ai anthropic.com] => route(auto)",
+   "up": 5321,
+   "down": 88210,
+   "age": 40
+  },
+  {
+   "network": "tcp",
+   "src": "192.168.1.170:40112",
+   "dst": "149.154.167.51:443",
+   "chains": [
+    "jp1",
+    "pick"
+   ],
+   "rule": "ip_cidr=[91.108.4.0/22 149.154.160.0/20 2001:67c:4e8::/48] => route(pick)",
+   "up": 2210,
+   "down": 15020,
+   "age": 310
+  },
+  {
+   "network": "tcp",
+   "src": "[2001:db8:b910::1a]:51000",
+   "dst": "claude.ai:443",
+   "chains": [
+    "sg1",
+    "auto"
+   ],
+   "rule": "domain_suffix=[openai.com chatgpt.com claude.ai anthropic.com] => route(auto)",
+   "up": 44120,
+   "down": 1204411,
+   "age": 5
+  }
+ ],
+ "upload_total": 91234567,
+ "download_total": 1823456789,
+ "memory": 23068672
+}

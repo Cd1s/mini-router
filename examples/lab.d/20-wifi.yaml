@@ -1,0 +1,42 @@
+# lab config — wifi module fragment (wifi).
+# CI concatenates examples/lab.d/*.yaml into one router.yaml; keep only this module's top-level keys here.
+# Exercises every wifi feature: multi-SSID (4 on 5 GHz), guest/IoT networks, isolation, client limits,
+# MAC allow/deny lists, hidden SSID, WPA2 / WPA3 / mixed / open, every 802.11w (pmf) setting, beacon/DTIM,
+# 802.11b legacy rates. Networks guest + iot come from 10-net.yaml, secrets from mr/testdata/secrets.d/wifi.yaml.
+
+wifi:
+  country: PA
+  radios:
+    - phy: phy0
+      band: 2g
+      channel: auto
+      channels: "1-11"
+      htmode: HE40
+      txpower: 30
+      dtim_period: 3
+      legacy_rates: true            # keep 802.11b rates for old IoT gear
+      ssids:
+        - {ssid: MiniRouter-2.4G, key_secret: wifi_key, encryption: sae-mixed}
+        - ssid: MiniRouter-IoT
+          key_secret: wifi_iot_key
+          encryption: psk2
+          pmf: disabled             # IoT chips without 802.11w
+          network: iot
+          hidden: true
+          macfilter: allow          # only these devices may join
+          maclist: ["aa:bb:cc:00:00:01", "AA:BB:CC:00:00:02"]
+    - phy: phy1
+      band: 5g
+      channel: "36"
+      htmode: HE160
+      txpower: 30
+      beacon_int: 200
+      ssids:
+        - ssid: MiniRouter-5G
+          key_secret: wifi_key
+          encryption: sae-mixed
+          macfilter: deny           # everyone except these
+          maclist: ["de:ad:be:ef:00:01"]
+        - {ssid: MiniRouter-WPA3, key_secret: wifi_wpa3_key, encryption: sae, pmf: required}
+        - {ssid: MiniRouter-Guest, key_secret: wifi_guest_key, encryption: psk2, pmf: optional, network: guest, isolate: true, max_clients: 16}
+        - {ssid: "MiniRouter 访客", encryption: none, network: guest, isolate: true, max_clients: 8}

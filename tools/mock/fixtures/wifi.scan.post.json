@@ -1,0 +1,93 @@
+{
+ "phy": "phy1",
+ "band": "5g",
+ "ifname": "phy1-ap0",
+ "time": 1790290060,
+ "bss": [
+  {
+   "bssid": "02:d9:3b:a0:8c:8f",
+   "ssid": "MiniRouter-5G",
+   "freq": 5180,
+   "channel": 36,
+   "width": 160,
+   "signal": -20,
+   "security": "WPA2/WPA3",
+   "stations": 3,
+   "util": 18,
+   "seen_ms": 10,
+   "standard": "ax",
+   "own": true,
+   "band": "5g"
+  },
+  {
+   "bssid": "02:e0:45:b6:f7:a4",
+   "ssid": "TrueGigatexFiber_5G",
+   "freq": 5180,
+   "channel": 36,
+   "width": 80,
+   "signal": -67,
+   "security": "WPA2",
+   "stations": -1,
+   "util": -1,
+   "seen_ms": 120,
+   "standard": "ac",
+   "band": "5g"
+  },
+  {
+   "bssid": "02:00:9e:f0:3a:05",
+   "ssid": "AIS 4G Hi-Speed Home WiFi",
+   "freq": 5745,
+   "channel": 149,
+   "width": 80,
+   "signal": -74,
+   "security": "WPA2",
+   "stations": 5,
+   "util": 31,
+   "seen_ms": 200,
+   "standard": "ax",
+   "band": "5g"
+  },
+  {
+   "bssid": "02:11:22:33:44:55",
+   "ssid": "",
+   "freq": 5200,
+   "channel": 40,
+   "width": 20,
+   "signal": -82,
+   "security": "WPA2",
+   "stations": -1,
+   "util": -1,
+   "seen_ms": 400,
+   "standard": "n",
+   "band": "5g"
+  },
+  {
+   "bssid": "02:32:37:1e:4d:39",
+   "ssid": "3BB_Fiber_5G",
+   "freq": 5500,
+   "channel": 100,
+   "width": 160,
+   "signal": -85,
+   "security": "WPA2/WPA3",
+   "stations": -1,
+   "util": -1,
+   "seen_ms": 150,
+   "standard": "ax",
+   "band": "5g"
+  },
+  {
+   "bssid": "02:33:cd:8f:7d:eb",
+   "ssid": "บ้านคุณแม่",
+   "freq": 5260,
+   "channel": 52,
+   "width": 80,
+   "signal": -88,
+   "security": "WPA2",
+   "stations": -1,
+   "util": -1,
+   "seen_ms": 320,
+   "standard": "ac",
+   "band": "5g"
+  }
+ ]
+}

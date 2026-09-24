@@ -1,0 +1,389 @@
+{
+ "time": 1790290000,
+ "radios": [
+  {
+   "phy": "phy0",
+   "band": "2g",
+   "ifname": "phy0-ap0",
+   "state": "ENABLED",
+   "channel": 6,
+   "width": 40,
+   "cac_left": 0,
+   "config": "auto · HE40",
+   "channels": [
+    {
+     "freq": 2412,
+     "channel": 1,
+     "in_use": false,
+     "noise": -90,
+     "active_ms": 420,
+     "busy_ms": 190,
+     "rx_ms": 160,
+     "tx_ms": 4
+    },
+    {
+     "freq": 2417,
+     "channel": 2,
+     "in_use": false,
+     "noise": -92,
+     "active_ms": 400,
+     "busy_ms": 74,
+     "rx_ms": 60,
+     "tx_ms": 2
+    },
+    {
+     "freq": 2422,
+     "channel": 3,
+     "in_use": false,
+     "noise": -92,
+     "active_ms": 400,
+     "busy_ms": 81,
+     "rx_ms": 65,
+     "tx_ms": 2
+    },
+    {
+     "freq": 2427,
+     "channel": 4,
+     "in_use": false,
+     "noise": -92,
+     "active_ms": 400,
+     "busy_ms": 88,
+     "rx_ms": 70,
+     "tx_ms": 2
+    },
+    {
+     "freq": 2432,
+     "channel": 5,
+     "in_use": false,
+     "noise": -92,
+     "active_ms": 400,
+     "busy_ms": 95,
+     "rx_ms": 75,
+     "tx_ms": 2
+    },
+    {
+     "freq": 2437,
+     "channel": 6,
+     "in_use": true,
+     "noise": -91,
+     "active_ms": 5823412,
+     "busy_ms": 2419933,
+     "rx_ms": 1902331,
+     "tx_ms": 301223
+    },
+    {
+     "freq": 2442,
+     "channel": 7,
+     "in_use": false,
+     "noise": -92,
+     "active_ms": 400,
+     "busy_ms": 109,
+     "rx_ms": 85,
+     "tx_ms": 2
+    },
+    {
+     "freq": 2447,
+     "channel": 8,
+     "in_use": false,
+     "noise": -92,
+     "active_ms": 400,
+     "busy_ms": 116,
+     "rx_ms": 90,
+     "tx_ms": 2
+    },
+    {
+     "freq": 2452,
+     "channel": 9,
+     "in_use": false,
+     "noise": -92,
+     "active_ms": 400,
+     "busy_ms": 123,
+     "rx_ms": 95,
+     "tx_ms": 2
+    },
+    {
+     "freq": 2457,
+     "channel": 10,
+     "in_use": false,
+     "noise": -92,
+     "active_ms": 400,
+     "busy_ms": 130,
+     "rx_ms": 100,
+     "tx_ms": 2
+    },
+    {
+     "freq": 2462,
+     "channel": 11,
+     "in_use": false,
+     "noise": -89,
+     "active_ms": 410,
+     "busy_ms": 260,
+     "rx_ms": 230,
+     "tx_ms": 3
+    }
+   ]
+  },
+  {
+   "phy": "phy1",
+   "band": "5g",
+   "ifname": "phy1-ap0",
+   "state": "ENABLED",
+   "channel": 36,
+   "width": 160,
+   "cac_left": 0,
+   "config": "36 · HE160",
+   "channels": [
+    {
+     "freq": 5180,
+     "channel": 36,
+     "in_use": true,
+     "noise": -92,
+     "active_ms": 9123412,
+     "busy_ms": 1830021,
+     "rx_ms": 1310221,
+     "tx_ms": 402331
+    },
+    {
+     "freq": 5200,
+     "channel": 40,
+     "in_use": false,
+     "noise": -93,
+     "active_ms": 300,
+     "busy_ms": 65,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5220,
+     "channel": 44,
+     "in_use": false,
+     "noise": -93,
+     "active_ms": 300,
+     "busy_ms": 38,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5240,
+     "channel": 48,
+     "in_use": false,
+     "noise": -93,
+     "active_ms": 300,
+     "busy_ms": 74,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5260,
+     "channel": 52,
+     "in_use": false,
+     "noise": -93,
+     "active_ms": 300,
+     "busy_ms": 47,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5280,
+     "channel": 56,
+     "in_use": false,
+     "noise": -93,
+     "active_ms": 300,
+     "busy_ms": 20,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5300,
+     "channel": 60,
+     "in_use": false,
+     "noise": -93,
+     "active_ms": 300,
+     "busy_ms": 56,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5320,
+     "channel": 64,
+     "in_use": false,
+     "noise": -93,
+     "active_ms": 300,
+     "busy_ms": 29,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5500,
+     "channel": 100,
+     "in_use": false,
+     "noise": -93,
+     "active_ms": 300,
+     "busy_ms": 38,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5520,
+     "channel": 104,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 74,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5540,
+     "channel": 108,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 47,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5560,
+     "channel": 112,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 20,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5580,
+     "channel": 116,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 56,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5600,
+     "channel": 120,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 29,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5620,
+     "channel": 124,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 65,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5640,
+     "channel": 128,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 38,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5660,
+     "channel": 132,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 74,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5680,
+     "channel": 136,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 47,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5700,
+     "channel": 140,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 20,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5720,
+     "channel": 144,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 56,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5745,
+     "channel": 149,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 38,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5765,
+     "channel": 153,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 74,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5785,
+     "channel": 157,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 47,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5805,
+     "channel": 161,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 20,
+     "rx_ms": 15,
+     "tx_ms": 1
+    },
+    {
+     "freq": 5825,
+     "channel": 165,
+     "in_use": false,
+     "noise": -94,
+     "active_ms": 300,
+     "busy_ms": 56,
+     "rx_ms": 15,
+     "tx_ms": 1
+    }
+   ]
+  }
+ ]
+}

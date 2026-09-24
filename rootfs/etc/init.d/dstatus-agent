@@ -1,0 +1,14 @@
+#!/sbin/openrc-run
+description="DStatus probe agent"
+supervisor=supervise-daemon
+command=/usr/bin/dstatus-agent
+command_args="-c /etc/dstatus-agent/config.yaml"
+supervise_daemon_args="--env GOGC=50 --env GOMEMLIMIT=8MiB"
+respawn_delay=10
+respawn_max=0
+depend() {
+	need net
+}
+start_pre() {
+	[ -f /etc/dstatus-agent/config.yaml ]
+}

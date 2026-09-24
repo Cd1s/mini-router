@@ -1,0 +1,4 @@
+{
+ "ok": true,
+ "_mock": "the router answers {received, total}; the UI continues at offset + chunk length"
+}

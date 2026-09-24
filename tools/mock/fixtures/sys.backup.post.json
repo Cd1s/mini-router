@@ -1,0 +1,12 @@
+{
+ "name": "mini-router-backup-20260924-2100.tar.gz",
+ "data": "H4sIALo2tWoC/+3Wy2rDMBAFUK39FcLdtBC/X+C/UeQxdWNJQZKhofTfqyQUgjfdNKY092zGkhYWyHdk8jJTk54SaxZPNruW9CTUzH5LHrR1fanBuobFnBVN2TRl0VVlmC+qsqoYz9kGFueFDVthj8mdnCfVR5y/Gue1UNTzm+8heuLPysgD3wt5WI4vEYN/hVb5H7TL5GyWYZyFpWQwPh2MEpN2d8x/Va/y3+Zdjfxvcv7vQh1nSkQqjYq+R/tUk0fWH4CyybW1p2/O6Pu84+f7v1vlP2/aBvnfwkc8GquEj3te7Hh8/gkIj/HNlRCHaUfSkndhZRSzo0+0BgAAAAAAAAAAAAAAAACAv+YLaXnTfQAoAAA=",
+ "size": 278,
+ "files": [
+  "etc/mini-router/router.yaml",
+  "etc/mini-router/dns/cloudflare-dot.domains"
+ ],
+ "secrets": false,
+ "restorable": true,
+ "max_upload": 2900000
+}

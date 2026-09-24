@@ -1,0 +1,17 @@
+#!/sbin/openrc-run
+# mon module: 1-minute history sampler for the web UI (RAM only, 24 h ring in /run/mr-mon)
+description="mini-router monitoring history sampler"
+supervisor=supervise-daemon
+command=/usr/libexec/mr/mon-collect
+command_args="${MON_WAN:-}"
+respawn_delay=10
+respawn_max=0
+depend() {
+	after mr-firewall
+}
+start_pre() {
+	# nf_conntrack is loaded by the firewall, after the boot-time sysctl run: (re)apply the
+	# accounting switch for per-device traffic here
+	[ -f /etc/sysctl.d/91-mon.conf ] && sysctl -q -p /etc/sysctl.d/91-mon.conf >/dev/null 2>&1
+	return 0
+}

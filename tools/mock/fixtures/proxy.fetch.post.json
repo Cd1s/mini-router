@@ -1,0 +1,139 @@
+{
+ "nodes": [
+  {
+   "line": 1,
+   "remark": "🇭🇰 香港 01",
+   "summary": "vless · reality · vision",
+   "node": {
+    "name": "HK-01",
+    "type": "vless",
+    "server": "203.0.113.20",
+    "port": 443,
+    "uuid_secret": "proxy_hk-01_uuid",
+    "flow": "xtls-rprx-vision",
+    "tls": true,
+    "sni": "www.example.com",
+    "fingerprint": "chrome",
+    "reality_public_key": "LHrjuwEq6GjVwsi-cALKBZ7shC7yUshr_0MQBbg5qQA",
+    "reality_short_id": "6ba85179e30d4fc2"
+   },
+   "secrets": {
+    "proxy_hk-01_uuid": "1b4a9b3c-6f0e-4d3a-9d2b-3c5e7f901a01"
+   },
+   "warnings": null
+  },
+  {
+   "line": 2,
+   "remark": "🇯🇵 日本 03",
+   "summary": "vmess · ws · tls",
+   "node": {
+    "name": "JP-03",
+    "type": "vmess",
+    "server": "vm.example.net",
+    "port": 443,
+    "uuid_secret": "proxy_jp-03_uuid",
+    "tls": true,
+    "sni": "vm.example.net",
+    "fingerprint": "chrome",
+    "transport": "ws",
+    "path": "/vm",
+    "host": "vm.example.net"
+   },
+   "secrets": {
+    "proxy_jp-03_uuid": "1b4a9b3c-6f0e-4d3a-9d2b-3c5e7f901a03"
+   },
+   "warnings": null
+  },
+  {
+   "line": 3,
+   "remark": "sg1",
+   "summary": "hysteria2 · salamander · hop 443,20000-30000 · insecure",
+   "node": {
+    "name": "sg1",
+    "type": "hysteria2",
+    "server": "hy.example.net",
+    "port": 443,
+    "password_secret": "proxy_sg1_password",
+    "obfs": "salamander",
+    "obfs_password_secret": "proxy_sg1_obfs",
+    "hop_ports": "443,20000-30000",
+    "sni": "hy.example.net",
+    "insecure": true
+   },
+   "secrets": {
+    "proxy_sg1_password": "mock-not-real",
+    "proxy_sg1_obfs": "mock-obfs-not-real"
+   },
+   "warnings": null
+  },
+  {
+   "line": 4,
+   "remark": "vless-ws",
+   "summary": "vless · ws · tls",
+   "node": {
+    "name": "vless-ws",
+    "type": "vless",
+    "server": "cdn.example.net",
+    "port": 443,
+    "uuid_secret": "proxy_vless-ws_uuid",
+    "tls": true,
+    "sni": "vl.example.net",
+    "alpn": [
+     "h2",
+     "http/1.1"
+    ],
+    "fingerprint": "randomized",
+    "transport": "ws",
+    "path": "/vl",
+    "host": "vl.example.net",
+    "early_data": 2048
+   },
+   "secrets": {
+    "proxy_vless-ws_uuid": "1b4a9b3c-6f0e-4d3a-9d2b-3c5e7f901a02"
+   },
+   "warnings": [
+    "uTLS fingerprint \"randomizednoalpn\" → randomized"
+   ]
+  },
+  {
+   "line": 5,
+   "remark": "tuic",
+   "summary": "tuic · bbr",
+   "node": {
+    "name": "tuic",
+    "type": "tuic",
+    "server": "tu.example.net",
+    "port": 443,
+    "uuid_secret": "proxy_tuic_uuid",
+    "password_secret": "proxy_tuic_password",
+    "congestion_control": "bbr",
+    "udp_relay_mode": "native",
+    "sni": "tu.example.net",
+    "alpn": [
+     "h3"
+    ]
+   },
+   "secrets": {
+    "proxy_tuic_uuid": "1b4a9b3c-6f0e-4d3a-9d2b-3c5e7f901a05",
+    "proxy_tuic_password": "mock-not-real"
+   },
+   "warnings": null
+  }
+ ],
+ "errors": [
+  {
+   "line": 6,
+   "error": "ShadowsocksR is not supported by sing-box"
+  },
+  {
+   "line": 7,
+   "error": "vless: transport \"xhttp\" is not supported by sing-box"
+  }
+ ],
+ "info": {
+  "upload": 1288490188,
+  "download": 53687091200,
+  "total": 214748364800,
+  "expire": 1798761600
+ }
+}

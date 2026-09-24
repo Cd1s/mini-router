@@ -1,0 +1,22 @@
+# proxy lab secrets (fake). 2022 methods need a base64 key of the method's size. Names follow the web UI's
+# scheme proxy_<node>_<field>.
+proxy_sg1: "AAECAwQFBgcICQoLDA0ODw=="
+proxy_jp1: "lab-password-not-real"
+proxy_us_trojan: '{"type":"trojan","server":"us.example.net","server_port":443,"password":"lab-not-real","tls":{"enabled":true,"server_name":"us.example.net"}}'
+proxy_hk-reality_uuid: "1b4a9b3c-6f0e-4d3a-9d2b-3c5e7f901a01"
+proxy_vless-ws_uuid: "1b4a9b3c-6f0e-4d3a-9d2b-3c5e7f901a02"
+proxy_vmess-grpc_uuid: "1b4a9b3c-6f0e-4d3a-9d2b-3c5e7f901a03"
+proxy_vmess-ws_uuid: "1b4a9b3c-6f0e-4d3a-9d2b-3c5e7f901a04"
+proxy_trojan-hu_password: "lab-trojan-hu-not-real"
+proxy_trojan-h2_password: "lab-trojan-h2-not-real"
+proxy_hy2_password: "lab-hy2-not-real"
+proxy_hy2_obfs: "lab-hy2-obfs-not-real"
+proxy_hy2-hop_password: "lab-hy2-hop-not-real"
+proxy_tuic_uuid: "1b4a9b3c-6f0e-4d3a-9d2b-3c5e7f901a05"
+proxy_tuic_password: "lab-tuic-not-real"
+proxy_anytls_password: "lab-anytls-not-real"
+proxy_socks_password: "lab-socks-not-real"
+proxy_https-proxy_password: "lab-https-not-real"
+proxy_wg: '{"type":"wireguard","address":["10.66.0.2/32"],"private_key":"YNXtAzepDqRv9H52osJVDQnznT5AL11eVLZzBr+nSkg=","peers":[{"address":"203.0.113.9","port":51820,"public_key":"Z1XXLsKYkYxuiYjJIkRvtIKFepCYHTgON+GwPq7SOV4=","allowed_ips":["0.0.0.0/0","::/0"]}]}'
+# saved subscription: served by the end-to-end test's web server (tools/ci.d/proxy.sh)
+proxy_sub_airport: "http://198.51.100.10:8080/sub?token=lab-not-real"

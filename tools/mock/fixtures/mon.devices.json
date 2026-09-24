@@ -1,0 +1,102 @@
+{
+ "available": true,
+ "t": 1790260000000,
+ "dt": 3.012,
+ "acct": true,
+ "flowtable": true,
+ "flow_counter": false,
+ "entries": 402,
+ "truncated": false,
+ "devices": [
+  {
+   "id": "02:c3:06:d6:7f:8a",
+   "mac": "02:c3:06:d6:7f:8a",
+   "name": "desktop",
+   "ips": [
+    "192.168.1.66",
+    "2001:db8:b910:1::66",
+    "2001:db8:b910:1:ca:12ff:fec5:2a01"
+   ],
+   "conns": 212,
+   "up": 1520331,
+   "down": 3510331200,
+   "up_rate": 1840231,
+   "down_rate": 62003211
+  },
+  {
+   "id": "02:e3:50:10:6a:63",
+   "mac": "02:e3:50:10:6a:63",
+   "name": "laptop",
+   "ips": [
+    "192.168.1.233",
+    "2001:db8:b910:1:1c5e:9a3b:77e1:4a20"
+   ],
+   "conns": 86,
+   "up": 42113,
+   "down": 812334556,
+   "up_rate": 402113,
+   "down_rate": 5120334
+  },
+  {
+   "id": "02:d9:44:2f:7a:85",
+   "mac": "02:d9:44:2f:7a:85",
+   "name": "phone",
+   "ips": [
+    "192.168.1.217"
+   ],
+   "conns": 41,
+   "up": 90233,
+   "down": 211334556,
+   "up_rate": 8211,
+   "down_rate": 912334
+  },
+  {
+   "id": "02:bb:dd:96:49:e2",
+   "mac": "02:bb:dd:96:49:e2",
+   "name": "server",
+   "ips": [
+    "192.168.1.241"
+   ],
+   "conns": 18,
+   "up": 1233445,
+   "down": 5566778,
+   "up_rate": 912,
+   "down_rate": 3012
+  },
+  {
+   "id": "02:c8:61:52:f4:45",
+   "mac": "02:c8:61:52:f4:45",
+   "name": "tv-box",
+   "ips": [
+    "192.168.1.170"
+   ],
+   "conns": 12,
+   "up": 12334,
+   "down": 334556,
+   "up_rate": 0,
+   "down_rate": 0
+  },
+  {
+   "id": "02:13:2c:f7:cb:f2",
+   "mac": "02:13:2c:f7:cb:f2",
+   "name": "",
+   "ips": [
+    "192.168.1.167"
+   ],
+   "conns": 3,
+   "up": 2211,
+   "down": 9012,
+   "up_rate": 0,
+   "down_rate": 0
+  }
+ ],
+ "other": {
+  "id": "other",
+  "ips": [],
+  "conns": 30,
+  "up": 1223344,
+  "down": 3344556,
+  "up_rate": 812,
+  "down_rate": 1203
+ }
+}

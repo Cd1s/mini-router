@@ -1,0 +1,50 @@
+#!/bin/sh
+# mon history sampler (service mr-mon): one line per minute into a RAM ring buffer (24 h), read by
+# `mr api` mon.history / `mr mon history`. Arguments: the physical WAN devices whose byte counters
+# are summed (rendered into /etc/conf.d/mr-mon from router.yaml).
+#
+# Line: uptime_s wan_rx_bytes wan_tx_bytes cpu_busy cpu_total mem_avail_kb conntrack temp_mc
+# Raw cumulative counters + uptime: mr computes rates and wall-clock times when asked.
+# The loop only uses shell builtins; `sleep` and the trim (tail + mv, about once an hour) are the
+# only forks. MON_FILE / MON_INTERVAL / MON_KEEP exist for CI.
+F=${MON_FILE:-/run/mr-mon/history}
+I=${MON_INTERVAL:-60}
+KEEP=${MON_KEEP:-1440}
+SLACK=$((KEEP / 24 + 1))
+mkdir -p "${F%/*}"
+lines=0
+[ -f "$F" ] && lines=$(wc -l < "$F")
+
+while :; do
+	read -r up _ < /proc/uptime
+	up=${up%.*}
+	rx=0 tx=0
+	for d in "$@"; do
+		s=/sys/class/net/$d/statistics
+		[ -r "$s/rx_bytes" ] || continue
+		read -r r < "$s/rx_bytes"
+		read -r t < "$s/tx_bytes"
+		case $r in '' | *[!0-9]*) continue ;; esac
+		case $t in '' | *[!0-9]*) continue ;; esac
+		rx=$((rx + r)) tx=$((tx + t))
+	done
+	read -r _ u n s id io irq si st _ < /proc/stat
+	busy=$((u + n + s + irq + si + st))
+	total=$((busy + id + io))
+	avail=0
+	while read -r k v _; do
+		[ "$k" = MemAvailable: ] && { avail=$v; break; }
+	done < /proc/meminfo
+	ct=0 temp=0
+	[ -r /proc/sys/net/netfilter/nf_conntrack_count ] && read -r ct < /proc/sys/net/netfilter/nf_conntrack_count
+	[ -r /sys/class/thermal/thermal_zone0/temp ] && read -r temp < /sys/class/thermal/thermal_zone0/temp
+	case $ct in '' | *[!0-9]*) ct=0 ;; esac
+	case $temp in '' | *[!0-9-]*) temp=0 ;; esac
+	echo "$up $rx $tx $busy $total $avail $ct $temp" >> "$F"
+	lines=$((lines + 1))
+	if [ "$lines" -gt $((KEEP + SLACK)) ]; then
+		tail -n "$KEEP" "$F" > "$F.tmp" && mv -f "$F.tmp" "$F"
+		lines=$KEEP
+	fi
+	sleep $((I - up % I))
+done

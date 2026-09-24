@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# The board has no RTC: start from the last saved time (never earlier than the image build) until
+# ntpd syncs. Replaces Alpine's swclock, which fails when its reference file is missing or older than
+# the epoch the kernel accepts, and then blocks syslog (which needs "clock").
+description="software clock (mini-router)"
+ref=/etc/mini-router/state/clock
+depend() {
+	provide clock
+	need localmount
+}
+start() {
+	ebegin "Setting the clock from the last saved time"
+	now=$(date +%s)
+	for f in "$ref" /etc/mini-router-release; do
+		[ -e "$f" ] || continue
+		t=$(date -r "$f" +%s 2>/dev/null) || continue
+		if [ "$t" -gt "$now" ]; then
+			date -s "@$t" >/dev/null 2>&1 && now=$t
+		fi
+	done
+	eend 0
+}
+stop() {
+	mkdir -p "${ref%/*}" && touch "$ref"
+	return 0
+}

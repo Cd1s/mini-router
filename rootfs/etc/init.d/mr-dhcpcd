@@ -1,0 +1,33 @@
+#!/sbin/openrc-run
+# dhcpcd for the WANs (IPv6 SLAAC + prefix delegation; /etc/dhcpcd.conf is rendered by mr).
+# mini-router's own service instead of Alpine's dhcpcd, which (a) provides "net", so restarting it
+# stops SSH, dnsmasq, ... with it, and (b) shares /run/dhcpcd/pid between supervise-daemon and
+# dhcpcd itself, so stop/restart lose track of the daemon ("already running").
+description="dhcpcd (IPv6 on the WANs)"
+supervisor=supervise-daemon
+command=/sbin/dhcpcd
+command_args="-q -B -f /etc/dhcpcd.conf"
+pidfile=/run/mr-dhcpcd.pid
+respawn_delay=3
+respawn_max=0
+
+depend() {
+	need mr-network
+	after mr-pppoe mr-udhcpc
+}
+
+# A dhcpcd that finds another instance (or its privilege-separation helpers, which outlive the
+# manager for a moment, or their control socket) only forwards its arguments and exits. We are about
+# to start the only one: make sure nothing is left.
+start_pre() {
+	[ -f /etc/dhcpcd.conf ] || { eerror "no /etc/dhcpcd.conf (run mr apply)"; return 1; }
+	i=0
+	while pgrep -x dhcpcd > /dev/null && [ $i -lt 25 ]; do
+		[ $i = 5 ] && pkill -x dhcpcd
+		sleep 0.2
+		i=$((i + 1))
+	done
+	pkill -9 -x dhcpcd 2> /dev/null
+	rm -f /run/dhcpcd/sock /run/dhcpcd/unpriv.sock /run/dhcpcd/pid
+	return 0
+}

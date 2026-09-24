@@ -1,0 +1,57 @@
+{
+ "now": 1790280000,
+ "leases": [
+  {
+   "mac": "02:e3:50:10:6a:63",
+   "ip": "192.168.1.233",
+   "name": "laptop",
+   "expires": 1790318000,
+   "network": "lan"
+  },
+  {
+   "mac": "02:13:2c:f7:cb:f2",
+   "ip": "192.168.1.167",
+   "name": "*",
+   "expires": 1790282100,
+   "network": "lan"
+  },
+  {
+   "mac": "02:c8:61:52:f4:45",
+   "ip": "192.168.1.170",
+   "name": "tv-box",
+   "expires": 1790310500,
+   "network": "lan"
+  },
+  {
+   "mac": "02:d9:44:2f:7a:85",
+   "ip": "192.168.1.217",
+   "name": "phone",
+   "expires": 1790310600,
+   "network": "lan"
+  },
+  {
+   "mac": "02:c3:06:d6:7f:8a",
+   "ip": "192.168.1.66",
+   "name": "desktop",
+   "expires": 0,
+   "network": "lan",
+   "static": true
+  },
+  {
+   "mac": "02:e7:7f:2b:93:e6",
+   "ip": "192.168.20.146",
+   "name": "guest-phone",
+   "expires": 1790284200,
+   "network": "guest"
+  }
+ ],
+ "leases6": [
+  {
+   "iaid": "1234567",
+   "ip": "2001:db8:b910:1e2::1a3",
+   "name": "laptop",
+   "expires": 1790320000,
+   "duid": "00:01:00:01:2c:5f:aa:bb:02:e3:50:10:6a"
+  }
+ ]
+}

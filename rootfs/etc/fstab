@@ -1,0 +1,5 @@
+# mini-router (platform): / is an overlay (squashfs "rootfs" + UBIFS "rootfs_data") set up by
+# /sbin/mr-preinit before OpenRC; /run is OpenRC's own tmpfs. Volatile paths stay in RAM so logs and
+# temporary files never wear the NAND (mounted by the localmount service at boot).
+tmpfs	/tmp		tmpfs	nosuid,nodev,mode=1777			0 0
+tmpfs	/var/log	tmpfs	nosuid,nodev,noexec,mode=0755,size=16m	0 0

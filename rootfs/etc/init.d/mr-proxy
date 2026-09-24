@@ -1,0 +1,62 @@
+#!/sbin/openrc-run
+# sing-box for the selective transparent proxy (proxy module, docs/modules/proxy.md).
+# `mr apply` renders /etc/mini-router/gen/sing-box.json. At start this script copies it to
+# /run/mr-proxy with a fresh clash API secret (read by `mr api`), and keeps the fake-ip cache in RAM:
+# it is restored from flash at start and saved back only on stop, so flash is not written per lookup.
+description="selective proxy (sing-box: fake-ip DNS + tproxy)"
+supervisor=supervise-daemon
+command=/usr/bin/sing-box
+# --disable-color: sing-box colours its log even when stdout is not a terminal (escape codes in syslog)
+command_args="run --disable-color -c /run/mr-proxy/config.json -c /run/mr-proxy/api.json -D /run/mr-proxy"
+supervise_daemon_args="--env GOGC=50 --env GOMEMLIMIT=48MiB"
+output_logger="logger -t sing-box -p daemon.info"
+error_logger="logger -t sing-box -p daemon.notice"
+respawn_delay=2
+respawn_max=0
+
+cfg=/etc/mini-router/gen/sing-box.json
+rundir=/run/mr-proxy
+saved=/etc/mini-router/state/proxy-fakeip.db
+
+# Unprivileged when the image has a `sing-box` user: keep only CAP_NET_ADMIN (IP_TRANSPARENT).
+if id -u sing-box >/dev/null 2>&1; then
+	command_user="sing-box:sing-box"
+	capabilities="^cap_net_admin"
+fi
+
+depend() {
+	need mr-network
+	after mr-firewall dnsmasq
+}
+
+start_pre() {
+	[ -f "$cfg" ] || { eerror "$cfg missing (run mr apply)"; return 1; }
+	for m in nft_tproxy nft_socket nf_tproxy_ipv4 nf_tproxy_ipv6; do modprobe -q "$m" 2>/dev/null; done
+	checkpath -d -m 0700 -o "${command_user:-root}" "$rundir" || return 1
+	secret=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+	(
+		umask 077
+		cp "$cfg" "$rundir/config.json" &&
+			printf '{"experimental":{"clash_api":{"secret":"%s"}}}\n' "$secret" > "$rundir/api.json"
+	) || return 1
+	if [ ! -s "$rundir/cache.db" ] && [ -s "$saved" ]; then
+		cp "$saved" "$rundir/cache.db"
+	fi
+	if [ -n "${command_user:-}" ]; then
+		chown "$command_user" "$rundir/config.json" "$rundir/api.json"
+		[ ! -e "$rundir/cache.db" ] || chown "$command_user" "$rundir/cache.db"
+	fi
+	/usr/bin/sing-box check -c "$rundir/config.json" -c "$rundir/api.json" -D "$rundir" || {
+		eerror "sing-box check failed"
+		return 1
+	}
+}
+
+stop_post() {
+	# clients cache fake-ip answers: the fake-ip <-> domain mapping must survive a reboot
+	# 0600: the mapping lists every proxied domain the LAN looked up
+	if [ -s "$rundir/cache.db" ]; then
+		mkdir -p "${saved%/*}" && rm -f "$saved.tmp" && (umask 077 && cp "$rundir/cache.db" "$saved.tmp") && mv "$saved.tmp" "$saved"
+	fi
+	return 0
+}

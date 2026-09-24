@@ -1,0 +1,6 @@
+# proxy lab list: one domain per line (suffix match), # comments
+googlevideo.com
+*.ytimg.com
+.youtube.com
+e2e.test          # used by tools/ci.d/proxy.sh (end-to-end test in network namespaces)
+example-b.net     # also in the dns.split list: must go to the proxy, not to the split upstream

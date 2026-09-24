@@ -1,0 +1,63 @@
+# lab config — dns module fragment (dhcp, dns). Every dns-module feature is switched on here;
+# tools/ci.d/dns.sh also runs the rendered dnsmasq.conf for real and queries the records below.
+# CI concatenates examples/lab.d/*.yaml into one router.yaml; keep only this module's top-level keys here.
+
+dhcp:
+  start: 100
+  end: 249
+  lease: 12h
+  domain: lan
+  dns: [192.168.1.6]                  # option 6 (default would be the router anyway)
+  ntp: [192.168.1.10]                 # option 42
+  search: [lan, home.example.com]     # option 119
+  options:
+    - {code: 26, value: "1492"}       # interface MTU
+    - {code: 121, value: "0.0.0.0/0,192.168.1.6,10.8.0.0/24,192.168.1.10"}   # classless routes: VPN subnet via the NAS
+  ipv6:                               # main LAN (lan.ipv6_ra: true in 10-net.yaml)
+    mode: stateful                    # DHCPv6 addresses + SLAAC
+    start: "::1000"
+    end: "::1fff"
+    lease: 12h
+    dns: ["::"]                       # RDNSS = the router's global address
+    ra_interval: 30
+    ra_lifetime: 1800
+    ra_priority: high
+    ra_mtu: 1492
+  hosts:
+    - {name: nas, mac: "02:98:67:90:62:47", ip: 192.168.1.166}
+    - {name: server,        mac: "02:bb:dd:96:49:e2", ip: 192.168.1.241}
+    - {name: workstation,    mac: "02:9a:41:9d:fa:91", ip: 192.168.1.237}
+    - {name: desktop,        mac: "02:c3:06:d6:7f:8a", ip: 192.168.1.66}
+  host_leases:
+    "02:c3:06:d6:7f:8a": infinite
+
+dns:
+  cache_size: 8000
+  min_cache_ttl: 3600
+  use_stale_cache: 3600
+  no_negcache: true
+  edns_packet_max: 1232
+  upstream: dot                       # everything over DoT via stubby (services.stubby in 70-sys.yaml)
+  dot:
+    port: 5453
+    servers:
+      - {address: 1.1.1.1, name: cloudflare-dns.com}
+      - {address: "2606:4700:4700::1111", name: cloudflare-dns.com}
+      - {address: 9.9.9.9, name: dns.quad9.net, port: 853}
+    bootstrap: [223.5.5.5]            # NTP names resolve here (plain DNS) until the clock is right
+  rebind_protection: true
+  local_service: true
+  redirect: true
+  addn_hosts: [/etc/lucky/dnsmasq.hosts]
+  records:
+    - {name: nas, type: A, value: 192.168.1.10}                      # nas and nas.lan
+    - {name: nas.lan, type: AAAA, value: "fd00::10"}
+    - {name: "*.home.example.com", type: A, value: 192.168.1.6}      # split-horizon for Lucky's reverse proxy
+    - {name: photos.lan, type: CNAME, value: nas.lan}
+    - {name: 192.168.1.11, type: PTR, value: printer.lan}
+    - {name: _smb._tcp.lan, type: SRV, value: "nas.lan:445"}
+    - {name: nas.lan, type: TXT, value: "home server; v=1"}
+  split:                        # DNS 分流
+    - name: cloudflare-dot
+      domains_file: @REPO@/mr/testdata/split.domains
+      server: "127.0.0.1#5453"  # stubby -> Cloudflare DoT

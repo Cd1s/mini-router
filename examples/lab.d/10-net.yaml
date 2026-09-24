@@ -1,0 +1,101 @@
+# lab config — net module fragment (lan, networks, wan, multiwan, policy_routes, static_routes, multicast).
+# CI concatenates examples/lab.d/*.yaml into one router.yaml; keep only this module's top-level keys here.
+# Every net feature is switched on here so CI renders it into real nft / dnsmasq / shell.
+
+lan:
+  bridge: br-lan
+  ports: [lan2, lan3, lan4]
+  ipv4: 192.168.1.6/24
+  ipv6_ra: true
+
+networks:
+  - name: guest
+    ipv4: 192.168.20.1/24
+    zone: guest
+    ipv6_ra: true
+    dhcp: {enabled: true, start: 100, end: 199, lease: 2h}
+  - name: iot                   # tagged VLAN 10 on lan4 (lan4 stays an untagged LAN port)
+    ipv4: 192.168.30.1/24
+    zone: lan
+    vlan: 10
+    trunk: [lan4]
+    dhcp: {enabled: true, start: 50, end: 99}
+
+wan:
+  - name: wan                   # primary
+    device: wan
+    mac: 02:55:a3:1c:8d:ed
+    proto: pppoe
+    username: "user@example-isp"
+    password_secret: pppoe_password
+    mtu: 1492
+    metric: 0
+    peerdns: true
+    ipv6: true
+    ipv6_pd: true
+  - name: wan2                  # backup; also carries desktop (policy below)
+    device: wan
+    proto: pppoe
+    username: "user@example-isp"
+    password_secret: pppoe_password
+    mtu: 1492
+    metric: 40
+    peerdns: false
+    ipv6: true
+    ipv6_pd: true
+    ipv6_srcroute: true
+  - name: isp3                  # PPPoE on VLAN 500 (ISPs that tag the PPPoE session)
+    device: wan
+    vlan: 500
+    proto: pppoe
+    username: "lab@isp3"
+    password_secret: pppoe_password
+    metric: 60
+  - name: iptv                  # DHCP on VLAN 20 (IPTV / travel: plain DHCP upstream)
+    device: wan
+    vlan: 20
+    proto: dhcp
+    metric: 80
+    peerdns: true
+    ipv6: true
+  - name: office                # static address on VLAN 30
+    device: wan
+    vlan: 30
+    proto: static
+    ipv4: 203.0.113.10/29
+    gateway: 203.0.113.9
+    dns: [203.0.113.53, "2001:db8::53"]
+    mtu: 1500
+    metric: 90
+
+multiwan:
+  mode: balance                 # health-checked failover + per-connection balancing
+  targets: [1.1.1.1, 223.5.5.5]
+  interval: 5
+  timeout: 2
+  fall: 3
+  rise: 2
+  weights: {wan: 2, wan2: 1}    # isp3 / iptv / office only take over on failure
+
+policy_routes:
+  - name: desktop-via-wan2
+    mac: 02:c3:06:d6:7f:8a
+    via: wan2
+    table: 102
+    mark: "0x102"
+  - name: nas-subnet-via-wan    # source CIDR
+    src: 192.168.1.240/29
+    via: wan
+  - name: v6-docs-via-isp3      # destination only (IPv6)
+    dst: "2001:db8:100::/48"
+    via: isp3
+  - name: tv-to-iptv            # MAC + destination
+    mac: 02:98:67:90:62:47
+    dst: 198.51.100.0/24
+    via: iptv
+
+static_routes:
+  - {name: lab-v4, target: 10.9.0.0/16, via: 192.168.1.50}
+  - {name: lab-v6, target: "2001:db8::/32", dev: pppoe-wan}
+
+multicast: {igmp_snooping: true, igmp_proxy: true, upstream: iptv}

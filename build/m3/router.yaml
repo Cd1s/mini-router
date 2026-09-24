@@ -1,0 +1,51 @@
+# mini-router factory configuration (platform, build/m3). This is what the image boots with after a
+# fresh flash without provisioning, or after a factory reset. No secrets, no user data.
+#
+#   - LAN 192.168.31.1/24 on lan2-lan4 (the stock Xiaomi address; rarely collides with the upstream
+#     network when the router travels), DHCP .100-.249
+#   - WAN: DHCP (+ DHCPv6 / prefix delegation) on the wan port
+#   - WiFi OFF: a factory router must not be configurable over the air (the web UI's first-time
+#     password setup is open to anyone on the LAN)
+#   - web UI http://192.168.31.1/ (first visit from the LAN sets the admin password)
+#   - SSH on, keys only: no key is installed, so it is closed until a key is provisioned
+system:
+  hostname: mini-router
+  timezone: UTC0
+  ntp: [pool.ntp.org, time.cloudflare.com]
+  zram: true
+
+lan:
+  bridge: br-lan
+  ports: [lan2, lan3, lan4]
+  ipv4: 192.168.31.1/24
+  ipv6_ra: true
+
+wan:
+  - name: wan
+    device: wan
+    proto: dhcp
+    peerdns: true
+    ipv6: true
+    ipv6_pd: true
+
+firewall:
+  offload: hardware
+  synflood_protect: true
+
+dhcp:
+  start: 100
+  end: 249
+  lease: 12h
+  domain: lan
+
+dns:
+  cache_size: 2000
+  rebind_protection: true
+  local_service: true
+
+wifi:
+  radios: []
+
+services:
+  ssh: {enabled: true, port: 22, password_login: false}
+  panel: {enabled: true}

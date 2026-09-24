@@ -1,0 +1,35 @@
+{
+ "config": {
+  "proxy": {
+   "enabled": true,
+   "nodes": [
+    {"name": "sg1", "server": "sg1.example.net", "port": 8388, "method": "2022-blake3-aes-128-gcm", "password_secret": "proxy_sg1"},
+    {"name": "jp1", "server": "203.0.113.7", "port": 8389, "method": "aes-128-gcm", "password_secret": "proxy_jp1"},
+    {"name": "hk-reality", "type": "vless", "server": "203.0.113.20", "port": 443, "uuid_secret": "proxy_hk-reality_uuid", "flow": "xtls-rprx-vision",
+     "tls": true, "sni": "www.example.com", "fingerprint": "chrome", "reality_public_key": "LHrjuwEq6GjVwsi-cALKBZ7shC7yUshr_0MQBbg5qQA", "reality_short_id": "6ba85179e30d4fc2"},
+    {"name": "vmess-ws", "type": "vmess", "server": "vm.example.net", "port": 443, "uuid_secret": "proxy_vmess-ws_uuid", "tls": true, "transport": "ws", "path": "/vm", "host": "vm.example.net"},
+    {"name": "hy2", "type": "hysteria2", "server": "hy.example.net", "port": 443, "password_secret": "proxy_hy2_password", "obfs": "salamander",
+     "obfs_password_secret": "proxy_hy2_obfs", "sni": "hy.example.net"},
+    {"name": "tuic", "type": "tuic", "server": "tu.example.net", "port": 443, "uuid_secret": "proxy_tuic_uuid", "password_secret": "proxy_tuic_password",
+     "congestion_control": "bbr", "alpn": ["h3"]},
+    {"name": "us-trojan", "type": "custom", "json_secret": "proxy_us_trojan"}
+   ],
+   "groups": [
+    {"name": "auto", "type": "urltest", "nodes": ["sg1", "jp1", "hk-reality", "hy2"], "interval": "3m"},
+    {"name": "pick", "type": "selector", "nodes": ["jp1", "sg1", "hk-reality", "vmess-ws", "hy2", "tuic", "us-trojan"]}
+   ],
+   "rules": [
+    {"name": "ai", "outbound": "auto", "domains": ["openai.com", "chatgpt.com", "claude.ai", "anthropic.com"], "domains_file": "/etc/mini-router/proxy/ai.domains"},
+    {"name": "telegram", "outbound": "pick", "domains": ["telegram.org", "t.me"], "cidrs": ["91.108.4.0/22", "149.154.160.0/20", "2001:67c:4e8::/48"], "cidr_file": "/etc/mini-router/proxy/telegram.cidrs"}
+   ],
+   "bypass": [
+    {"name": "desktop", "mac": "02:c3:06:d6:7f:8a"}
+   ],
+   "subscriptions": [
+    {"name": "airport", "url_secret": "proxy_airport_sub"}
+   ]
+  }
+ },
+ "secrets_set": {"proxy_sg1": true, "proxy_jp1": true, "proxy_hk-reality_uuid": true, "proxy_vmess-ws_uuid": true, "proxy_hy2_password": true,
+                 "proxy_hy2_obfs": true, "proxy_tuic_uuid": true, "proxy_tuic_password": true, "proxy_airport_sub": true}
+}

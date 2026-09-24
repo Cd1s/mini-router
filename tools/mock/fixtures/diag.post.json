@@ -1,0 +1,4 @@
+{
+ "output": "PING 1.1.1.1 (1.1.1.1): 56 data bytes\n64 bytes from 1.1.1.1: seq=0 ttl=59 time=9.307 ms\n64 bytes from 1.1.1.1: seq=1 ttl=59 time=9.121 ms\n\n--- 1.1.1.1 ping statistics ---\n2 packets transmitted, 2 packets received, 0% packet loss\nround-trip min/avg/max = 9.121/9.214/9.307 ms\n",
+ "command": "ping -4 -c 4 -W 2 1.1.1.1"
+}

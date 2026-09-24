@@ -1,0 +1,421 @@
+{
+ "up": 186400.53,
+ "lines": [
+  [
+   6,
+   "[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x410fd034]"
+  ],
+  [
+   6,
+   "[    0.000000] Linux version 6.18.52 (b@79d6a1fc01d7) (aarch64-openwrt-linux-musl-gcc (OpenWrt GCC 14.4.0 r36531-98f3808362) 14.4.0, GNU ld (GNU Binutils) 2.46.1) #0 SMP Wed Sep 23 19:15:01 2026"
+  ],
+  [
+   6,
+   "[    0.000000] KASLR disabled due to lack of seed"
+  ],
+  [
+   6,
+   "[    0.000000] Machine model: Xiaomi Redmi Router AX6000 (hanwckf 110M layout)"
+  ],
+  [
+   6,
+   "[    0.000000] earlycon: uart8250 at MMIO32 0x0000000011002000 (options '')"
+  ],
+  [
+   6,
+   "[    0.000000] printk: legacy bootconsole [uart8250] enabled"
+  ],
+  [
+   6,
+   "[    0.000000] OF: reserved mem: 0x0000000042ff0000..0x0000000042ffffff (64 KiB) map non-reusable ramoops@42ff0000"
+  ],
+  [
+   6,
+   "[    0.000000] OF: reserved mem: 0x0000000043000000..0x000000004303ffff (256 KiB) nomap non-reusable secmon@43000000"
+  ],
+  [
+   6,
+   "[    0.000000] OF: reserved mem: 0x000000004fc00000..0x000000004fcfffff (1024 KiB) nomap non-reusable wmcpu-reserved@4fc00000"
+  ],
+  [
+   6,
+   "[    0.000000] OF: reserved mem: 0x000000004fd00000..0x000000004fd3ffff (256 KiB) nomap non-reusable wo-emi@4fd00000"
+  ],
+  [
+   6,
+   "[    0.000000] OF: reserved mem: 0x000000004fd40000..0x000000004fd7ffff (256 KiB) nomap non-reusable wo-emi@4fd40000"
+  ],
+  [
+   6,
+   "[    0.000000] OF: reserved mem: 0x000000004fd80000..0x000000004ffbffff (2304 KiB) nomap non-reusable wo-data@4fd80000"
+  ],
+  [
+   6,
+   "[    0.000000] Zone ranges:"
+  ],
+  [
+   6,
+   "[    0.000000]   DMA      [mem 0x0000000040000000-0x000000005fffffff]"
+  ],
+  [
+   6,
+   "[    0.000000]   DMA32    empty"
+  ],
+  [
+   6,
+   "[    0.000000]   Normal   empty"
+  ],
+  [
+   6,
+   "[    0.000000] Movable zone start for each node"
+  ],
+  [
+   6,
+   "[    0.000000] Early memory node ranges"
+  ],
+  [
+   6,
+   "[    0.000000]   node   0: [mem 0x0000000040000000-0x0000000042ffffff]"
+  ],
+  [
+   6,
+   "[    0.000000]   node   0: [mem 0x0000000043000000-0x000000004303ffff]"
+  ],
+  [
+   6,
+   "[    0.000000]   node   0: [mem 0x0000000043040000-0x000000004fbfffff]"
+  ],
+  [
+   6,
+   "[    0.000000]   node   0: [mem 0x000000004fc00000-0x000000004ffbffff]"
+  ],
+  [
+   6,
+   "[    0.000000]   node   0: [mem 0x000000004ffc0000-0x000000005fffffff]"
+  ],
+  [
+   6,
+   "[    0.000000] Initmem setup node 0 [mem 0x0000000040000000-0x000000005fffffff]"
+  ],
+  [
+   6,
+   "[    0.000000] psci: probing for conduit method from DT."
+  ],
+  [
+   6,
+   "[    0.000000] psci: PSCIv1.1 detected in firmware."
+  ],
+  [
+   6,
+   "[    0.000000] psci: Using standard PSCI v0.2 function IDs"
+  ],
+  [
+   6,
+   "[    0.000000] psci: MIGRATE_INFO_TYPE not supported."
+  ],
+  [
+   6,
+   "[    0.000000] psci: SMC Calling Convention v1.2"
+  ],
+  [
+   6,
+   "[    0.000000] percpu: Embedded 20 pages/cpu s43992 r8192 d29736 u81920"
+  ],
+  [
+   6,
+   "[    0.000000] pcpu-alloc: s43992 r8192 d29736 u81920 alloc=20*4096"
+  ],
+  [
+   6,
+   "[    0.000000] pcpu-alloc: [0] 0 [0] 1 [0] 2 [0] 3 "
+  ],
+  [
+   6,
+   "[    0.000000] Detected VIPT I-cache on CPU0"
+  ],
+  [
+   6,
+   "[    0.000000] CPU features: detected: GICv3 CPU interface"
+  ],
+  [
+   6,
+   "[    0.000000] CPU features: kernel page table isolation disabled by kernel configuration"
+  ],
+  [
+   6,
+   "[    0.000000] alternatives: applying boot alternatives"
+  ],
+  [
+   6,
+   "[    0.000000] Kernel command line: console=ttyS0,115200n1 earlycon=uart8250,mmio32,0x11002000 watchdog.stop_on_reboot=0 loglevel=7"
+  ],
+  [
+   6,
+   "[    0.000000] printk: log buffer data + meta data: 131072 + 458752 = 589824 bytes"
+  ],
+  [
+   6,
+   "[    0.000000] Dentry cache hash table entries: 65536 (order: 7, 524288 bytes, linear)"
+  ],
+  [
+   6,
+   "[    0.000000] Inode-cache hash table entries: 32768 (order: 6, 262144 bytes, linear)"
+  ],
+  [
+   6,
+   "[    0.000000] software IO TLB: SWIOTLB bounce buffer size adjusted to 0MB"
+  ],
+  [
+   6,
+   "[    0.000000] software IO TLB: area num 4."
+  ],
+  [
+   6,
+   "[    0.000000] software IO TLB: SWIOTLB bounce buffer size roundup to 1MB"
+  ],
+  [
+   6,
+   "[    0.000000] software IO TLB: mapped [mem 0x000000005f4c0000-0x000000005f5c0000] (1MB)"
+  ],
+  [
+   6,
+   "[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 131072"
+  ],
+  [
+   6,
+   "[    0.000000] mem auto-init: stack:off, heap alloc:off, heap free:off"
+  ],
+  [
+   6,
+   "[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=4, Nodes=1"
+  ],
+  [
+   6,
+   "[    0.000000] rcu: Hierarchical RCU implementation."
+  ],
+  [
+   6,
+   "[    0.000000] \tTracing variant of Tasks RCU enabled."
+  ],
+  [
+   6,
+   "[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 10 jiffies."
+  ],
+  [
+   6,
+   "[    0.000000] RCU Tasks Trace: Setting shift to 2 and lim to 1 rcu_task_cb_adjust=1 rcu_task_cpu_ids=4."
+  ],
+  [
+   6,
+   "[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0"
+  ],
+  [
+   6,
+   "[    0.000000] GICv3: GIC: Using split EOI/Deactivate mode"
+  ],
+  [
+   6,
+   "[    0.000000] GICv3: 640 SPIs implemented"
+  ],
+  [
+   6,
+   "[    0.000000] GICv3: 0 Extended SPIs implemented"
+  ],
+  [
+   6,
+   "[    0.000000] Root IRQ handler: gic_handle_irq"
+  ],
+  [
+   6,
+   "[    0.000000] GICv3: GICv3 features: 16 PPIs"
+  ],
+  [
+   6,
+   "[    0.000000] GICv3: GICD_CTLR.DS=0, SCR_EL3.FIQ=0"
+  ],
+  [
+   6,
+   "[    0.000000] GICv3: CPU0: found redistributor 0 region 0:0x000000000c080000"
+  ],
+  [
+   6,
+   "[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention."
+  ],
+  [
+   6,
+   "[    0.000000] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 19112604462750000 ns"
+  ],
+  [
+   6,
+   "[    0.000000] arch_timer: cp15 timer running at 12.98MHz (phys)."
+  ],
+  [
+   6,
+   "[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x2feb955e7, max_idle_ns: 440795202655 ns"
+  ],
+  [
+   6,
+   "[    0.000000] sched_clock: 56 bits at 13MHz, resolution 77ns, wraps every 4398046511072ns"
+  ],
+  [
+   6,
+   "[    0.008128] Calibrating delay loop (skipped), value calculated using timer frequency.. 25.97 BogoMIPS (lpj=129862)"
+  ],
+  [
+   6,
+   "[    0.018513] pid_max: default: 32768 minimum: 301"
+  ],
+  [
+   6,
+   "[    0.024840] Mount-cache hash table entries: 1024 (order: 1, 8192 bytes, linear)"
+  ],
+  [
+   6,
+   "[    0.032175] Mountpoint-cache hash table entries: 1024 (order: 1, 8192 bytes, linear)"
+  ],
+  [
+   6,
+   "[    0.044043] rcu: Hierarchical SRCU implementation."
+  ],
+  [
+   6,
+   "[    0.048848] rcu: \tMax phase no-delay instances is 1000."
+  ],
+  [
+   6,
+   "[    0.054223] Timer migration: 1 hierarchy levels; 8 children per group; 1 crossnode level"
+  ],
+  [
+   6,
+   "[    0.062534] smp: Bringing up secondary CPUs ..."
+  ],
+  [
+   6,
+   "[    0.067361] Detected VIPT I-cache on CPU1"
+  ],
+  [
+   6,
+   "[    0.067402] GICv3: CPU1: found redistributor 1 region 0:0x000000000c0a0000"
+  ],
+  [
+   6,
+   "[    0.067430] CPU1: Booted secondary processor 0x0000000001 [0x410fd034]"
+  ],
+  [
+   6,
+   "[    0.067765] Detected VIPT I-cache on CPU2"
+  ],
+  [
+   6,
+   "[    0.067789] GICv3: CPU2: found redistributor 2 region 0:0x000000000c0c0000"
+  ],
+  [
+   6,
+   "[    0.067803] CPU2: Booted secondary processor 0x0000000002 [0x410fd034]"
+  ],
+  [
+   6,
+   "[    0.068129] Detected VIPT I-cache on CPU3"
+  ],
+  [
+   6,
+   "[    0.068149] GICv3: CPU3: found redistributor 3 region 0:0x000000000c0e0000"
+  ],
+  [
+   6,
+   "[    0.068161] CPU3: Booted secondary processor 0x0000000003 [0x410fd034]"
+  ],
+  [
+   6,
+   "[    0.068199] smp: Brought up 1 node, 4 CPUs"
+  ],
+  [
+   6,
+   "[    0.124636] SMP: Total of 4 processors activated."
+  ],
+  [
+   6,
+   "[    0.129346] CPU: All CPU(s) started at EL2"
+  ],
+  [
+   6,
+   "[    0.133447] CPU features: detected: 32-bit EL0 Support"
+  ],
+  [
+   6,
+   "[    0.138596] CPU features: detected: CRC32 instructions"
+  ],
+  [
+   6,
+   "[    0.143771] alternatives: applying system-wide alternatives"
+  ],
+  [
+   6,
+   "[    0.149467] CPU features: emulated: Privileged Access Never (PAN) using TTBR0_EL1 switching"
+  ],
+  [
+   6,
+   "[    0.157970] Memory: 484120K/524288K available (9792K kernel code, 954K rwdata, 3004K rodata, 960K init, 296K bss, 37104K reserved, 0K cma-reserved)"
+  ],
+  [
+   6,
+   "[    0.173646] posixtimers hash table entries: 2048 (order: 3, 32768 bytes, linear)"
+  ],
+  [
+   6,
+   "[    0.181132] futex hash table entries: 1024 (65536 bytes on 1 NUMA nodes, total 64 KiB, linear)."
+  ],
+  [
+   6,
+   "[    0.189922] 28960 pages in range for non-PLT usage"
+  ],
+  [
+   6,
+   "[    0.189925] 520480 pages in range for PLT usage"
+  ],
+  [
+   6,
+   "[    0.195793] pinctrl core: initialized pinctrl subsystem"
+  ],
+  [
+   6,
+   "[    0.206513] NET: Registered PF_NETLINK/PF_ROUTE protocol family"
+  ],
+  [
+   6,
+   "[    0.212719] DMA: preallocated 128 KiB GFP_KERNEL pool for atomic allocations"
+  ],
+  [
+   6,
+   "[    0.219802] DMA: preallocated 128 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations"
+  ],
+  [
+   6,
+   "[    0.227586] DMA: preallocated 128 KiB GFP_KERNEL|GFP_DMA32 pool for atomic allocations"
+  ],
+  [
+   6,
+   "[    0.235836] thermal_sys: Registered thermal governor 'fair_share'"
+  ],
+  [
+   6,
+   "[    0.235840] thermal_sys: Registered thermal governor 'bang_bang'"
+  ],
+  [
+   3,
+   "[    3.369170] faux_driver regulatory: Direct firmware load for regulatory.db failed with error -2"
+  ],
+  [
+   3,
+   "[    3.379862] cfg80211: failed to load regulatory.db"
+  ],
+  [
+   6,
+   "[  812.331201] pppoe-wan: renamed from ppp0"
+  ],
+  [
+   6,
+   "[ 9124.002113] br-lan: port 2(lan3) entered forwarding state"
+  ]
+ ]
+}

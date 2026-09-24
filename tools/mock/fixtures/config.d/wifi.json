@@ -1,0 +1,71 @@
+{
+ "config": {
+  "wifi": {
+   "country": "PA",
+   "radios": [
+    {
+     "phy": "phy0",
+     "band": "2g",
+     "channel": "auto",
+     "channels": "1-11",
+     "htmode": "HE40",
+     "txpower": 30,
+     "beacon_int": 100,
+     "dtim_period": 2,
+     "ssids": [
+      {
+       "ssid": "MiniRouter-2.4G",
+       "key_secret": "wifi_key",
+       "encryption": "sae-mixed",
+       "hidden": false
+      },
+      {
+       "ssid": "MiniRouter-IoT",
+       "key_secret": "wifi_iot_key",
+       "encryption": "psk2",
+       "pmf": "disabled",
+       "hidden": true,
+       "network": "iot",
+       "macfilter": "allow",
+       "maclist": [
+        "aa:bb:cc:00:00:01",
+        "aa:bb:cc:00:00:02"
+       ]
+      }
+     ]
+    },
+    {
+     "phy": "phy1",
+     "band": "5g",
+     "channel": "36",
+     "channels": "",
+     "htmode": "HE160",
+     "txpower": 30,
+     "beacon_int": 100,
+     "dtim_period": 2,
+     "ssids": [
+      {
+       "ssid": "MiniRouter-5G",
+       "key_secret": "wifi_key",
+       "encryption": "sae-mixed",
+       "hidden": false
+      },
+      {
+       "ssid": "MiniRouter-Guest",
+       "key_secret": "wifi_guest_key",
+       "encryption": "sae-mixed",
+       "hidden": false,
+       "isolate": true,
+       "max_clients": 16,
+       "network": "guest"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "secrets_set": {
+  "wifi_iot_key": true,
+  "wifi_guest_key": true
+ }
+}

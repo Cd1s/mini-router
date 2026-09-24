@@ -1,0 +1,5 @@
+#!/bin/sh
+# udhcpc event script of mr-udhcpc.<wan>: udhcpc passes the event (deconfig|bound|renew|leasefail|nak)
+# as $1 and the lease in the environment (interface ip mask subnet router dns ...); mr validates it
+# and configures the address, the per-WAN routes and the upstream DNS.
+exec "${MR_BIN:-/usr/sbin/mr}" wan dhcp "$1"

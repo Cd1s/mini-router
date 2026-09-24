@@ -1,0 +1,4 @@
+# proxy lab list: one CIDR or address per line, # comments
+91.108.56.0/22
+198.51.100.0/24   # TEST-NET-2, used by tools/ci.d/proxy.sh
+2001:b28:f23d::/48

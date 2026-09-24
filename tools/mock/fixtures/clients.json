@@ -1,0 +1,40 @@
+{
+ "stations": [
+  {
+   "ifname": "phy0-ap0",
+   "mac": "02:e3:50:10:6a:63",
+   "signal": "-29 [-35, -38, -39, -31] dBm",
+   "tx_rate": "68.8 MBit/s HE-MCS 3 HE-NSS 2 HE-GI 0 HE-DCM 0",
+   "rx_rate": "229.4 MBit/s HE-MCS 9 HE-NSS 2 HE-GI 0 HE-DCM 0",
+   "connected": 465,
+   "inactive_ms": 10
+  },
+  {
+   "ifname": "phy1-ap0",
+   "mac": "02:d9:44:2f:7a:85",
+   "signal": "-68 [-73, -74, -71, -75] dBm",
+   "tx_rate": "1200.9 MBit/s 80MHz HE-MCS 11 HE-NSS 2 HE-GI 0 HE-DCM 0",
+   "rx_rate": "960.7 MBit/s 80MHz HE-MCS 9 HE-NSS 2 HE-GI 0 HE-DCM 0",
+   "connected": 1556,
+   "inactive_ms": 240
+  },
+  {
+   "ifname": "phy1-ap0",
+   "mac": "02:c8:61:52:f4:45",
+   "signal": "-60 [-61, -66, -72, -70] dBm",
+   "tx_rate": "390.0 MBit/s VHT-MCS 9 80MHz VHT-NSS 1",
+   "rx_rate": "433.3 MBit/s VHT-MCS 9 80MHz short GI VHT-NSS 1",
+   "connected": 1556,
+   "inactive_ms": 11280
+  },
+  {
+   "ifname": "phy1-ap0",
+   "mac": "02:e7:7f:2b:93:e6",
+   "signal": "-55 [-64, -58, -65, -59] dBm",
+   "tx_rate": "780.0 MBit/s VHT-MCS 9 80MHz VHT-NSS 2",
+   "rx_rate": "866.7 MBit/s VHT-MCS 9 80MHz short GI VHT-NSS 2",
+   "connected": 1504,
+   "inactive_ms": 12130
+  }
+ ]
+}

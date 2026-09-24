@@ -1,0 +1,5 @@
+#!/bin/sh
+/usr/bin/lucky-dns-sync >/dev/null 2>&1
+inotifywait -m -q -e close_write,move,create /etc/lucky 2>/dev/null | while read -r _d _e f; do
+	[ "$f" = lucky_reverseproxy.lkcf ] && /usr/bin/lucky-dns-sync >/dev/null 2>&1
+done

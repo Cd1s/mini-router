@@ -1,0 +1,54 @@
+[
+ {
+  "ifname": "phy0-ap0",
+  "up": true,
+  "ssid": "MiniRouter-2.4G",
+  "channel": "6",
+  "htmode": "40MHz",
+  "clients": 1,
+  "phy": "phy0",
+  "band": "2g",
+  "network": "lan",
+  "state": "ENABLED",
+  "bssid": "02:f3:84:0b:8b:26"
+ },
+ {
+  "ifname": "phy0-ap0-1",
+  "up": true,
+  "ssid": "MiniRouter-IoT",
+  "channel": "6",
+  "htmode": "40MHz",
+  "clients": 2,
+  "phy": "phy0",
+  "band": "2g",
+  "network": "iot",
+  "state": "ENABLED",
+  "bssid": "02:de:9a:07:0e:8c"
+ },
+ {
+  "ifname": "phy1-ap0",
+  "up": true,
+  "ssid": "MiniRouter-5G",
+  "channel": "36",
+  "htmode": "160MHz",
+  "clients": 3,
+  "phy": "phy1",
+  "band": "5g",
+  "network": "lan",
+  "state": "ENABLED",
+  "bssid": "02:d9:3b:a0:8c:8f"
+ },
+ {
+  "ifname": "phy1-ap0-1",
+  "up": true,
+  "ssid": "MiniRouter-Guest",
+  "channel": "36",
+  "htmode": "160MHz",
+  "clients": 1,
+  "phy": "phy1",
+  "band": "5g",
+  "network": "guest",
+  "state": "ENABLED",
+  "bssid": "02:a2:6e:81:ee:08"
+ }
+]

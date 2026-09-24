@@ -1,0 +1,4 @@
+# wifi lab test secrets (fake values), used by examples/lab.d/20-wifi.yaml and mr/mod_wifi_test.go
+wifi_iot_key: "iot-key-7654321"
+wifi_wpa3_key: "wpa3 key|with pipe"
+wifi_guest_key: "guest-key-2468"

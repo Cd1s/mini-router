@@ -1,0 +1,3 @@
+#!/bin/sh
+printf 'Content-Type: application/json\r\nCache-Control: no-store\r\n\r\n'
+exec /usr/sbin/mr status

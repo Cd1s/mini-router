@@ -1,0 +1,38 @@
+# lab config — sys module fragment (system, services, schedules). Every sys feature is switched on;
+# tools/ci.d/sys.sh checks the rendered files (TZif with glibc, crontab, dropbear, keys, boot order).
+# CI concatenates examples/lab.d/*.yaml into one router.yaml; keep only this module's top-level keys here.
+
+system:
+  hostname: mini-router
+  timezone: "CET-1CEST,M3.5.0,M10.5.0/3"   # a DST zone (home uses "<+08>-8"): /etc/localtime must carry the rule
+  ntp: [ntp.tencent.com, ntp1.aliyun.com, 162.159.200.1, "2001:db8::123"]
+  ntp_server: true                          # busybox ntpd -l; only the LAN zone gets through the firewall
+  sysctl:
+    net.ipv4.tcp_congestion_control: bbr
+    net.ipv4.tcp_fin_timeout: "30"
+    net.ipv4.tcp_keepalive_time: "120"
+    net.ipv4.igmp_max_memberships: "100"
+    net.netfilter.nf_conntrack_max: "131072"  # overrides the default 100000 (applied at boot after `modules`)
+  zram: true
+
+services:
+  tailscale: {enabled: true, port: 41642}
+  lucky: {enabled: true, port: 16601}
+  dstatus: {enabled: true}
+  stubby: {enabled: true}
+  ssh:
+    enabled: true
+    port: 22
+    password_login: false
+    lan_only: true                          # dropbear -p <LAN-zone address>:22 (br-lan + the iot VLAN, not guest)
+    authorized_keys:                        # managed block in /root/.ssh/authorized_keys; other lines are kept
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDOGJDCePFDR8nNJPCzmDX6zxWpEH/sQ3kBFp/rZ0D2I lab-laptop
+      - ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBNv5ls2cMXY7dW6O6Vz2KVjjr95X1TsH3S+tudkbci188YyeFDhEsK8e2dNFxXjUS5IERTFJe/VODdvFE/zB8/I= lab-phone
+  panel: {enabled: true}
+
+schedules:                                  # busybox crond, fixed action set
+  - {name: weekly-reboot, cron: "30 4 * * 1", action: reboot}
+  - {name: wifi-restart, cron: "0 5 * * *", action: restart, target: mr-hostapd}
+  - {name: redial-iptv, cron: "15 */6 * * *", action: reconnect, target: iptv}      # DHCP WAN -> mr-udhcpc.iptv
+  - {name: redial-wan2, cron: "0 3 * * 0", action: reconnect, target: wan2}         # PPPoE WAN -> mr-pppoe.wan2
+  - {name: monthly-reboot, enabled: false, cron: "0 2 1 * *", action: reboot}      # kept, not in the crontab

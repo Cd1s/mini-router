@@ -1,0 +1,9 @@
+{
+ "ok": true,
+ "confirm": 120,
+ "files": [
+  "etc/mini-router/router.yaml",
+  "etc/mini-router/dns/cloudflare-dot.domains"
+ ],
+ "list_snapshot": ""
+}

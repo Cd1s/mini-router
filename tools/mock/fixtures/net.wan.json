@@ -1,0 +1,51 @@
+{
+ "mode": "balance",
+ "checked": 1790000000,
+ "interval": 5,
+ "targets": [
+  "1.1.1.1",
+  "8.8.8.8"
+ ],
+ "wans": [
+  {
+   "name": "wan",
+   "proto": "pppoe",
+   "dev": "pppoe-wan",
+   "service": "mr-pppoe.wan",
+   "up": true,
+   "ip": "203.0.113.11",
+   "gateway": "10.64.0.1",
+   "dns": [
+    "203.0.113.53",
+    "203.0.113.54"
+   ],
+   "since": 1789996785,
+   "table": 200,
+   "mark": "0x200",
+   "metric": 0,
+   "route_metric": 0,
+   "weight": 2,
+   "health": "up",
+   "rtt_ms": 3.2,
+   "health_since": 1789996800
+  },
+  {
+   "name": "wan2",
+   "proto": "pppoe",
+   "dev": "pppoe-wan2",
+   "service": "mr-pppoe.wan2",
+   "up": true,
+   "ip": "203.0.113.12",
+   "gateway": "10.64.0.1",
+   "since": 1789996785,
+   "table": 102,
+   "mark": "0x102",
+   "metric": 40,
+   "route_metric": 10040,
+   "weight": 1,
+   "health": "down",
+   "fails": 7,
+   "health_since": 1789999950
+  }
+ ]
+}

@@ -1,0 +1,2026 @@
+{
+ "addrs": [
+  {
+   "addr_info": [
+    {
+     "family": "inet",
+     "label": "lo",
+     "local": "127.0.0.1",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 8,
+     "scope": "host",
+     "valid_life_time": 4294967295
+    },
+    {
+     "family": "inet6",
+     "local": "::1",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 128,
+     "protocol": "kernel_lo",
+     "scope": "host",
+     "valid_life_time": 4294967295
+    }
+   ],
+   "address": "00:00:00:00:00:00",
+   "broadcast": "00:00:00:00:00:00",
+   "flags": [
+    "LOOPBACK",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 1,
+   "ifname": "lo",
+   "link_type": "loopback",
+   "mtu": 65536,
+   "operstate": "UNKNOWN",
+   "qdisc": "noqueue",
+   "txqlen": 1000
+  },
+  {
+   "addr_info": [
+    {
+     "family": "inet6",
+     "local": "fe80::c6:28ff:fea7:7cd7",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 64,
+     "protocol": "kernel_ll",
+     "scope": "link",
+     "valid_life_time": 4294967295
+    }
+   ],
+   "address": "02:c6:28:a7:7c:d7",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 2,
+   "ifname": "eth0",
+   "link_type": "ether",
+   "mtu": 1504,
+   "operstate": "UP",
+   "qdisc": "mq",
+   "txqlen": 1000
+  },
+  {
+   "addr_info": [],
+   "address": "02:c6:28:a7:7c:d7",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "NO-CARRIER",
+    "BROADCAST",
+    "MULTICAST",
+    "UP"
+   ],
+   "group": "default",
+   "ifindex": 3,
+   "ifname": "lan4",
+   "link": "eth0",
+   "link_type": "ether",
+   "master": "br-lan",
+   "mtu": 1500,
+   "operstate": "LOWERLAYERDOWN",
+   "qdisc": "noqueue",
+   "txqlen": 1000
+  },
+  {
+   "addr_info": [
+    {
+     "family": "inet6",
+     "local": "fe80::c6:28ff:fea7:7cd7",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 64,
+     "protocol": "kernel_ll",
+     "scope": "link",
+     "valid_life_time": 4294967295
+    }
+   ],
+   "address": "02:c6:28:a7:7c:d7",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 4,
+   "ifname": "lan3",
+   "link": "eth0",
+   "link_type": "ether",
+   "master": "br-lan",
+   "mtu": 1500,
+   "operstate": "UP",
+   "qdisc": "noqueue",
+   "txqlen": 1000
+  },
+  {
+   "addr_info": [
+    {
+     "family": "inet6",
+     "local": "fe80::c6:28ff:fea7:7cd7",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 64,
+     "protocol": "kernel_ll",
+     "scope": "link",
+     "valid_life_time": 4294967295
+    }
+   ],
+   "address": "02:c6:28:a7:7c:d7",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 5,
+   "ifname": "lan2",
+   "link": "eth0",
+   "link_type": "ether",
+   "master": "br-lan",
+   "mtu": 1500,
+   "operstate": "UP",
+   "qdisc": "noqueue",
+   "txqlen": 1000
+  },
+  {
+   "addr_info": [
+    {
+     "family": "inet6",
+     "local": "fe80::a6a9:30ff:fe6e:2b89",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 64,
+     "protocol": "kernel_ll",
+     "scope": "link",
+     "valid_life_time": 4294967295
+    }
+   ],
+   "address": "02:55:a3:1c:8d:ed",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 6,
+   "ifname": "wan",
+   "link": "eth0",
+   "link_type": "ether",
+   "mtu": 1500,
+   "operstate": "UP",
+   "permaddr": "02:c6:28:a7:7c:d7",
+   "qdisc": "noqueue",
+   "txqlen": 1000
+  },
+  {
+   "addr_info": [
+    {
+     "family": "inet",
+     "label": "br-lan",
+     "local": "192.168.1.6",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 24,
+     "scope": "global",
+     "valid_life_time": 4294967295
+    },
+    {
+     "dynamic": true,
+     "family": "inet6",
+     "local": "2001:db8:1:8d11::1",
+     "noprefixroute": true,
+     "preferred_life_time": 2588797,
+     "prefixlen": 64,
+     "scope": "global",
+     "valid_life_time": 2588797
+    },
+    {
+     "dynamic": true,
+     "family": "inet6",
+     "local": "2001:db8:1:8b0a::1",
+     "noprefixroute": true,
+     "preferred_life_time": 2588797,
+     "prefixlen": 64,
+     "scope": "global",
+     "valid_life_time": 2588797
+    },
+    {
+     "family": "inet6",
+     "local": "fe80::c6:28ff:fea7:7cd7",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 64,
+     "protocol": "kernel_ll",
+     "scope": "link",
+     "valid_life_time": 4294967295
+    }
+   ],
+   "address": "02:c6:28:a7:7c:d7",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 7,
+   "ifname": "br-lan",
+   "link_type": "ether",
+   "mtu": 1500,
+   "operstate": "UP",
+   "qdisc": "noqueue",
+   "txqlen": 1000
+  },
+  {
+   "addr_info": [
+    {
+     "address": "203.0.113.13",
+     "family": "inet",
+     "label": "pppoe-wan2",
+     "local": "203.0.113.12",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 32,
+     "scope": "global",
+     "valid_life_time": 4294967295
+    },
+    {
+     "address": "fe80::e5:f2ff:fe06:d9df",
+     "family": "inet6",
+     "local": "fe80::8d71:4deb:61cb:3df4",
+     "nodad": true,
+     "preferred_life_time": 4294967295,
+     "prefixlen": 128,
+     "scope": "link",
+     "valid_life_time": 4294967295
+    }
+   ],
+   "flags": [
+    "POINTOPOINT",
+    "MULTICAST",
+    "NOARP",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 25,
+   "ifname": "pppoe-wan2",
+   "link_type": "ppp",
+   "mtu": 1492,
+   "operstate": "UNKNOWN",
+   "qdisc": "noqueue",
+   "txqlen": 3
+  },
+  {
+   "addr_info": [
+    {
+     "address": "203.0.113.14",
+     "family": "inet",
+     "label": "pppoe-wan",
+     "local": "203.0.113.11",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 32,
+     "scope": "global",
+     "valid_life_time": 4294967295
+    },
+    {
+     "address": "fe80::43:26ff:fe4a:61c2",
+     "family": "inet6",
+     "local": "fe80::11c7:b2ba:6f99:c158",
+     "nodad": true,
+     "preferred_life_time": 4294967295,
+     "prefixlen": 128,
+     "scope": "link",
+     "valid_life_time": 4294967295
+    }
+   ],
+   "flags": [
+    "POINTOPOINT",
+    "MULTICAST",
+    "NOARP",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 26,
+   "ifname": "pppoe-wan",
+   "link_type": "ppp",
+   "mtu": 1492,
+   "operstate": "UNKNOWN",
+   "qdisc": "noqueue",
+   "txqlen": 3
+  },
+  {
+   "addr_info": [
+    {
+     "family": "inet6",
+     "local": "fe80::fe:a7ff:fe6d:b679",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 64,
+     "protocol": "kernel_ll",
+     "scope": "link",
+     "valid_life_time": 4294967295
+    }
+   ],
+   "address": "02:fe:a7:6d:b6:79",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 30,
+   "ifname": "phy0-ap0",
+   "link_type": "ether",
+   "master": "br-lan",
+   "mtu": 1500,
+   "operstate": "UP",
+   "qdisc": "noqueue",
+   "txqlen": 1000
+  },
+  {
+   "addr_info": [
+    {
+     "family": "inet6",
+     "local": "fe80::84:14ff:fec6:6ee4",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 64,
+     "protocol": "kernel_ll",
+     "scope": "link",
+     "valid_life_time": 4294967295
+    }
+   ],
+   "address": "02:84:14:c6:6e:e4",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 31,
+   "ifname": "phy1-ap0",
+   "link_type": "ether",
+   "master": "br-lan",
+   "mtu": 1500,
+   "operstate": "UP",
+   "qdisc": "noqueue",
+   "txqlen": 1000
+  },
+  {
+   "addr_info": [
+    {
+     "family": "inet",
+     "label": "tailscale0",
+     "local": "100.100.0.1",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 32,
+     "scope": "global",
+     "valid_life_time": 4294967295
+    },
+    {
+     "family": "inet6",
+     "local": "fd7a:115c:a1e0::1",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 128,
+     "scope": "global",
+     "valid_life_time": 4294967295
+    },
+    {
+     "family": "inet6",
+     "local": "fe80::38f1:95df:31a0:4d06",
+     "preferred_life_time": 4294967295,
+     "prefixlen": 64,
+     "protocol": "kernel_ll",
+     "scope": "link",
+     "stable-privacy": true,
+     "valid_life_time": 4294967295
+    }
+   ],
+   "flags": [
+    "POINTOPOINT",
+    "MULTICAST",
+    "NOARP",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 32,
+   "ifname": "tailscale0",
+   "link_type": "none",
+   "mtu": 1280,
+   "operstate": "UNKNOWN",
+   "qdisc": "fq_codel",
+   "txqlen": 500
+  }
+ ],
+ "links": [
+  {
+   "address": "00:00:00:00:00:00",
+   "broadcast": "00:00:00:00:00:00",
+   "flags": [
+    "LOOPBACK",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 1,
+   "ifname": "lo",
+   "link_type": "loopback",
+   "linkmode": "DEFAULT",
+   "mtu": 65536,
+   "operstate": "UNKNOWN",
+   "qdisc": "noqueue",
+   "stats64": {
+    "rx": {
+     "bytes": 819632,
+     "dropped": 0,
+     "errors": 0,
+     "multicast": 0,
+     "over_errors": 0,
+     "packets": 10586
+    },
+    "tx": {
+     "bytes": 819632,
+     "carrier_errors": 0,
+     "collisions": 0,
+     "dropped": 0,
+     "errors": 0,
+     "packets": 10586
+    }
+   },
+   "txqlen": 1000
+  },
+  {
+   "address": "02:c6:28:a7:7c:d7",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 2,
+   "ifname": "eth0",
+   "link_type": "ether",
+   "linkmode": "DEFAULT",
+   "mtu": 1504,
+   "operstate": "UP",
+   "qdisc": "mq",
+   "stats64": {
+    "rx": {
+     "bytes": 1656628056,
+     "dropped": 0,
+     "errors": 4,
+     "multicast": 0,
+     "over_errors": 0,
+     "packets": 1413282
+    },
+    "tx": {
+     "bytes": 630296179,
+     "carrier_errors": 0,
+     "collisions": 0,
+     "dropped": 0,
+     "errors": 0,
+     "packets": 718061
+    }
+   },
+   "txqlen": 1000
+  },
+  {
+   "address": "02:c6:28:a7:7c:d7",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "NO-CARRIER",
+    "BROADCAST",
+    "MULTICAST",
+    "UP"
+   ],
+   "group": "default",
+   "ifindex": 3,
+   "ifname": "lan4",
+   "link": "eth0",
+   "link_type": "ether",
+   "linkmode": "DEFAULT",
+   "master": "br-lan",
+   "mtu": 1500,
+   "operstate": "LOWERLAYERDOWN",
+   "qdisc": "noqueue",
+   "stats64": {
+    "rx": {
+     "bytes": 0,
+     "dropped": 0,
+     "errors": 0,
+     "multicast": 0,
+     "over_errors": 0,
+     "packets": 0
+    },
+    "tx": {
+     "bytes": 0,
+     "carrier_errors": 0,
+     "collisions": 0,
+     "dropped": 0,
+     "errors": 0,
+     "packets": 0
+    }
+   },
+   "txqlen": 1000
+  },
+  {
+   "address": "02:c6:28:a7:7c:d7",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 4,
+   "ifname": "lan3",
+   "link": "eth0",
+   "link_type": "ether",
+   "linkmode": "DEFAULT",
+   "master": "br-lan",
+   "mtu": 1500,
+   "operstate": "UP",
+   "qdisc": "noqueue",
+   "stats64": {
+    "rx": {
+     "bytes": 16809176,
+     "dropped": 0,
+     "errors": 0,
+     "multicast": 1435,
+     "over_errors": 0,
+     "packets": 18854
+    },
+    "tx": {
+     "bytes": 2378580,
+     "carrier_errors": 0,
+     "collisions": 0,
+     "dropped": 0,
+     "errors": 0,
+     "packets": 9211
+    }
+   },
+   "txqlen": 1000
+  },
+  {
+   "address": "02:c6:28:a7:7c:d7",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 5,
+   "ifname": "lan2",
+   "link": "eth0",
+   "link_type": "ether",
+   "linkmode": "DEFAULT",
+   "master": "br-lan",
+   "mtu": 1500,
+   "operstate": "UP",
+   "qdisc": "noqueue",
+   "stats64": {
+    "rx": {
+     "bytes": 16405243,
+     "dropped": 0,
+     "errors": 0,
+     "multicast": 1168,
+     "over_errors": 0,
+     "packets": 37958
+    },
+    "tx": {
+     "bytes": 20293409,
+     "carrier_errors": 0,
+     "collisions": 0,
+     "dropped": 0,
+     "errors": 0,
+     "packets": 53880
+    }
+   },
+   "txqlen": 1000
+  },
+  {
+   "address": "02:55:a3:1c:8d:ed",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 6,
+   "ifname": "wan",
+   "link": "eth0",
+   "link_type": "ether",
+   "linkmode": "DEFAULT",
+   "mtu": 1500,
+   "operstate": "UP",
+   "permaddr": "02:c6:28:a7:7c:d7",
+   "qdisc": "noqueue",
+   "stats64": {
+    "rx": {
+     "bytes": 1623566048,
+     "dropped": 4580,
+     "errors": 0,
+     "multicast": 25323,
+     "over_errors": 0,
+     "packets": 1357060
+    },
+    "tx": {
+     "bytes": 605798994,
+     "carrier_errors": 0,
+     "collisions": 0,
+     "dropped": 0,
+     "errors": 0,
+     "packets": 658663
+    }
+   },
+   "txqlen": 1000
+  },
+  {
+   "address": "02:c6:28:a7:7c:d7",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 7,
+   "ifname": "br-lan",
+   "link_type": "ether",
+   "linkmode": "DEFAULT",
+   "mtu": 1500,
+   "operstate": "UP",
+   "qdisc": "noqueue",
+   "stats64": {
+    "rx": {
+     "bytes": 551547075,
+     "dropped": 0,
+     "errors": 0,
+     "multicast": 3379,
+     "over_errors": 0,
+     "packets": 377247
+    },
+    "tx": {
+     "bytes": 1182204125,
+     "carrier_errors": 0,
+     "collisions": 0,
+     "dropped": 0,
+     "errors": 0,
+     "packets": 534533
+    }
+   },
+   "txqlen": 1000
+  },
+  {
+   "flags": [
+    "POINTOPOINT",
+    "MULTICAST",
+    "NOARP",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 25,
+   "ifname": "pppoe-wan2",
+   "link_type": "ppp",
+   "linkmode": "DEFAULT",
+   "mtu": 1492,
+   "operstate": "UNKNOWN",
+   "qdisc": "noqueue",
+   "stats64": {
+    "rx": {
+     "bytes": 13311313,
+     "dropped": 0,
+     "errors": 0,
+     "multicast": 0,
+     "over_errors": 0,
+     "packets": 18870
+    },
+    "tx": {
+     "bytes": 13289862,
+     "carrier_errors": 0,
+     "collisions": 0,
+     "dropped": 0,
+     "errors": 0,
+     "packets": 29759
+    }
+   },
+   "txqlen": 3
+  },
+  {
+   "flags": [
+    "POINTOPOINT",
+    "MULTICAST",
+    "NOARP",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 26,
+   "ifname": "pppoe-wan",
+   "link_type": "ppp",
+   "linkmode": "DEFAULT",
+   "mtu": 1492,
+   "operstate": "UNKNOWN",
+   "qdisc": "noqueue",
+   "stats64": {
+    "rx": {
+     "bytes": 5931909,
+     "dropped": 0,
+     "errors": 0,
+     "multicast": 0,
+     "over_errors": 0,
+     "packets": 31609
+    },
+    "tx": {
+     "bytes": 446433361,
+     "carrier_errors": 0,
+     "collisions": 0,
+     "dropped": 0,
+     "errors": 0,
+     "packets": 499872
+    }
+   },
+   "txqlen": 3
+  },
+  {
+   "address": "02:fe:a7:6d:b6:79",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 30,
+   "ifname": "phy0-ap0",
+   "link_type": "ether",
+   "linkmode": "DEFAULT",
+   "master": "br-lan",
+   "mtu": 1500,
+   "operstate": "UP",
+   "qdisc": "noqueue",
+   "stats64": {
+    "rx": {
+     "bytes": 6696835,
+     "dropped": 0,
+     "errors": 0,
+     "multicast": 0,
+     "over_errors": 0,
+     "packets": 25753
+    },
+    "tx": {
+     "bytes": 8464699,
+     "carrier_errors": 0,
+     "collisions": 0,
+     "dropped": 0,
+     "errors": 0,
+     "packets": 24402
+    }
+   },
+   "txqlen": 1000
+  },
+  {
+   "address": "02:84:14:c6:6e:e4",
+   "broadcast": "ff:ff:ff:ff:ff:ff",
+   "flags": [
+    "BROADCAST",
+    "MULTICAST",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 31,
+   "ifname": "phy1-ap0",
+   "link_type": "ether",
+   "linkmode": "DEFAULT",
+   "master": "br-lan",
+   "mtu": 1500,
+   "operstate": "UP",
+   "qdisc": "noqueue",
+   "stats64": {
+    "rx": {
+     "bytes": 13384439,
+     "dropped": 0,
+     "errors": 0,
+     "multicast": 0,
+     "over_errors": 0,
+     "packets": 48399
+    },
+    "tx": {
+     "bytes": 71194223,
+     "carrier_errors": 0,
+     "collisions": 0,
+     "dropped": 3,
+     "errors": 0,
+     "packets": 80598
+    }
+   },
+   "txqlen": 1000
+  },
+  {
+   "flags": [
+    "POINTOPOINT",
+    "MULTICAST",
+    "NOARP",
+    "UP",
+    "LOWER_UP"
+   ],
+   "group": "default",
+   "ifindex": 32,
+   "ifname": "tailscale0",
+   "link_type": "none",
+   "linkmode": "DEFAULT",
+   "mtu": 1280,
+   "operstate": "UNKNOWN",
+   "qdisc": "fq_codel",
+   "stats64": {
+    "rx": {
+     "bytes": 16870,
+     "dropped": 0,
+     "errors": 0,
+     "multicast": 0,
+     "over_errors": 0,
+     "packets": 120
+    },
+    "tx": {
+     "bytes": 9464,
+     "carrier_errors": 0,
+     "collisions": 0,
+     "dropped": 0,
+     "errors": 0,
+     "packets": 134
+    }
+   },
+   "txqlen": 500
+  }
+ ],
+ "neigh": [
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.170",
+   "lladdr": "02:c8:61:52:f4:45",
+   "state": [
+    "STALE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.167",
+   "lladdr": "02:13:2c:f7:cb:f2",
+   "state": [
+    "STALE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.233",
+   "lladdr": "02:e3:50:10:6a:63",
+   "state": [
+    "REACHABLE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.217",
+   "lladdr": "02:d9:44:2f:7a:85",
+   "state": [
+    "REACHABLE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.246",
+   "lladdr": "02:e7:7f:2b:93:e6",
+   "state": [
+    "STALE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.237",
+   "state": [
+    "FAILED"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.137",
+   "lladdr": "02:1c:ab:87:8c:b4",
+   "state": [
+    "STALE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.241",
+   "state": [
+    "FAILED"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.66",
+   "lladdr": "02:c3:06:d6:7f:8a",
+   "state": [
+    "REACHABLE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8d11:21c8:62b8:3fbc:ac80",
+   "state": [
+    "FAILED"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "fe80::1497:54a:dda9:2edf",
+   "lladdr": "02:1c:ab:87:8c:b4",
+   "state": [
+    "STALE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "fe80::c8:61ff:fe52:f445",
+   "lladdr": "02:c8:61:52:f4:45",
+   "state": [
+    "STALE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "fe80::c56:98e:4f23:df85",
+   "lladdr": "02:e7:7f:2b:93:e6",
+   "state": [
+    "STALE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8d11:8c7f:38b:6145:dbb1",
+   "lladdr": "02:e3:50:10:6a:63",
+   "state": [
+    "DELAY"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8d11:942c:7211:de6e:868b",
+   "lladdr": "02:d9:44:2f:7a:85",
+   "state": [
+    "REACHABLE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8b0a:1cd0:1b50:3082:4811",
+   "lladdr": "02:1c:ab:87:8c:b4",
+   "state": [
+    "STALE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8d11:ccdc:640a:64bf:89dc",
+   "lladdr": "02:e7:7f:2b:93:e6",
+   "state": [
+    "REACHABLE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8d11:4194:2d6e:7b45:788b",
+   "lladdr": "02:1c:ab:87:8c:b4",
+   "state": [
+    "STALE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "fe80::c6:28ff:fea7:7cd7",
+   "lladdr": "02:c6:28:a7:7c:d7",
+   "router": null,
+   "state": [
+    "STALE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "fe80::180f:4983:1c26:6bd2",
+   "lladdr": "02:c3:06:d6:7f:8a",
+   "state": [
+    "STALE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8d11:1c5e:effd:7bc5:4946",
+   "lladdr": "02:1c:ab:87:8c:b4",
+   "state": [
+    "STALE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "fe80::18f1:b4f6:7f3b:49f7",
+   "lladdr": "02:d9:44:2f:7a:85",
+   "state": [
+    "REACHABLE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "fe80::1cb5:d8ea:916f:a064",
+   "lladdr": "02:e3:50:10:6a:63",
+   "state": [
+    "STALE"
+   ]
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8b0a:19d1:ee54:5134:b323",
+   "lladdr": "02:1c:ab:87:8c:b4",
+   "state": [
+    "STALE"
+   ]
+  }
+ ],
+ "route4": [
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.6",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.7",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.8",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.9",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.10",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.11",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.12",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.13",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.14",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.15",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.16",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.17",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.18",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.19",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.20",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.21",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.22",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.23",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.24",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.25",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.26",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.27",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.28",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.29",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.30",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.31",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.32",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "192.168.60.0/24",
+   "flags": [],
+   "table": "52"
+  },
+  {
+   "dev": "pppoe-wan2",
+   "dst": "default",
+   "flags": [],
+   "scope": "link",
+   "table": "102"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.0/24",
+   "flags": [],
+   "scope": "link",
+   "table": "102"
+  },
+  {
+   "dev": "pppoe-wan",
+   "dst": "default",
+   "flags": [],
+   "scope": "link",
+   "table": "200"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.0/24",
+   "flags": [],
+   "scope": "link",
+   "table": "200"
+  },
+  {
+   "dev": "pppoe-wan",
+   "dst": "default",
+   "flags": [],
+   "scope": "link"
+  },
+  {
+   "dev": "pppoe-wan2",
+   "dst": "default",
+   "flags": [],
+   "metric": 40,
+   "scope": "link"
+  },
+  {
+   "dev": "pppoe-wan",
+   "dst": "203.0.113.14",
+   "flags": [],
+   "prefsrc": "203.0.113.11",
+   "protocol": "kernel",
+   "scope": "link"
+  },
+  {
+   "dev": "pppoe-wan2",
+   "dst": "203.0.113.13",
+   "flags": [],
+   "prefsrc": "203.0.113.12",
+   "protocol": "kernel",
+   "scope": "link"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.0/24",
+   "flags": [],
+   "prefsrc": "192.168.1.6",
+   "protocol": "kernel",
+   "scope": "link"
+  },
+  {
+   "dev": "pppoe-wan",
+   "dst": "203.0.113.11",
+   "flags": [],
+   "prefsrc": "203.0.113.11",
+   "protocol": "kernel",
+   "scope": "host",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "100.100.0.1",
+   "flags": [],
+   "prefsrc": "100.100.0.1",
+   "protocol": "kernel",
+   "scope": "host",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "lo",
+   "dst": "127.0.0.0/8",
+   "flags": [],
+   "prefsrc": "127.0.0.1",
+   "protocol": "kernel",
+   "scope": "host",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "lo",
+   "dst": "127.0.0.1",
+   "flags": [],
+   "prefsrc": "127.0.0.1",
+   "protocol": "kernel",
+   "scope": "host",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "lo",
+   "dst": "127.255.255.255",
+   "flags": [],
+   "prefsrc": "127.0.0.1",
+   "protocol": "kernel",
+   "scope": "link",
+   "table": "local",
+   "type": "broadcast"
+  },
+  {
+   "dev": "pppoe-wan2",
+   "dst": "203.0.113.12",
+   "flags": [],
+   "prefsrc": "203.0.113.12",
+   "protocol": "kernel",
+   "scope": "host",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.6",
+   "flags": [],
+   "prefsrc": "192.168.1.6",
+   "protocol": "kernel",
+   "scope": "host",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "192.168.1.255",
+   "flags": [],
+   "prefsrc": "192.168.1.6",
+   "protocol": "kernel",
+   "scope": "link",
+   "table": "local",
+   "type": "broadcast"
+  }
+ ],
+ "route6": [
+  {
+   "dev": "tailscale0",
+   "dst": "fd7a:115c:a1e0::53",
+   "flags": [],
+   "metric": 1024,
+   "pref": "medium",
+   "table": "52"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "fd7a:115c:a1e0::/48",
+   "flags": [],
+   "metric": 1024,
+   "pref": "medium",
+   "table": "52"
+  },
+  {
+   "dev": "pppoe-wan2",
+   "dst": "default",
+   "flags": [],
+   "metric": 1024,
+   "pref": "medium",
+   "table": "102"
+  },
+  {
+   "dev": "pppoe-wan",
+   "dst": "default",
+   "flags": [],
+   "metric": 1024,
+   "pref": "medium",
+   "table": "200"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8b0a::/64",
+   "expires": 2588796,
+   "flags": [],
+   "metric": 1007,
+   "pref": "medium",
+   "protocol": "dhcp"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8d11::/64",
+   "expires": 2588796,
+   "flags": [],
+   "metric": 1007,
+   "pref": "medium",
+   "protocol": "dhcp"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "fd7a:115c:a1e0::1",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel"
+  },
+  {
+   "dev": "pppoe-wan",
+   "dst": "fe80::43:26ff:fe4a:61c2",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel"
+  },
+  {
+   "dev": "pppoe-wan2",
+   "dst": "fe80::e5:f2ff:fe06:d9df",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel"
+  },
+  {
+   "dev": "pppoe-wan",
+   "dst": "fe80::11c7:b2ba:6f99:c158",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel"
+  },
+  {
+   "dev": "pppoe-wan2",
+   "dst": "fe80::8d71:4deb:61cb:3df4",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel"
+  },
+  {
+   "dev": "eth0",
+   "dst": "fe80::/64",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel"
+  },
+  {
+   "dev": "wan",
+   "dst": "fe80::/64",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel"
+  },
+  {
+   "dev": "lan3",
+   "dst": "fe80::/64",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "fe80::/64",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel"
+  },
+  {
+   "dev": "lan2",
+   "dst": "fe80::/64",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel"
+  },
+  {
+   "dev": "phy1-ap0",
+   "dst": "fe80::/64",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel"
+  },
+  {
+   "dev": "phy0-ap0",
+   "dst": "fe80::/64",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "fe80::/64",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel"
+  },
+  {
+   "dev": "pppoe-wan",
+   "dst": "default",
+   "expires": 1228,
+   "flags": [],
+   "gateway": "fe80::43:26ff:fe4a:61c2",
+   "metric": 1024,
+   "pref": "medium",
+   "protocol": "ra"
+  },
+  {
+   "dev": "pppoe-wan2",
+   "dst": "default",
+   "expires": 1659,
+   "flags": [],
+   "gateway": "fe80::e5:f2ff:fe06:d9df",
+   "metric": 1024,
+   "pref": "medium",
+   "protocol": "ra"
+  },
+  {
+   "dev": "pppoe-wan2",
+   "dst": "default",
+   "expires": 1659,
+   "flags": [],
+   "gateway": "fe80::e5:f2ff:fe06:d9df",
+   "metric": 1064,
+   "pref": "medium",
+   "protocol": "ra"
+  },
+  {
+   "dev": "lo",
+   "dst": "::1",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8b0a::",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "anycast"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8b0a::1",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8d11::",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "anycast"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "2001:db8:1:8d11::1",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "fd7a:115c:a1e0::1",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "fe80::",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "anycast"
+  },
+  {
+   "dev": "lan2",
+   "dst": "fe80::",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "anycast"
+  },
+  {
+   "dev": "eth0",
+   "dst": "fe80::",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "anycast"
+  },
+  {
+   "dev": "wan",
+   "dst": "fe80::",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "anycast"
+  },
+  {
+   "dev": "lan3",
+   "dst": "fe80::",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "anycast"
+  },
+  {
+   "dev": "phy1-ap0",
+   "dst": "fe80::",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "anycast"
+  },
+  {
+   "dev": "phy0-ap0",
+   "dst": "fe80::",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "anycast"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "fe80::",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "anycast"
+  },
+  {
+   "dev": "pppoe-wan",
+   "dst": "fe80::11c7:b2ba:6f99:c158",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "fe80::38f1:95df:31a0:4d06",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "pppoe-wan2",
+   "dst": "fe80::8d71:4deb:61cb:3df4",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "wan",
+   "dst": "fe80::a6a9:30ff:fe6e:2b89",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "fe80::c6:28ff:fea7:7cd7",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "lan2",
+   "dst": "fe80::c6:28ff:fea7:7cd7",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "eth0",
+   "dst": "fe80::c6:28ff:fea7:7cd7",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "lan3",
+   "dst": "fe80::c6:28ff:fea7:7cd7",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "phy0-ap0",
+   "dst": "fe80::fe:a7ff:fe6d:b679",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "phy1-ap0",
+   "dst": "fe80::84:14ff:fec6:6ee4",
+   "flags": [],
+   "metric": 0,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "local"
+  },
+  {
+   "dev": "eth0",
+   "dst": "ff00::/8",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "multicast"
+  },
+  {
+   "dev": "wan",
+   "dst": "ff00::/8",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "multicast"
+  },
+  {
+   "dev": "lan3",
+   "dst": "ff00::/8",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "multicast"
+  },
+  {
+   "dev": "br-lan",
+   "dst": "ff00::/8",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "multicast"
+  },
+  {
+   "dev": "lan2",
+   "dst": "ff00::/8",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "multicast"
+  },
+  {
+   "dev": "pppoe-wan2",
+   "dst": "ff00::/8",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "multicast"
+  },
+  {
+   "dev": "pppoe-wan",
+   "dst": "ff00::/8",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "multicast"
+  },
+  {
+   "dev": "phy1-ap0",
+   "dst": "ff00::/8",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "multicast"
+  },
+  {
+   "dev": "phy0-ap0",
+   "dst": "ff00::/8",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "multicast"
+  },
+  {
+   "dev": "tailscale0",
+   "dst": "ff00::/8",
+   "flags": [],
+   "metric": 256,
+   "pref": "medium",
+   "protocol": "kernel",
+   "table": "local",
+   "type": "multicast"
+  }
+ ],
+ "rules4": [
+  {
+   "priority": 0,
+   "src": "all",
+   "table": "local"
+  },
+  {
+   "fwmark": "0x80000",
+   "fwmask": "0xff0000",
+   "priority": 5210,
+   "src": "all",
+   "table": "main"
+  },
+  {
+   "fwmark": "0x80000",
+   "fwmask": "0xff0000",
+   "priority": 5230,
+   "src": "all",
+   "table": "default"
+  },
+  {
+   "action": "unreachable",
+   "fwmark": "0x80000",
+   "fwmask": "0xff0000",
+   "priority": 5250,
+   "src": "all"
+  },
+  {
+   "priority": 5270,
+   "src": "all",
+   "table": "52"
+  },
+  {
+   "priority": 5290,
+   "src": "203.0.113.11",
+   "table": "200"
+  },
+  {
+   "priority": 5290,
+   "src": "203.0.113.12",
+   "table": "102"
+  },
+  {
+   "fwmark": "0x200",
+   "priority": 5300,
+   "src": "all",
+   "table": "200"
+  },
+  {
+   "fwmark": "0x102",
+   "priority": 5300,
+   "src": "all",
+   "table": "102"
+  },
+  {
+   "priority": 32766,
+   "src": "all",
+   "table": "main"
+  },
+  {
+   "priority": 32767,
+   "src": "all",
+   "table": "default"
+  }
+ ],
+ "rules6": [
+  {
+   "priority": 0,
+   "src": "all",
+   "table": "local"
+  },
+  {
+   "fwmark": "0x80000",
+   "fwmask": "0xff0000",
+   "priority": 5210,
+   "src": "all",
+   "table": "main"
+  },
+  {
+   "fwmark": "0x80000",
+   "fwmask": "0xff0000",
+   "priority": 5230,
+   "src": "all",
+   "table": "default"
+  },
+  {
+   "action": "unreachable",
+   "fwmark": "0x80000",
+   "fwmask": "0xff0000",
+   "priority": 5250,
+   "src": "all"
+  },
+  {
+   "priority": 5270,
+   "src": "all",
+   "table": "52"
+  },
+  {
+   "fwmark": "0x200",
+   "priority": 5300,
+   "src": "all",
+   "table": "200"
+  },
+  {
+   "fwmark": "0x102",
+   "priority": 5300,
+   "src": "all",
+   "table": "102"
+  },
+  {
+   "priority": 32766,
+   "src": "all",
+   "table": "main"
+  }
+ ]
+}

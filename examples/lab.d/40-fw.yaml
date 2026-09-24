@@ -1,0 +1,75 @@
+# lab config — fw module fragment (firewall).
+# CI concatenates examples/lab.d/*.yaml into one router.yaml; keep only this module's top-level keys here.
+# Exercises every fw feature so CI loads it into real nftables (see also tools/ci.d/fw.sh).
+
+firewall:
+  offload: hardware
+  synflood_protect: true
+  wan_ping: false               # no ICMPv4 echo from WAN (IPv6 control ICMP stays allowed)
+  drop_invalid: true
+  log_drops: true               # rate-limited kernel log of dropped WAN input
+
+  forwards:
+    - {name: vps-45000-45100, proto: [tcp, udp], port: 45000-45100, to: 192.168.1.241}
+    - {name: desktop-7443,    proto: [tcp],      port: "7443",      to: 192.168.1.66, to_port: "9999"}
+    - {name: workstation,     proto: [tcp, udp], port: 46001-46020, to: 192.168.1.237}
+    - name: nas-ssh-office      # only from two source networks, only via wan2
+      proto: [tcp]
+      port: "2222"
+      to: 192.168.1.241
+      to_port: "22"
+      wan: [wan2]
+      src_ip: [203.0.113.0/24, 198.51.100.7]
+      desc: "office -> NAS ssh"
+    - {name: guest-cam, proto: [tcp], port: "8554", to: 192.168.20.50, desc: "camera in the guest network"}
+    - {name: iot-hub,   proto: [udp], port: "5683", to: 192.168.30.20}
+    - {name: old-game,  enabled: false, proto: [udp], port: "27015", to: 192.168.1.166}
+
+  open:
+    - {name: lucky-https, proto: [tcp], port: "443"}
+    - name: wg-office
+      proto: [udp]
+      port: "51820,51821"
+      wan: [wan]
+      src_ip: [203.0.113.0/24, "2001:db8:100::/48"]
+      desc: "WireGuard from the office only"
+    - {name: old-http, enabled: false, proto: [tcp], port: "80"}
+
+  ipv6_allow:
+    - {name: nas-https, iid: "::211:32ff:fe12:3456", proto: [tcp], port: "443,8443"}
+    - {name: desktop-ssh, mac: "02:c3:06:d6:7f:8a", proto: [tcp], port: "22", src_ip: ["2001:db8:100::/48"], wan: [wan2], desc: "EUI-64 from MAC"}
+    - {name: game-v6, iid: "::10", proto: [tcp, udp], port: 27000-27050}
+    - {name: off-v6, enabled: false, iid: "::20", proto: [udp], port: "9"}
+
+  rules:
+    - {name: no-smtp-out, action: reject, src: lan, dest: wan, proto: [tcp], dest_port: "25", counter: true}
+    - {name: no-dot-bypass, action: reject, src: lan, dest: wan, proto: [tcp, udp], dest_port: "853", log: true}
+    - name: guest-printer
+      action: accept
+      src: guest
+      dest: lan
+      dest_ip: [192.168.1.50]
+      proto: [tcp]
+      dest_port: "631,9100"
+      counter: true
+      desc: "guests may print"
+    - {name: tv-no-router-ssh, action: drop, dest: router, src_mac: ["aa:bb:cc:00:11:22"], proto: [tcp], dest_port: "22"}
+    - {name: iot-quiet-hours, action: drop, src: lan, dest: wan, src_ip: [192.168.30.0/24], schedule: [{time: "01:00-06:00"}], counter: true}
+    - name: weekday-games
+      action: reject
+      src: lan
+      dest: wan
+      src_ip: [192.168.1.160/28, "2001:db8:1::/64"]
+      proto: [udp]
+      dest_port: 27000-27100
+      schedule: [{days: [mon, tue, wed, thu, fri], time: "08:00-17:30"}, {days: [sun], time: "22:00-07:00"}]
+      log: true
+    - {name: block-bad-net, action: drop, src: wan, src_ip: ["192.0.2.0/24", "2001:db8:bad::/48"], counter: true}
+    - {name: v6-icmp-lab, action: accept, src: wan, dest: lan, dest_ip: ["2001:db8:1::/64"], proto: [icmp]}
+    - {name: disabled-rule, enabled: false, action: drop, src: lan, proto: [udp], dest_port: "1900"}
+
+  access:
+    - {name: kid-bedtime, macs: ["aa:bb:cc:dd:ee:01", "AA:BB:CC:DD:EE:02"], schedule: [{days: [sun, mon, tue, wed, thu], time: "21:30-07:00"}, {days: [fri, sat], time: "23:00-08:00"}], desc: "kids' tablet + phone"}
+    - {name: blocked-tv, macs: ["aa:bb:cc:dd:ee:03"]}
+    - {name: school-hours, macs: ["aa:bb:cc:dd:ee:04"], schedule: [{days: [mon, tue, wed, thu, fri]}]}
+    - {name: off-entry, enabled: false, macs: ["aa:bb:cc:dd:ee:05"]}

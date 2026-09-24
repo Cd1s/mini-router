@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+# multicast.igmp_proxy: relay IGMP / multicast (e.g. IPTV) from the upstream WAN into the LAN.
+# Alpine's igmpproxy package ships no OpenRC script; config rendered by mr (/etc/igmpproxy.conf).
+description="IGMP proxy"
+supervisor=supervise-daemon
+command=/usr/sbin/igmpproxy
+command_args="-n /etc/igmpproxy.conf"
+respawn_delay=5
+respawn_max=0
+depend() {
+	need net
+	after mr-firewall mr-pppoe
+}
+start_pre() {
+	[ -f /etc/igmpproxy.conf ] || { eerror "no /etc/igmpproxy.conf (enable multicast.igmp_proxy)"; return 1; }
+}

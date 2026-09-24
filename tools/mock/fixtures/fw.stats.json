@@ -1,0 +1,15 @@
+{
+ "counters": {
+  "wan-in-drop": {"packets": 18342, "bytes": 1049123},
+  "v6in:nas-https": {"packets": 211, "bytes": 13504},
+  "v6in:desktop-ssh": {"packets": 3, "bytes": 240},
+  "rule:no-smtp-out": {"packets": 4, "bytes": 240},
+  "rule:iot-quiet-hours": {"packets": 57, "bytes": 5220},
+  "access:kid-bedtime": {"packets": 912, "bytes": 81234},
+  "access:blocked-tv": {"packets": 0, "bytes": 0}
+ },
+ "log": [
+  "[81234.112233] mr-drop wan-in: IN=pppoe-wan OUT= SRC=198.51.100.23 DST=203.0.113.10 LEN=44 TOS=0x00 PREC=0x00 TTL=242 ID=54321 PROTO=TCP SPT=40123 DPT=22 WINDOW=1024 RES=0x00 SYN URGP=0",
+  "[81240.556677] mr-drop wan-in: IN=pppoe-wan2 OUT= SRC=192.0.2.77 DST=203.0.113.11 LEN=40 TOS=0x00 PREC=0x00 TTL=50 ID=0 DF PROTO=TCP SPT=51515 DPT=8080 WINDOW=65535 RES=0x00 SYN URGP=0"
+ ]
+}

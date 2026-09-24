@@ -1,0 +1,4 @@
+mr_phy() { for p in /sys/class/ieee80211/*; do p=${p##*/}; iw phy "$p" info | grep -q "Band $1:" && { echo "$p"; return; }; done; }
+for d in /sys/class/net/*/phy80211; do d=${d%%/phy80211}; d=${d##*/}; case " phy0-ap0 phy1-ap0 " in *" $d "*) ;; *-ap0-[0-9]*) ;; *) iw dev "$d" del;; esac; done
+p=$(mr_phy 1); if [ -n "$p" ] && [ "$(cat /sys/class/net/phy0-ap0/phy80211/name 2>/dev/null)" != "$p" ]; then iw dev phy0-ap0 del 2>/dev/null; iw phy "$p" interface add phy0-ap0 type __ap; fi
+p=$(mr_phy 2); if [ -n "$p" ] && [ "$(cat /sys/class/net/phy1-ap0/phy80211/name 2>/dev/null)" != "$p" ]; then iw dev phy1-ap0 del 2>/dev/null; iw phy "$p" interface add phy1-ap0 type __ap; fi

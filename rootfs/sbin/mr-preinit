@@ -1,0 +1,157 @@
+#!/bin/sh
+# mini-router preinit (platform, docs/modules/platform.md). /sbin/init and /init are symlinks to this
+# file: the hanwckf U-Boot sets the kernel command line, so there is no init= to point elsewhere.
+#
+#   flash      The kernel mounts the squashfs "rootfs" UBI volume (ubiblock) read-only as / and runs
+#              /sbin/init. We mount UBIFS <ubi>:rootfs_data at /overlay (UBIFS formats an empty volume
+#              itself; tmpfs if that fails), stack overlayfs (lower = squashfs, upper =
+#              /overlay/mr/upper) on /mnt, pivot_root into it (the squashfs stays at /rom) and exec
+#              busybox init (OpenRC). /overlay/.mr-factory-reset (written by factory-reset) wipes
+#              rootfs_data first.
+#   initramfs  / is the kernel's RAM rootfs. /mr-install (the sysupgrade installer payload) runs the
+#              installer; anything else is the RAM test system (kexec): provisioned config is applied
+#              and a safety timer reboots back to flash after 10 minutes unless /tmp/keep exists
+#              (or mr.keep is on the kernel command line).
+#
+# Runs as PID 1 before anything else: no `set -e`; every failure falls through to busybox init.
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+umask 022
+
+run_init() {
+	cd / || :
+	[ -x /bin/busybox ] && exec /bin/busybox init "$@"
+	exec /bin/sh # last resort: a shell on the console
+}
+
+[ "$$" = 1 ] || run_init "$@"
+
+log() {
+	if [ -w /dev/kmsg ]; then
+		echo "mr-preinit: $*" > /dev/kmsg
+	else
+		echo "mr-preinit: $*"
+	fi
+}
+
+# ubi_vol NAME: the ubiX_Y sysfs name of the UBI volume called NAME (first UBI device that has it).
+ubi_vol() {
+	for v in /sys/class/ubi/ubi*_*; do
+		[ -r "$v/name" ] || continue
+		[ "$(cat "$v/name")" = "$1" ] && { echo "${v##*/}"; return 0; }
+	done
+	return 1
+}
+
+# wipe_vol ubiX_Y: erase the volume (an empty volume is formatted as a fresh UBIFS on the next mount).
+wipe_vol() {
+	mount -t tmpfs -o size=64k,mode=0700 tmpfs /tmp || return 1
+	dev=$(cat "/sys/class/ubi/$1/dev" 2>/dev/null)
+	rc=1
+	if [ -n "$dev" ] && mknod /tmp/vol c "${dev%:*}" "${dev#*:}"; then
+		ubiupdatevol /tmp/vol -t && rc=0
+	fi
+	umount /tmp
+	return $rc
+}
+
+# The provisioned router.yaml (tools/provision.sh drops /etc/mini-router/.firstboot next to it) has
+# not been rendered yet: render every generated file and make the default runlevel match it.
+firstboot() {
+	[ -e /etc/mini-router/.firstboot ] && [ -x /usr/sbin/mr ] || return 0
+	if ! out=$(/usr/sbin/mr validate 2>&1); then
+		log "provisioned router.yaml is invalid, keeping the factory files: $(echo "$out" | sed -n 2p)"
+		return 1
+	fi
+	if ! out=$(/usr/sbin/mr render / 2>&1); then
+		log "mr render failed: $out"
+		return 1
+	fi
+	want=/etc/mini-router/gen/services
+	rl=/etc/runlevels/default
+	if [ -s "$want" ]; then
+		for l in "$rl"/*; do
+			[ -L "$l" ] || continue
+			s=${l##*/}
+			[ "$s" = local ] && continue
+			grep -qxF -- "$s" "$want" || rm -f "$l"
+		done
+		while read -r s; do
+			case $s in '' | *[!A-Za-z0-9._-]*) continue ;; esac
+			if [ -e "/etc/init.d/$s" ]; then
+				ln -sfn "/etc/init.d/$s" "$rl/$s"
+			else
+				log "no init script for service $s"
+			fi
+		done < "$want"
+	fi
+	rm -f /etc/mini-router/.firstboot
+	log "applied the provisioned router.yaml"
+	return 0
+}
+
+mount -t proc -o nosuid,nodev,noexec proc /proc 2>/dev/null
+mount -t sysfs -o nosuid,nodev,noexec sysfs /sys 2>/dev/null
+roottype=$(awk '$2 == "/" { t = $3 } END { print t }' /proc/mounts 2>/dev/null)
+
+case $roottype in
+rootfs | tmpfs | ramfs)
+	# ---- initramfs: sysupgrade installer or RAM test system ----
+	if [ -d /mr-install ] && [ -x /usr/libexec/mr/sysupgrade ]; then
+		exec /usr/libexec/mr/sysupgrade --install /mr-install
+	fi
+	firstboot
+	case " $(cat /proc/cmdline 2>/dev/null) " in
+	*" mr.keep "* | *" mr.keep=1 "*) log "RAM system: no safety timer (mr.keep)" ;;
+	*)
+		log "RAM test system: rebooting to flash in 600 s unless /tmp/keep exists"
+		(
+			sleep 600
+			if [ ! -e /tmp/keep ]; then
+				logger -t mr-preinit "no /tmp/keep after 600 s: rebooting to the flash system" 2>/dev/null
+				sync
+				reboot
+			fi
+		) < /dev/null > /dev/null 2>&1 &
+		;;
+	esac
+	run_init "$@"
+	;;
+esac
+
+# ---- flash: squashfs root + UBIFS overlay ----
+data=
+vol=$(ubi_vol rootfs_data) && ubi=${vol%_*}
+if [ -n "$vol" ] && mount -t ubifs -o noatime "$ubi:rootfs_data" /overlay 2>/dev/null; then
+	data=ubifs
+	if [ -e /overlay/.mr-factory-reset ]; then
+		log "factory reset: wiping rootfs_data ($vol)"
+		umount /overlay
+		wipe_vol "$vol" || log "wiping $vol failed"
+		mount -t ubifs -o noatime "$ubi:rootfs_data" /overlay 2>/dev/null || data=
+		if [ -n "$data" ] && [ -e /overlay/.mr-factory-reset ]; then
+			rm -rf /overlay/mr /overlay/.mr-factory-reset # the wipe failed: at least drop the settings
+		fi
+	fi
+fi
+if [ -z "$data" ]; then
+	log "rootfs_data unavailable: settings live in RAM and are lost at reboot"
+	mount -t tmpfs -o mode=0755,size=25% tmpfs /overlay && data=tmpfs
+fi
+# The volume may also hold a foreign overlay (OpenWrt's upper/ and work/): only mr/ is used.
+# The upper dir's own mode becomes the mode of / (0755 root, whatever created it).
+if [ -n "$data" ] && mkdir -p /overlay/mr/upper /overlay/mr/work &&
+	chown 0:0 /overlay/mr/upper && chmod 0755 /overlay/mr/upper &&
+	mount -t overlay -o noatime,lowerdir=/,upperdir=/overlay/mr/upper,workdir=/overlay/mr/work overlay /mnt &&
+	cd /mnt && pivot_root . rom; then
+	cd /
+	for m in proc sys overlay; do
+		mount -o move "/rom/$m" "/$m" || log "moving /rom/$m failed"
+	done
+	# devtmpfs, if the kernel auto-mounted it on the old root (else OpenRC's devfs mounts it)
+	grep -q " /rom/dev " /proc/mounts && { mount -o move /rom/dev /dev || log "moving /rom/dev failed"; }
+	firstboot
+else
+	log "overlay setup failed: booting the read-only root"
+fi
+run_init "$@"

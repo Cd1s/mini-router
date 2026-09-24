@@ -1,0 +1,16 @@
+{
+ "until": 1790280600,
+ "now": 1790280000,
+ "lines": [
+  "Sep 24 20:31:00 mini-router daemon.info dnsmasq[2211]: query[A] www.apple.com from 192.168.1.233",
+  "Sep 24 20:31:01 mini-router daemon.info dnsmasq[2211]: forwarded www.apple.com to 198.51.100.53",
+  "Sep 24 20:31:02 mini-router daemon.info dnsmasq[2211]: reply www.apple.com is <CNAME>",
+  "Sep 24 20:31:03 mini-router daemon.info dnsmasq[2211]: reply www-apple-com.v.aaplimg.com is 23.45.67.89",
+  "Sep 24 20:31:04 mini-router daemon.info dnsmasq[2211]: query[AAAA] nas.lan from 192.168.1.170",
+  "Sep 24 20:31:05 mini-router daemon.info dnsmasq[2211]: config nas.lan is NODATA-IPv6",
+  "Sep 24 20:31:06 mini-router daemon.info dnsmasq[2211]: query[A] nas.lan from 192.168.1.170",
+  "Sep 24 20:31:07 mini-router daemon.info dnsmasq[2211]: config nas.lan is 192.168.1.10",
+  "Sep 24 20:31:08 mini-router daemon.info dnsmasq[2211]: query[A] github.com from 192.168.1.217",
+  "Sep 24 20:31:09 mini-router daemon.info dnsmasq[2211]: cached github.com is 20.205.243.166"
+ ]
+}

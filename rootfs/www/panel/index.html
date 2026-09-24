@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>路由器状态</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--fg:#1d2330;--mute:#6b7383;--line:#e4e7ec;--ok:#1a9b5a;--bad:#d64545;--warn:#c98a12;--acc:#2f6fed}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1218;--card:#181c24;--fg:#e6e9ef;--mute:#8b93a3;--line:#262c38;--ok:#3ecf8e;--bad:#ff6b6b;--warn:#f0b43c;--acc:#6ea0ff}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+header{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;padding:16px 16px 4px;max-width:1100px;margin:0 auto}
+h1{font-size:18px;margin:0}
+.sub{color:var(--mute);font-size:12px}
+main{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;padding:12px 16px 24px;max-width:1100px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
+.card h2{font-size:13px;margin:0 0 8px;color:var(--mute);font-weight:600;letter-spacing:.02em}
+.wide{grid-column:1/-1}
+.row{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dashed var(--line)}
+.row:last-child{border-bottom:0}
+.row span:last-child{text-align:right;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.big{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.ok{background:var(--ok)}.bad{background:var(--bad)}.warn{background:var(--warn)}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:4px}
+.bar i{display:block;height:100%;background:var(--acc)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--mute);font-weight:600}
+.tbl{overflow-x:auto}
+.chg{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--mute)}
+.err{color:var(--bad)}
+</style>
+</head>
+<body>
+<header><h1 id="h">路由器状态</h1><span class="sub" id="upd">加载中…</span></header>
+<main id="m"></main>
+<script>
+var prev=null;
+function el(t,c,h){var e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function bytes(n){n=+n||0;var u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<4){n/=1024;i++}return n.toFixed(i?1:0)+' '+u[i]}
+function rate(n){return bytes(n)+'/s'}
+function dur(s){s=+s||0;var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return (d?d+'天 ':'')+(h?h+'时 ':'')+m+'分'}
+function dot(ok,warn){return '<span class="dot '+(ok?'ok':(warn?'warn':'bad'))+'"></span>'}
+function rows(pairs){return pairs.map(function(p){return '<div class="row"><span>'+p[0]+'</span><span>'+p[1]+'</span></div>'}).join('')}
+function card(title,body,cls){var c=el('div','card'+(cls?' '+cls:''));c.appendChild(el('h2',null,esc(title)));var b=el('div',null,body);c.appendChild(b);return c}
+function render(d){
+  var m=document.getElementById('m');m.innerHTML='';
+  document.getElementById('h').textContent=(d.host||'路由器')+' 状态';
+  var memUsed=d.mem_total_kb-d.mem_avail_kb, memPct=Math.round(memUsed*100/d.mem_total_kb);
+  var ovlPct=Math.round((d.overlay_total_kb-d.overlay_free_kb)*100/d.overlay_total_kb);
+  m.appendChild(card('系统',rows([
+    ['运行时间',dur(d.uptime)],['负载',esc(d.load)],['温度',(d.temp_mc/1000).toFixed(1)+' °C'],
+    ['内存',bytes(memUsed*1024)+' / '+bytes(d.mem_total_kb*1024)+'<div class="bar"><i style="width:'+memPct+'%"></i></div>'],
+    ['可写空间','剩 '+bytes(d.overlay_free_kb*1024)+'<div class="bar"><i style="width:'+ovlPct+'%"></i></div>'],
+    ['连接数',d.conntrack+' / '+d.conntrack_max],['硬件 NAT 转发',d.hnat_bind+' 条'],
+    ['系统',esc(d.version)],['内核',esc(d.kernel)]])));
+  (d.wan||[]).forEach(function(w){
+    var r='',t='';
+    if(prev){var p=(prev.wan||[]).filter(function(x){return x.name==w.name})[0];var dt=d.time-prev.time;
+      if(p&&dt>0){r=rate((w.rx-p.rx)/dt);t=rate((w.tx-p.tx)/dt)}}
+    m.appendChild(card('宽带 '+w.name,rows([
+      ['状态',dot(w.up)+(w.up?'在线':'离线')],['IP',esc(w.ip||'-')],['在线时长',w.up?dur(w.uptime):'-'],
+      ['下载',r||'…'],['上传',t||'…'],['累计 ↓/↑',bytes(w.rx)+' / '+bytes(w.tx)]])));
+  });
+  m.appendChild(card('WiFi',(d.wifi||[]).map(function(w){
+    return rows([[dot(w.up)+esc(w.ssid||w.ifname),w.up?('信道 '+esc(w.channel)+' · '+esc(w.htmode)+' · '+w.clients+' 台'):'未启用']])}).join('')));
+  var ts=d.tailscale||{};
+  m.appendChild(card('Tailscale',rows([['状态',dot(ts.state=='Running')+esc(ts.state||'-')],['IP',esc(ts.ip||'-')],['在线设备',(ts.peers_online||0)+' / '+(ts.peers_total||0)]])));
+  m.appendChild(card('服务',(d.services||[]).map(function(s){return rows([[dot(s.running)+esc(s.name),s.running?'运行中':'已停止']])}).join('')));
+  var now=d.time, ls=(d.leases||[]).slice().sort(function(a,b){return a.ip.localeCompare(b.ip,undefined,{numeric:true})});
+  m.appendChild(card('局域网设备（'+ls.length+'）','<div class="tbl"><table><tr><th>名称</th><th>IP</th><th>MAC</th><th>租约剩余</th></tr>'+
+    ls.map(function(l){return '<tr><td>'+esc(l.name=='*'?'-':l.name)+'</td><td>'+esc(l.ip)+'</td><td>'+esc(l.mac)+'</td><td>'+(l.expires?dur(l.expires-now):'静态')+'</td></tr>'}).join('')+'</table></div>','wide'));
+  var ch=d.changes||[];
+  m.appendChild(card('最近改动','<div class="chg">'+(ch.length?ch.slice().reverse().map(esc).join('\n'):'暂无记录')+'</div>','wide'));
+  document.getElementById('upd').textContent='更新于 '+new Date(d.time*1000).toLocaleTimeString()+' · 每 5 秒刷新 · 只读';
+  prev=d;
+}
+function tick(){
+  fetch('/cgi-bin/panel-status',{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()})
+  .then(render).catch(function(e){document.getElementById('upd').innerHTML='<span class="err">获取失败：'+esc(e.message)+'</span>'});
+}
+tick();setInterval(tick,5000);
+</script>
+</body>
+</html>

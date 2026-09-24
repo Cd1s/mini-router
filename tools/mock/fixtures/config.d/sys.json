@@ -1,0 +1,75 @@
+{
+ "config": {
+  "system": {
+   "hostname": "mini-router",
+   "timezone": "<+08>-8",
+   "ntp": [
+    "ntp.tencent.com",
+    "ntp1.aliyun.com",
+    "ntp.ntsc.ac.cn",
+    "cn.ntp.org.cn"
+   ],
+   "ntp_server": true,
+   "sysctl": {
+    "net.ipv4.igmp_max_memberships": "100",
+    "net.ipv4.tcp_congestion_control": "bbr",
+    "net.ipv4.tcp_fin_timeout": "30",
+    "net.ipv4.tcp_keepalive_time": "120"
+   },
+   "zram": true
+  },
+  "services": {
+   "tailscale": {
+    "enabled": true,
+    "port": 41641
+   },
+   "lucky": {
+    "enabled": true,
+    "port": 16601
+   },
+   "dstatus": {
+    "enabled": true
+   },
+   "stubby": {
+    "enabled": true
+   },
+   "ssh": {
+    "enabled": true,
+    "port": 22,
+    "password_login": false,
+    "lan_only": true,
+    "authorized_keys": [
+     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDOGJDCePFDR8nNJPCzmDX6zxWpEH/sQ3kBFp/rZ0D2I lab-laptop"
+    ]
+   },
+   "panel": {
+    "enabled": true
+   }
+  },
+  "schedules": [
+   {
+    "name": "weekly-reboot",
+    "cron": "30 4 * * 1",
+    "action": "reboot"
+   },
+   {
+    "name": "wifi-restart",
+    "cron": "0 5 * * *",
+    "action": "restart",
+    "target": "mr-hostapd"
+   },
+   {
+    "name": "redial-wan2",
+    "cron": "0 */6 * * *",
+    "action": "reconnect",
+    "target": "wan2"
+   },
+   {
+    "name": "monthly-reboot",
+    "enabled": false,
+    "cron": "0 2 1 * *",
+    "action": "reboot"
+   }
+  ]
+ }
+}

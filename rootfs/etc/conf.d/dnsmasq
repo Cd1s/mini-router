@@ -1,0 +1,18 @@
+# mini-router: supervised, leases where the panel expects them
+supervisor=supervise-daemon
+leasefile=/tmp/dhcp.leases
+# temporary DNS query logging (web UI / `mr dns querylog on`): the flag lives in /run, so it never
+# survives a reboot; it holds the unix time logging ends and `mr` switches it off then. An expired
+# flag is ignored here, so no later restart can turn logging back on even if that switch-off failed.
+if [ -r /run/mini-router/dns-querylog ]; then
+	_mr_ql_until=$(cat /run/mini-router/dns-querylog)
+	case "$_mr_ql_until" in
+	'' | *[!0-9]*) ;;
+	*)
+		if [ "$_mr_ql_until" -gt "$(date +%s)" ]; then
+			command_args="${command_args:-} --log-queries --log-async=25"
+		fi
+		;;
+	esac
+	unset _mr_ql_until
+fi

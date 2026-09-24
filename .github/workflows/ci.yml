@@ -1,0 +1,23 @@
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: mr/go.mod
+      - name: tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq nftables dnsmasq-base shellcheck busybox
+      - name: sing-box (for the proxy module's end-to-end test)
+        run: |
+          v=1.14.1
+          curl -fsSL -o /tmp/sb.tgz https://github.com/SagerNet/sing-box/releases/download/v$v/sing-box-$v-linux-amd64.tar.gz
+          sudo mkdir -p /opt/sing-box/$v && sudo tar -xzf /tmp/sb.tgz -C /opt/sing-box/$v --strip-components=1
+      - name: tools/ci.sh (go test, render real configs into nft / dnsmasq in network namespaces, …)
+        run: sudo env "PATH=$PATH" GOCACHE=$HOME/.cache/go-build GOPATH=$HOME/go ./tools/ci.sh
+      - name: release build (all architectures)
+        run: ./tools/release.sh ci out/release

@@ -1,0 +1,232 @@
+{
+ "config": {
+  "dhcp": {
+   "domain": "lan",
+   "end": 249,
+   "hosts": [
+    {
+     "ip": "192.168.1.166",
+     "mac": "02:98:67:90:62:47",
+     "name": "nas"
+    },
+    {
+     "ip": "192.168.1.241",
+     "mac": "02:bb:dd:96:49:e2",
+     "name": "server"
+    },
+    {
+     "ip": "192.168.1.237",
+     "mac": "02:9a:41:9d:fa:91",
+     "name": "workstation"
+    },
+    {
+     "ip": "192.168.1.66",
+     "mac": "02:c3:06:d6:7f:8a",
+     "name": "desktop"
+    }
+   ],
+   "lease": "12h",
+   "start": 100
+  },
+  "dns": {
+   "addn_hosts": [
+    "/etc/lucky/dnsmasq.hosts"
+   ],
+   "cache_size": 8000,
+   "edns_packet_max": 1232,
+   "local_service": true,
+   "min_cache_ttl": 3600,
+   "no_negcache": true,
+   "rebind_protection": true,
+   "redirect": true,
+   "servers_file": "",
+   "split": [
+    {
+     "domains_file": "/etc/mini-router/dns/cloudflare-dot.domains",
+     "name": "cloudflare-dot",
+     "server": "127.0.0.1#5453"
+    }
+   ],
+   "use_stale_cache": 3600
+  },
+  "firewall": {
+   "forwards": [
+    {
+     "name": "vps-45000-45100",
+     "port": "45000-45100",
+     "proto": [
+      "tcp",
+      "udp"
+     ],
+     "to": "192.168.1.241",
+     "to_port": ""
+    },
+    {
+     "name": "desktop-7443",
+     "port": "7443",
+     "proto": [
+      "tcp"
+     ],
+     "to": "192.168.1.66",
+     "to_port": "9999"
+    },
+    {
+     "name": "workstation",
+     "port": "46001-46020",
+     "proto": [
+      "tcp",
+      "udp"
+     ],
+     "to": "192.168.1.237",
+     "to_port": ""
+    }
+   ],
+   "offload": "hardware",
+   "open": [
+    {
+     "name": "lucky-https",
+     "port": "443",
+     "proto": [
+      "tcp"
+     ]
+    }
+   ],
+   "synflood_protect": true
+  },
+  "lan": {
+   "bridge": "br-lan",
+   "ipv4": "192.168.1.6/24",
+   "ipv6_ra": true,
+   "ports": [
+    "lan2",
+    "lan3",
+    "lan4"
+   ]
+  },
+  "multicast": {
+   "igmp_proxy": false,
+   "igmp_snooping": false
+  },
+  "policy_routes": [
+   {
+    "mac": "02:c3:06:d6:7f:8a",
+    "mark": "0x102",
+    "name": "desktop-via-wan2",
+    "table": 102,
+    "via": "wan2"
+   }
+  ],
+  "services": {
+   "dstatus": {
+    "enabled": true
+   },
+   "lucky": {
+    "enabled": true
+   },
+   "panel": {
+    "enabled": true
+   },
+   "ssh": {
+    "enabled": true,
+    "password_login": false,
+    "port": 22
+   },
+   "stubby": {
+    "enabled": true
+   },
+   "tailscale": {
+    "enabled": true,
+    "port": 41641
+   }
+  },
+  "static_routes": [],
+  "system": {
+   "hostname": "mini-router",
+   "ntp": [
+    "ntp.tencent.com",
+    "ntp1.aliyun.com",
+    "ntp.ntsc.ac.cn",
+    "cn.ntp.org.cn"
+   ],
+   "sysctl": {
+    "net.ipv4.igmp_max_memberships": "100",
+    "net.ipv4.tcp_congestion_control": "bbr",
+    "net.ipv4.tcp_fin_timeout": "30",
+    "net.ipv4.tcp_keepalive_time": "120"
+   },
+   "timezone": "<+08>-8",
+   "zram": true
+  },
+  "wan": [
+   {
+    "device": "wan",
+    "ipv6": true,
+    "ipv6_pd": true,
+    "ipv6_srcroute": false,
+    "mac": "02:55:a3:1c:8d:ed",
+    "metric": 0,
+    "mtu": 1492,
+    "name": "wan",
+    "password_secret": "pppoe_password",
+    "peerdns": true,
+    "proto": "pppoe",
+    "username": "user@example-isp"
+   },
+   {
+    "device": "wan",
+    "ipv6": true,
+    "ipv6_pd": true,
+    "ipv6_srcroute": true,
+    "mac": "",
+    "metric": 40,
+    "mtu": 1492,
+    "name": "wan2",
+    "password_secret": "pppoe_password",
+    "peerdns": false,
+    "proto": "pppoe",
+    "username": "user@example-isp"
+   }
+  ],
+  "wifi": {
+   "country": "PA",
+   "radios": [
+    {
+     "band": "2g",
+     "channel": "auto",
+     "channels": "1-11",
+     "htmode": "HE40",
+     "phy": "phy0",
+     "ssids": [
+      {
+       "encryption": "sae-mixed",
+       "hidden": false,
+       "key_secret": "wifi_key",
+       "ssid": "MiniRouter-2.4G"
+      }
+     ],
+     "txpower": 30
+    },
+    {
+     "band": "5g",
+     "channel": "36",
+     "channels": "",
+     "htmode": "HE160",
+     "phy": "phy1",
+     "ssids": [
+      {
+       "encryption": "sae-mixed",
+       "hidden": false,
+       "key_secret": "wifi_key",
+       "ssid": "MiniRouter-5G"
+      }
+     ],
+     "txpower": 30
+    }
+   ]
+  }
+ },
+ "secrets_set": {
+  "pppoe_password": true,
+  "wifi_key": true
+ }
+}

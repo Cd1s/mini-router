@@ -1,0 +1,21 @@
+#!/sbin/openrc-run
+# multi-WAN health checker (router.yaml multiwan): a busybox sh loop, see /usr/libexec/mr/net-wanmon
+description="multi-WAN health checker"
+supervisor=supervise-daemon
+command=/usr/libexec/mr/net-wanmon
+respawn_delay=5
+respawn_max=0
+depend() {
+	need mr-network
+	after mr-firewall
+}
+start_pre() {
+	[ -f /etc/mini-router/gen/wanmon.conf ] || { eerror "/etc/mini-router/gen/wanmon.conf missing (run mr apply)"; return 1; }
+	return 0
+}
+stop_post() {
+	# no checker = every WAN counts as healthy again: normal metrics, full balance map
+	rm -f /run/mini-router/wan-state.json
+	/usr/sbin/mr wan health >/dev/null 2>&1
+	return 0
+}
