@@ -21,4 +21,4 @@ jobs:
       - name: tools/ci.sh (go test, render real configs into nft / dnsmasq in network namespaces, …)
         run: sudo env "PATH=$PATH" GOCACHE=$HOME/.cache/go-build GOPATH=$HOME/go ./tools/ci.sh
       - name: release build (all architectures)
-        run: ./tools/release.sh ci out/release
+        run: ./tools/release.sh ci "$RUNNER_TEMP/release"
