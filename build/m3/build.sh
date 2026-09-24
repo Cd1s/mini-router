@@ -21,7 +21,7 @@ EXTRA_BINS=${EXTRA_BINS-}
 BOARD=xiaomi,redmi-router-ax6000-hanwckf
 PREFIX=sysupgrade-xiaomi_redmi-router-ax6000-hanwckf
 DTB=image-mt7986a-xiaomi-redmi-router-ax6000-hanwckf.dtb
-. /etc/profile.d/buildtools.sh 2> /dev/null || :
+[ ! -f /etc/profile.d/buildtools.sh ] || . /etc/profile.d/buildtools.sh # dash: a failing `.` exits the shell
 
 for f in "$KO/kmods-fw.tar.gz" "$KO/kernel.itb" "$KO/Image" "$KO/$DTB" "$SB/sing-box" "$HOSTAPD_APK"; do
 	[ -s "$f" ] || { echo "missing input $f"; exit 1; }

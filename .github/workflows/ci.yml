@@ -10,6 +10,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: mr/go.mod
+          cache-dependency-path: mr/go.sum
       - name: tools
         run: sudo apt-get update -qq && sudo apt-get install -y -qq nftables dnsmasq-base shellcheck busybox
       - name: sing-box (for the proxy module's end-to-end test)

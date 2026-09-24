@@ -12,7 +12,7 @@ fi
 mount -t tmpfs tmpfs /etc/mini-router
 mount -t tmpfs tmpfs /etc/lucky
 
-. /etc/profile.d/buildtools.sh 2>/dev/null || true
+[ ! -f /etc/profile.d/buildtools.sh ] || . /etc/profile.d/buildtools.sh # dash: a failing `.` exits the shell
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 OUT=$ROOT/out/ci
