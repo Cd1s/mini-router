@@ -6,7 +6,7 @@
 #
 # Needs build/m3/kernel.sh and build/m3/sing-box.sh first. Inputs (read only): $W/out/kernel,
 # $W/out/sing-box, the noscan hostapd package (build/hostapd) and EXTRA_BINS (tailscaled, lucky,
-# dstatus-agent from the M2 build; EXTRA_BINS= to leave them out). Outputs in $W/out/m3 + SHA256SUMS.
+# dstatus-agent … as a tgz of usr/ paths; default: none). Outputs in $W/out/m3 + SHA256SUMS.
 set -eu
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 W=${MR_PLATFORM_DIR:-/root/build/mini-router-platform}
@@ -17,7 +17,7 @@ O=$W/out/m3
 VER=${MR_VERSION:-dev}
 IMGVER=m3-$(date -u +%Y%m%d)-$VER
 HOSTAPD_APK=${HOSTAPD_APK:-/root/build/hostapd-noscan/pkgs/main/aarch64/hostapd-2.11-r104.apk}
-EXTRA_BINS=${EXTRA_BINS-/root/build/mini-router-m2/bins.tgz}
+EXTRA_BINS=${EXTRA_BINS-}
 BOARD=xiaomi,redmi-router-ax6000-hanwckf
 PREFIX=sysupgrade-xiaomi_redmi-router-ax6000-hanwckf
 DTB=image-mt7986a-xiaomi-redmi-router-ax6000-hanwckf.dtb
@@ -33,7 +33,7 @@ if [ -n "$EXTRA_BINS" ]; then cp "$EXTRA_BINS" "$M/w/bins.tgz"; fi
 (cd "$REPO/mr" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$VER" -o "$M/w/mr" .)
 cp -a "$REPO/rootfs" "$REPO/build" "$REPO/tools" "$REPO/examples" "$M/w/repo/"
 cp -a "$REPO/mr/testdata" "$M/w/repo/mr/"
-docker run --rm --platform linux/arm64 -e MR_IMAGE_VERSION="$IMGVER" -v "$M/w:/w" alpine:3.24 sh /w/repo/build/m3/build-rootfs.sh
+docker run --rm --platform linux/arm64 -e MR_IMAGE_VERSION="$IMGVER" -e MR_ADDONS="${EXTRA_BINS:+1}" -v "$M/w:/w" alpine:3.24 sh /w/repo/build/m3/build-rootfs.sh
 docker run --rm -v "$M/w:/w" alpine:3.24 sh /w/repo/build/m3/pack.sh
 
 # ---- sysupgrade image: OpenWrt sysupgrade-tar layout + mr-meta

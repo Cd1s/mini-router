@@ -119,7 +119,8 @@ for cfg in "home $REPO/examples/router.yaml $REPO/mr/testdata/secrets.yaml" "lab
 		echo "$1 config: every service present ($n)"
 	else
 		echo "$1 config: $n services, missing in the image:$gaps" | tee -a "$W/feature-gaps.txt"
-		[ "$1" != home ] || exit 1
+		# the example home config uses add-ons (tailscale, lucky, …): required only when they are bundled
+		[ "$1" != home ] || [ -z "${MR_ADDONS:-}" ] || exit 1
 	fi
 done
 
