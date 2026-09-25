@@ -36,6 +36,9 @@ overlayfs 的只读下层，构建写到 `mini-router-platform/owrt-upper`，原
   （`mtk_spi_interrupt_thread → mtk_spi_can_dma`，0.13 s，第二次从闪存 sysupgrade 时遇到）。补丁在 probe 里
   读一次状态寄存器清掉它，并把没有进行中传输的中断当作已处理。sysupgrade 在 kexec 前也会冻结所有进程、
   关网口、sync。
+- `991-mtk_wed-wdma-resv-buff-0x80.patch`：回移上游 c0ef04232f9f（2026-08，6.18.52 和 OpenWrt 的 patches-6.18
+  都还没有）：WED v2（MT7986 / MT7981）的 WDMA `RESV_BUFF` 从 0x40 改成 0x80，避免 CDM TX FIFO 溢出导致
+  WDMA TX 卡死——即 WiFi 硬件转发（WED）路径偶发断流。AX6000 用的正是 WED v2。
 
 vmlinux 里唯一的变化是这些选项导出的 `udp4_lib_lookup` / `udp6_lib_lookup`（System.map 对比）；`Image`
 大小与闪存版相同。其余需求原来就有：`nft_log` + `nf_log_syslog`（kmod-nft-core / kmod-nf-log）、
