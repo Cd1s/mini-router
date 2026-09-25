@@ -30,6 +30,11 @@ No python/jq there: edit YAML with care, or edit a copy on your side and send it
    back automatically (that is the net when you cut your own connection; never forget it when all is fine).
    A reboot or power cut before `mr confirm` rolls the change back at boot as well. While a change waits for
    confirmation (yours, the web UI's or another agent's) every new apply is refused: `mr confirm` or `mr rollback` first.
+   The plan ends with `risk: low | medium | high — reasons` (high: your own connection's path, LAN addresses, WANs,
+   the router's inbound rules / SSH / web UI / tailscale, the guard); `mr plan --explain` says what each action does.
+   Interactive sessions: `mr apply --confirm 120 --wait` asks on the terminal; Ctrl-C or a dropped SSH connection rolls
+   back at once. `guard:` in router.yaml holds the owner's baselines; `mr validate` refuses configs that break them —
+   never weaken the guard to get a change through; ask the owner.
 4. **Verify by reading back**: the live state, not the exit code (`mr status`, `nft list ruleset | grep …`,
    `mr wifi status`, a real connection test).
 5. History: `mr plan` starts with the config-level diff (`~ path: old → new`, `+`/`- list[name]`; `-v` adds the
@@ -44,6 +49,7 @@ and do one change at a time.
 ## router.yaml cheat sheet
 
 ```yaml
+guard: {never_expose: [ssh, panel, dns], always_bypass: [desktop], offload: hardware, ssh_lan_only: true}
 lan: {bridge: br-lan, ports: [lan1, lan2], ipv4: 192.168.1.1/24, ipv6_ra: true}
 wan:
   - {name: wan, device: wan, proto: pppoe, username: "…", password_secret: pppoe_password, ipv6: true, ipv6_pd: true}

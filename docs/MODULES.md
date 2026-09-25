@@ -50,6 +50,16 @@ Register exactly one `Module` in `init()`:
 - `Commands` — `mr <name> ...` subcommands (for hooks/daemons).
 - `Secrets(c)` — names of every secret this module's config references (so the UI can show 已设置).
 
+**Guard and risk.** `guard:` (core, `guard.go`) holds the owner's baselines — `never_expose` (ssh, panel, dns: no
+`firewall.open` or forward to the router reaches their ports from the WAN), `always_bypass` (devices never proxied),
+`offload` (minimum flow offload), `ssh_lan_only`; `Config.Validate` checks it after every module, so no path (web UI,
+CLI, restore, token, agent) can apply a config that breaks it. Every plan gets a risk level (`risk.go`): low (no
+service restarts), medium (restarts, none on the administrator's path), high (the administrator's own path — the
+netdev / bridge port / tailscale / SSH their session uses, found with `ip route get` + the bridge fdb — LAN addresses,
+WANs, the router's inbound rules, SSH / web UI / tailscale settings, the guard). The web UI keeps low and medium
+changes by itself once applied, verified and still reachable; high ones wait for 保留. `mr apply --confirm N --wait`
+asks on the terminal and rolls back at once on Ctrl-C / SIGHUP.
+
 Rollback (failed/unconfirmed apply, `mr rollback`) restores files, restarts their services and
 reconciles the default runlevel with the restored config (`reconcileRunlevel`). Every apply records a revision
 (`history.go`): `<snapshot>.json` next to its snapshot with rev, time, origin, comment, the config-level diff
