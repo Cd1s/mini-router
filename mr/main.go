@@ -20,14 +20,16 @@ var version = "dev"
 const usage = `mr — mini-router control
 
   mr validate                 check router.yaml + secrets.yaml
-  mr plan                     show what apply would change
-  mr apply [--confirm SECS]   apply router.yaml (auto-rollback on failure;
+  mr plan [-v]                what apply would change: config changes, files, services (-v: file diffs)
+  mr apply [--confirm SECS] [-m COMMENT] [-v]
+                              apply router.yaml (auto-rollback on failure;
                               with --confirm, also roll back unless 'mr confirm' runs in time)
   mr confirm                  keep the last --confirm apply
   mr rollback [SNAPSHOT]      undo the change waiting for confirmation, else restore the latest
-                              (or given) snapshot
+                              (or given) snapshot at once
+  mr rollback N [--confirm S] the config from before change #N, applied as a new change
   mr rollback --boot          at boot (mr-preinit): roll back a change that was never confirmed
-  mr history                  list snapshots
+  mr history [--json]         the changes: who, when, comment, result, what changed
   mr render DIR               write all generated files under DIR (for review/tests)
   mr fw                       (re)load the firewall for the current set of netdevs
   mr routes                   re-install per-WAN routes/rules for WANs that are up, then reload the firewall
@@ -79,11 +81,7 @@ func dispatch(args []string, cfgPath, secPath string) error {
 		}
 		return err
 	case "history":
-		ents, _ := os.ReadDir(HistoryDir)
-		for _, e := range ents {
-			fmt.Println(e.Name())
-		}
-		return nil
+		return historyCommand(args[1:])
 	case "rollback":
 		return rollbackCommand(args[1:], cfgPath, secPath)
 	case "rollback-if-unconfirmed":
@@ -128,6 +126,9 @@ func dispatch(args []string, cfgPath, secPath string) error {
 		}
 		fmt.Println("ok")
 	case "plan":
+		fs := flag.NewFlagSet("plan", flag.ExitOnError)
+		verbose := fs.Bool("v", false, "also show each generated file's diff (secrets masked)")
+		fs.Parse(args[1:])
 		if errs := c.Validate(); len(errs) > 0 {
 			return fmt.Errorf("invalid:\n  %s", strings.Join(errs, "\n  "))
 		}
@@ -138,14 +139,19 @@ func dispatch(args []string, cfgPath, secPath string) error {
 		if p.Empty() {
 			fmt.Println("nothing to do")
 		} else {
-			fmt.Print(p.String())
+			printPlan(c, p, *verbose)
 		}
 	case "apply":
 		fs := flag.NewFlagSet("apply", flag.ExitOnError)
 		secs := fs.Int("confirm", 0, "seconds to wait for `mr confirm`")
 		dry := fs.Bool("dry-run", false, "only show the plan")
+		comment := fs.String("m", "", "a comment for the history")
+		verbose := fs.Bool("v", false, "also show each generated file's diff (secrets masked)")
 		fs.Parse(args[1:])
-		return Apply(c, *dry, *secs)
+		if len(*comment) > 200 || strings.ContainsAny(*comment, "\n\r") {
+			return fmt.Errorf("-m: one line, at most 200 characters")
+		}
+		return Apply(c, *dry, *secs, *comment, *verbose)
 	case "render":
 		if len(args) < 2 {
 			return fmt.Errorf("render DIR")

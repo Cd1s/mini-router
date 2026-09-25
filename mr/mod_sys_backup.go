@@ -333,7 +333,8 @@ func restoreStage(rs *restoreSet) (y []byte, sec map[string]string, snap string,
 			return nil, nil, "", nil, fmt.Errorf("snapshot of the list files: %w", err)
 		}
 		if sysHistoryDir == HistoryDir {
-			pruneHistory()
+			live, _ := loadConfig(sysConfigPath, sysSecretsPath)
+			pruneHistory(historyKeep(live))
 		}
 		for _, p := range changed {
 			if err := writeAtomic(p, rs.lists[p], 0644); err != nil {

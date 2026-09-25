@@ -1,8 +1,13 @@
 {
- "snapshots": [
-  "20260924-110325.tar.gz",
-  "20260924-105951.tar.gz",
-  "20260924-103515.tar.gz",
-  "20260924-102846.tar.gz"
- ]
+ "revisions": [
+  {"rev": 4, "time": 1790404800, "via": "web UI", "from": "192.168.1.20", "comment": "open port 8080 for the NAS", "version": "m3-demo", "result": "confirmed",
+   "changes": ["+ firewall.forwards[nas-web]"], "snapshot": "20260926-080000.tar.gz"},
+  {"rev": 3, "time": 1790398000, "via": "mr apply", "comment": "", "version": "m3-demo", "result": "rolled back: not confirmed within 120s",
+   "changes": ["~ lan.ipv4: 192.168.1.1/24 → 192.168.2.1/24"], "snapshot": "20260926-061000.tar.gz"},
+  {"rev": 2, "time": 1790390000, "via": "web UI", "from": "192.168.1.20", "comment": "", "version": "m3-demo", "result": "confirmed",
+   "changes": ["~ wifi.radios[phy1].htmode: HE80 → HE160", "~ secrets.wifi_key: (changed)"], "snapshot": "20260926-035500.tar.gz"},
+  {"rev": 1, "time": 1790380000, "via": "restore", "comment": "restore from backup", "version": "m3-demo", "result": "applied",
+   "changes": [], "snapshot": "20260926-010000.tar.gz"}
+ ],
+ "snapshots": ["20260924-110325.tar.gz"]
 }

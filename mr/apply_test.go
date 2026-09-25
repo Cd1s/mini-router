@@ -73,7 +73,7 @@ func TestBootRollsBackUnconfirmedChange(t *testing.T) {
 	os.MkdirAll(filepath.Dir(gen), 0755)
 	os.WriteFile(gen, []byte("old\n"), 0644)
 	oldCfg := mustRead(t, cfg)
-	snap, err := snapshot([]string{gen, created, cfg})
+	snap, err := snapshot([]string{gen, created, cfg}, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestBootRollsBackInterruptedApply(t *testing.T) {
 	d, cfg, sec := confirmEnv(t)
 	f := filepath.Join(d, "gen.conf")
 	os.WriteFile(f, []byte("old\n"), 0644)
-	snap, _ := snapshot([]string{f})
+	snap, _ := snapshot([]string{f}, 20)
 	setPending(pendingApply{Snapshot: snap, State: stateApplying, Via: "mr apply"})
 	os.WriteFile(f, []byte("half\n"), 0644)
 	if err := rollbackAtBoot(cfg, sec); err != nil {
@@ -229,7 +229,7 @@ func TestApplyRefusedWhilePending(t *testing.T) {
 		{Snapshot: "/h/a.tar.gz", State: stateReverting, Via: "restore"},
 	} {
 		setPending(p)
-		err := applyWith(c, false, 120, nil, "mr apply")
+		err := applyWith(c, false, 120, nil, applyOpts{Via: "mr apply"}, false)
 		if err == nil || !strings.Contains(err.Error(), p.Via) {
 			t.Errorf("%s: second apply not refused: %v", p.State, err)
 		}
@@ -251,7 +251,7 @@ func TestApplyRefusedWhilePending(t *testing.T) {
 		}
 	}
 	// a dry run (mr apply --dry-run) still shows the plan
-	if err := applyWith(c, true, 0, nil, "mr apply"); err != nil {
+	if err := applyWith(c, true, 0, nil, applyOpts{Via: "mr apply"}, false); err != nil {
 		t.Errorf("dry run refused: %v", err)
 	}
 	setPending(pendingApply{Snapshot: "/h/a.tar.gz", State: statePending, Deadline: 1})

@@ -51,7 +51,12 @@ Register exactly one `Module` in `init()`:
 - `Secrets(c)` — names of every secret this module's config references (so the UI can show 已设置).
 
 Rollback (failed/unconfirmed apply, `mr rollback`) restores files, restarts their services and
-reconciles the default runlevel with the restored config (`reconcileRunlevel`). From the snapshot until the
+reconciles the default runlevel with the restored config (`reconcileRunlevel`). Every apply records a revision
+(`history.go`): `<snapshot>.json` next to its snapshot with rev, time, origin, comment, the config-level diff
+(from `gen/applied.yaml` + `gen/applied-secrets`, bookkeeping files the plan writes and a rollback restores; secrets
+only as "(changed)") and the result (applying → applied | pending → confirmed | rolled back: why); `mr rollback N`
+and the web UI's 回滚到此前 apply the config from before change N as a new change (the web UI password stays the
+current one). From the snapshot until the
 change is accepted (the apply ends without `--confirm`, or `mr confirm`) the marker
 `/etc/mini-router/confirm-pending` (JSON: snapshot, state applying | pending | reverting, deadline, origin) is on
 flash: if the router goes down in that window, the next boot restores the snapshot before any service starts
