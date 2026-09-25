@@ -235,39 +235,78 @@ function tabs(list){
   return h("div",{}, strip, body);
 }
 // lineChart(series, opts): tiny SVG chart. series = [{label, color, points:[[t, v], ...]}];
-// opts = {height, fmt: v=>string, max}. Returns an SVG element with a legend.
+// opts = {height, fmt: v=>string, max}. The plot stretches to the card's width at a fixed pixel height;
+// the value labels are HTML beside it, so neither text nor strokes get distorted.
 function lineChart(series, opts){
-  opts ||= {}; const W=600, H=opts.height||160, P=34;
+  opts ||= {}; const W=600, H=opts.height||160, T=6, B=4;
   const all = series.flatMap(s=>s.points);
   if (!all.length) return h("div",{class:"mut"},"（暂无数据）");
   const t0=Math.min(...all.map(p=>p[0])), t1=Math.max(...all.map(p=>p[0]))||t0+1;
   const vmax = opts.max || Math.max(1, ...all.map(p=>p[1]));
-  const X=t=>P+(W-P-4)*(t-t0)/Math.max(1,t1-t0), Y=v=>H-16-(H-24)*(v/vmax);
-  const ns="http://www.w3.org/2000/svg", el=(t,a)=>{ const e=document.createElementNS(ns,t); for(const k in a) e.setAttribute(k,a[k]); return e; };
-  const svg = el("svg",{viewBox:`0 0 ${W} ${H}`, width:"100%", preserveAspectRatio:"none", style:"display:block"});
+  const X=t=>W*(t-t0)/Math.max(1,t1-t0), Y=v=>T+(H-T-B)*(1-v/vmax);
+  const svg = svgEl("svg",{viewBox:`0 0 ${W} ${H}`, preserveAspectRatio:"none", class:"lc-svg", style:`height:${H}px`});
+  const axis = h("div",{class:"lc-axis", style:`height:${H}px`});
   for (let i=0;i<=4;i++){ const v=vmax*i/4, y=Y(v);
-    svg.append(el("line",{x1:P,x2:W,y1:y,y2:y,stroke:"var(--line)","stroke-width":1}));
-    const tx=el("text",{x:2,y:y+4,"font-size":10,fill:"var(--mut)"}); tx.textContent=(opts.fmt||String)(v); svg.append(tx); }
+    svg.append(svgEl("line",{x1:0,x2:W,y1:y,y2:y,stroke:"var(--line)","stroke-width":1,"vector-effect":"non-scaling-stroke"}));
+    axis.append(h("span",{style:`top:${y.toFixed(1)}px`}, (opts.fmt||String)(v))); }
   for (const s of series){ if(!s.points.length) continue;
-    svg.append(el("polyline",{points:s.points.map(p=>X(p[0]).toFixed(1)+","+Y(p[1]).toFixed(1)).join(" "),fill:"none",stroke:s.color||"var(--acc)","stroke-width":1.6})); }
-  return h("div",{}, svg, h("div",{class:"row",style:"font-size:12px;margin-top:4px"}, series.map(s=>h("span",{},h("span",{class:"dot",style:"background:"+(s.color||"var(--acc)")}), s.label))));
+    svg.append(svgEl("polyline",{points:s.points.map(p=>X(p[0]).toFixed(1)+","+Y(p[1]).toFixed(1)).join(" "),fill:"none",stroke:s.color||"var(--acc)",
+      "stroke-width":1.6,"stroke-linejoin":"round","vector-effect":"non-scaling-stroke"})); }
+  return h("div",{}, h("div",{class:"lc"}, axis, svg), h("div",{class:"row",style:"font-size:12px;margin-top:4px"}, series.map(s=>h("span",{},h("span",{class:"dot",style:"background:"+(s.color||"var(--acc)")}), s.label))));
 }
 const COLORS = ["#2f6fed","#1f9d55","#d64545","#c98a0b","#8e44ad","#16a2b8","#e67e22","#7f8c8d"];
+const svgEl = (t,a)=>{ const e=document.createElementNS("http://www.w3.org/2000/svg",t); for(const k in a) e.setAttribute(k,a[k]); return e; };
+// level(p, warn, bad): "" | "warn" | "bad" — colour class for a usage percentage
+function level(p, warn, bad){ return p==null ? "" : p>=(bad||90) ? "bad" : p>=(warn||70) ? "warn" : ""; }
+// gauge({label, pct, value, sub, center, lv, extra}): a card with a usage ring (pct 0-100, null = not known yet)
+// and its numbers; center overrides the text in the ring (default "NN%"), lv the colour class, extra goes below.
+function gauge(o){
+  const r=30, c=2*Math.PI*r, p = o.pct==null ? 0 : Math.max(0, Math.min(100, o.pct));
+  const svg = svgEl("svg",{viewBox:"0 0 76 76"});
+  svg.append(svgEl("circle",{cx:38, cy:38, r, fill:"none", stroke:"var(--line)", "stroke-width":7}),
+    svgEl("circle",{cx:38, cy:38, r, fill:"none", class:"gauge-fg "+(o.lv ?? level(o.pct)), "stroke-width":7, "stroke-linecap":"round",
+      "stroke-dasharray":(c*p/100).toFixed(1)+" "+c.toFixed(1), transform:"rotate(-90 38 38)"}));
+  return h("div",{class:"card gauge"}, h("div",{class:"gauge-r"}, svg, h("div",{class:"gauge-p"}, o.center ?? (o.pct==null ? "…" : Math.round(p)+"%"))),
+    h("div",{class:"gauge-t"}, h("div",{class:"l"},o.label), h("div",{class:"v"},o.value), o.sub?h("div",{class:"s"},o.sub):null, o.extra||null));
+}
+// spark(values, color, max): a small area chart of recent values, no axes
+function spark(vals, color, max){
+  const W=120, H=26, col = color||"var(--acc)";
+  const svg = svgEl("svg",{viewBox:`0 0 ${W} ${H}`, preserveAspectRatio:"none", class:"spark"});
+  if (!vals || vals.length<2) return svg;
+  const m = max || Math.max(1e-9, ...vals), X=i=>(i*W/(vals.length-1)).toFixed(1), Y=v=>(H-1-(H-3)*Math.min(1, Math.max(0,v)/m)).toFixed(1);
+  const line = vals.map((v,i)=>(i?"L":"M")+X(i)+","+Y(v)).join("");
+  svg.append(svgEl("path",{d:line+"L"+W+","+H+"L0,"+H+"Z", fill:col, "fill-opacity":.13, stroke:"none"}),
+    svgEl("path",{d:line, fill:"none", stroke:col, "stroke-width":1.5, "vector-effect":"non-scaling-stroke"}));
+  return svg;
+}
+// cpuBusy(a, b): busy % between two /proc/stat samples (user nice system idle iowait irq softirq steal)
+function cpuBusy(a, b){
+  if (!a || !b) return null;
+  const d = b.map((v,i)=>v-(a[i]||0)), tot = d.reduce((x,y)=>x+y,0);
+  return tot>0 ? Math.max(0, 100-(d[3]+d[4])*100/tot) : null;
+}
 // confirmBtn(label, question, fn): a red button that asks before running fn.
 function confirmBtn(label, question, fn){ return h("button",{class:"btn sm d",onclick:async()=>{ if(!confirm(question)) return; try{ await fn(); }catch(e){ toast(e.message,4000); } }}, label); }
 
 // ---------- core pages ----------
+// overview gauges keep a short history for their sparklines (40 points = 2 min at 3 s)
+const OV = {cpu:null, h:{cpu:[], mem:[], ct:[]}};
+const ovPush = (k, v)=>{ if (v==null) return; const a=OV.h[k]; a.push(v); if (a.length>40) a.shift(); };
 registerPage("status", "overview", "总览", 10, async ()=>{
   const wrap = h("div");
   const draw = async ()=>{
-    const s = await api("status"); const now = Date.now()/1000;
+    const [s, m] = await Promise.all([api("status"), api("mon.now").catch(()=>null)]); const now = Date.now()/1000;
+    const busy = m ? cpuBusy(OV.cpu, m.cpu) : null; if (m) OV.cpu = m.cpu;
     const rates = {};
     for (const w of s.wan||[]){ const p=S.prevWan[w.name]; if(p&&now>p.t){ rates[w.name]={rx:(w.rx-p.rx)*8/(now-p.t), tx:(w.tx-p.tx)*8/(now-p.t)}; } S.prevWan[w.name]={rx:w.rx,tx:w.tx,t:now}; }
     S.status = s;
     $("#brandsub").textContent = s.host||"";
     $("#hmeta").textContent = (s.version||"")+" · "+(s.kernel||"");
-    const memUsed = s.mem_total_kb - s.mem_avail_kb;
-    const stat = (l,v,sub,pct)=>h("div",{class:"card stat"}, h("div",{class:"l"},l), h("div",{class:"v"},v), sub?h("div",{class:"s"},sub):null, pct!==undefined?h("div",{class:"bar"},h("i",{style:"width:"+Math.min(100,pct).toFixed(0)+"%"})):null);
+    const memUsed = s.mem_total_kb - s.mem_avail_kb, memPct = memUsed*100/s.mem_total_kb, ctPct = s.conntrack*100/s.conntrack_max;
+    const ovUsed = s.overlay_total_kb - s.overlay_free_kb, temp = s.temp_mc ? s.temp_mc/1000 : null;
+    ovPush("cpu", busy); ovPush("mem", memPct); ovPush("ct", s.conntrack);
+    const cores = m && m.cpus ? m.cpus.length+" 核 · " : "";
     const wanCards = (s.wan||[]).map(w=>card(h("span",{},h("span",{class:"dot "+(w.up?"ok":"bad")}),"WAN · "+w.name),
       h("dl",{class:"kv"}, h("dt",{},"状态"),h("dd",{},w.up?"已连接 · "+fmtDur(w.uptime):"未连接"),
         h("dt",{},"IPv4"),h("dd",{class:"mono"},w.ip||"-"), h("dt",{},"接口"),h("dd",{class:"mono"},w.dev),
@@ -278,18 +317,21 @@ registerPage("status", "overview", "总览", 10, async ()=>{
         h("dt",{},"终端"),h("dd",{},w.clients))));
     const ts = s.tailscale||{};
     wrap.replaceChildren(
-      h("div",{class:"grid"},
-        stat("运行时间", fmtDur(s.uptime), "负载 "+s.load),
-        stat("内存", fmtBytes(memUsed*1024)+" / "+fmtBytes(s.mem_total_kb*1024), "可用 "+fmtBytes(s.mem_avail_kb*1024), memUsed/s.mem_total_kb*100),
-        stat("连接数", s.conntrack+" / "+s.conntrack_max, "硬件加速中 "+s.hnat_bind, s.conntrack/s.conntrack_max*100),
-        stat("温度", s.temp_mc?(s.temp_mc/1000).toFixed(1)+" °C":"-", "配置存储剩余 "+fmtBytes(s.overlay_free_kb*1024))),
+      h("div",{class:"grid gauges"},
+        gauge({label:"CPU", pct:busy, value:busy==null ? "…" : busy.toFixed(0)+" %", sub:cores+"负载 "+s.load, extra:spark(OV.h.cpu, null, 100)}),
+        gauge({label:"内存", pct:memPct, value:fmtBytes(memUsed*1024), sub:"共 "+fmtBytes(s.mem_total_kb*1024)+" · 可用 "+fmtBytes(s.mem_avail_kb*1024), extra:spark(OV.h.mem, COLORS[4], 100)}),
+        gauge({label:"连接数", pct:ctPct, value:String(s.conntrack), sub:"上限 "+s.conntrack_max+" · 硬件加速 "+s.hnat_bind, extra:spark(OV.h.ct, COLORS[5])}),
+        gauge({label:"温度", pct:temp, center:temp==null ? "-" : temp.toFixed(0)+"°", lv:level(temp, 75, 90), value:temp==null ? "-" : temp.toFixed(1)+" °C", sub:"运行 "+fmtDur(s.uptime)}),
+        s.overlay_total_kb ? gauge({label:"配置存储", pct:ovUsed*100/s.overlay_total_kb, value:fmtBytes(ovUsed*1024), sub:"共 "+fmtBytes(s.overlay_total_kb*1024)+" · 剩余 "+fmtBytes(s.overlay_free_kb*1024)}) : null),
       h("div",{class:"grid",style:"margin-top:14px"}, wanCards, wifiCards,
         card("Tailscale", h("dl",{class:"kv"}, h("dt",{},"状态"),h("dd",{},ts.state||"-"), h("dt",{},"地址"),h("dd",{class:"mono"},ts.ip||"-"), h("dt",{},"在线节点"),h("dd",{},(ts.peers_online??"-")+" / "+(ts.peers_total??"-"))))),
       card("服务", h("div",{class:"row"}, (s.services||[]).map(x=>h("span",{class:"tag "+(x.running?"ok":"bad")}, x.name)))),
       card("最近变更", h("pre",{}, (s.changes||[]).slice().reverse().join("\n")||"（无）")));
   };
   await draw();
-  S.timer = setInterval(()=>draw().catch(()=>{}), 3000);
+  const t = setInterval(()=>draw().catch(()=>{}), 3000);
+  S.timer = t;
+  setTimeout(()=>{ if (S.timer===t) draw().catch(()=>{}); }, 800); // a second CPU sample right away
   return wrap;
 });
 

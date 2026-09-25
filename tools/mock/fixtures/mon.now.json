@@ -163,7 +163,8 @@
   {
    "name": "pppoe-wan",
    "role": "wan",
-   "state": "unknown",
+   "state": "up",
+   "oper_raw": "unknown",
    "rx": 3456789012,
    "tx": 876543210,
    "rxp": 3840876,
@@ -174,7 +175,8 @@
   {
    "name": "pppoe-wan2",
    "role": "wan",
-   "state": "unknown",
+   "state": "up",
+   "oper_raw": "unknown",
    "rx": 1234567890,
    "tx": 345678901,
    "rxp": 1371742,
@@ -185,7 +187,8 @@
   {
    "name": "tailscale0",
    "role": "vpn",
-   "state": "unknown",
+   "state": "up",
+   "oper_raw": "unknown",
    "rx": 12345678,
    "tx": 23456789,
    "rxp": 13717,
@@ -210,5 +213,19 @@
   0.54
  ],
  "procs_running": 2,
- "procs": 123
+ "procs": 123,
+ "disks": [
+  {
+   "name": "config",
+   "path": "/etc/mini-router",
+   "total_kb": 42300,
+   "avail_kb": 36900
+  },
+  {
+   "name": "tmp",
+   "path": "/tmp",
+   "total_kb": 247160,
+   "avail_kb": 191500
+  }
+ ]
 }

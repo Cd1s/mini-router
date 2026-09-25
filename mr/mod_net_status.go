@@ -154,7 +154,8 @@ type portInfo struct {
 	AdminUp   bool   `json:"admin_up"`
 	Carrier   bool   `json:"carrier"`
 	Oper      string `json:"oper"`
-	Speed     int    `json:"speed,omitempty"` // Mbit/s
+	OperRaw   string `json:"oper_raw,omitempty"` // the kernel's operstate when Oper was derived from the flags (ppp, tun)
+	Speed     int    `json:"speed,omitempty"`    // Mbit/s
 	Duplex    string `json:"duplex,omitempty"`
 	MTU       int    `json:"mtu"`
 	MAC       string `json:"mac,omitempty"`
@@ -228,7 +229,10 @@ func readPorts(c *Config) []portInfo {
 		if d == "lo" {
 			continue
 		}
-		p := portInfo{Name: d, Role: roles[d], Oper: sysRead(d, "operstate"), MTU: atoi(sysRead(d, "mtu")), MAC: sysRead(d, "address")}
+		p := portInfo{Name: d, Role: roles[d], Oper: effOper(sysRead(d, "operstate"), sysRead(d, "flags")), MTU: atoi(sysRead(d, "mtu")), MAC: sysRead(d, "address")}
+		if raw := sysRead(d, "operstate"); raw != p.Oper {
+			p.OperRaw = raw
+		}
 		flags, _ := strconv.ParseUint(strings.TrimPrefix(sysRead(d, "flags"), "0x"), 16, 32)
 		p.AdminUp = flags&1 == 1
 		p.Carrier = sysRead(d, "carrier") == "1"

@@ -13,6 +13,7 @@ Serves rootfs/www statically and answers /cgi-bin/api?a=<action> like `mr api` d
 Always logged in (the real login is tested against the router). No dependencies beyond python3.
 """
 import copy
+import math
 import http.server
 import json
 import os
@@ -31,6 +32,38 @@ def load(name, default=None):
         with open(p, encoding="utf-8") as f:
             return json.load(f)
     return default
+
+
+T0 = time.time()
+
+
+def live_mon_now():
+    """mon.now whose counters advance like a busy router (the fixture alone is one frozen sample: no rates)."""
+    j = copy.deepcopy(load("mon.now.json"))
+    dt = time.time() - T0
+
+    def integ(period, lo, hi):  # integral over [0, dt] of lo + (hi-lo)*(0.5+0.5*sin(2*pi*t/period))
+        w = 2 * math.pi / period
+        return lo * dt + (hi - lo) * (0.5 * dt + 0.5 * (1 - math.cos(w * dt)) / w)
+
+    j["t"] = int(time.time() * 1000)
+    j["up"] = j["up"] + dt
+    rates = {"wan-dev": (4e6, 70e6, 3e5, 6e6), "wan": (1e5, 2e6, 5e4, 8e5), "lan": (3e5, 6e6, 4e6, 65e6),
+             "port": (2e5, 3e6, 2e6, 30e6), "wifi": (1e5, 2e6, 1e6, 25e6)}
+    for i, x in enumerate(j.get("ifaces", [])):
+        r = rates.get(x.get("role"))
+        if r:
+            x["rx"] += int(integ(41 + 7 * i, r[0], r[1]))
+            x["tx"] += int(integ(53 + 5 * i, r[2], r[3]))
+    tot = [0] * 8
+    for i, c in enumerate(j.get("cpus", [])):
+        busy = integ(23 + 9 * i, 5, 55 + 10 * i)  # jiffies (USER_HZ 100 per core per second)
+        c[0] += int(busy * 0.55); c[2] += int(busy * 0.2); c[6] += int(busy * 0.2); c[4] += int(busy * 0.05)
+        c[3] += int(100 * dt - busy)
+        tot = [a + b for a, b in zip(tot, c)]
+    if j.get("cpus"):
+        j["cpu"] = tot
+    return j
 
 
 def base_config():
@@ -88,6 +121,8 @@ class H(http.server.SimpleHTTPRequestHandler):
             return self.send_json({"authenticated": True, "password_set": True})
         if a == "config":
             return self.send_json(STATE["cfg"])
+        if a == "mon.now":
+            return self.send_json(live_mon_now())
         if a == "validate":
             p, empty = plan_for(body.get("config", {}))
             return self.send_json({"errors": [], "plan": p, "empty": empty})
