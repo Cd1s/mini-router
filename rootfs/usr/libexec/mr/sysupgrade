@@ -29,12 +29,16 @@ umask 022 # the upper dir and its etc/ become / and /etc of the new system: neve
 BOARD=xiaomi,redmi-router-ax6000-hanwckf        # DT compatible of the only supported board
 PREFIX=sysupgrade-xiaomi_redmi-router-ax6000-hanwckf
 WORK=${MR_SYSUPGRADE_WORK:-/tmp/mr-sysupgrade}
-KEXEC_CMDLINE="console=ttyS0,115200n1 earlycon=uart8250,mmio32,0x11002000 watchdog.stop_on_reboot=0 loglevel=6"
+KEXEC_CMDLINE="console=ttyS0,115200n1 earlycon=uart8250,mmio32,0x11002000 watchdog.stop_on_reboot=0 loglevel=6 panic=5"
 MIN_DATA_BYTES=$((8 * 1024 * 1024)) # rootfs_data must keep at least this much
 KERNEL_HEADROOM=8                   # LEBs added when a volume has to grow (~1 MiB / ~4 MiB)
 ROOTFS_HEADROOM=32
 
-msg() { echo "sysupgrade: $*"; }
+msg() {
+	echo "sysupgrade: $*"
+	# also into the kernel log: the installer has no syslog, and a crash dump (pstore) keeps it
+	[ ! -w /dev/kmsg ] || echo "sysupgrade: $*" > /dev/kmsg 2> /dev/null || :
+}
 die() {
 	echo "sysupgrade: $*" >&2
 	exit 1
@@ -310,7 +314,23 @@ installer() {
 	mdev -s 2>/dev/null
 	exec < /dev/console > /dev/console 2>&1
 	msg "installer started"
-	[ -c /dev/watchdog ] && watchdog -t 5 -T 30 /dev/watchdog
+	# Feed the hardware watchdog for at most 10 minutes (a flash write takes about one). A hang
+	# anywhere below then ends in a reset back to the old system instead of an installer that sits
+	# there forever (it happened: the free-running busybox watchdog kept feeding a stuck installer).
+	# The timeout first logs and crashes the kernel so the progress lines above land in pstore.
+	if [ -c /dev/watchdog ]; then
+		(
+			i=0
+			while [ $i -lt 120 ]; do
+				printf . > /dev/watchdog 2> /dev/null
+				sleep 5
+				i=$((i + 1))
+			done
+			msg "installer TIMED OUT after 10 min: rebooting (see /sys/fs/pstore after the reboot)"
+			sync
+			echo c > /proc/sysrq-trigger
+		) &
+	fi
 	if flash_install "$dir"; then
 		msg "rebooting into the new system"
 	else

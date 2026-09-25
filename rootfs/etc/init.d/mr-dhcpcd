@@ -22,12 +22,13 @@ depend() {
 start_pre() {
 	[ -f /etc/dhcpcd.conf ] || { eerror "no /etc/dhcpcd.conf (run mr apply)"; return 1; }
 	i=0
-	while pgrep -x dhcpcd > /dev/null && [ $i -lt 25 ]; do
-		[ $i = 5 ] && pkill -x dhcpcd
+	# pidof, not pgrep/pkill -x: busybox -x matches the whole command line, which never equals "dhcpcd"
+	while pidof dhcpcd > /dev/null && [ $i -lt 25 ]; do
+		[ $i = 5 ] && pids=$(pidof dhcpcd) && kill $pids 2> /dev/null
 		sleep 0.2
 		i=$((i + 1))
 	done
-	pkill -9 -x dhcpcd 2> /dev/null
+	pids=$(pidof dhcpcd) && kill -9 $pids 2> /dev/null
 	rm -f /run/dhcpcd/sock /run/dhcpcd/unpriv.sock /run/dhcpcd/pid
 	return 0
 }

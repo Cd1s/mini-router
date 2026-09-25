@@ -9,7 +9,7 @@ start_pre() {
 	# PANEL_ADDR: the main LAN address, from /etc/conf.d/mr-panel (rendered by mr from lan.ipv4;
 	# a LAN address change rewrites it and restarts this service)
 	if [ -z "${PANEL_ADDR:-}" ]; then
-		PANEL_ADDR=$(sed -n 's/^  ipv4: *\([0-9.]*\)\/.*/\1/p' /etc/mini-router/router.yaml | head -1)
+		PANEL_ADDR=$(ip -4 -o addr show dev br-lan 2>/dev/null | awk '{split($4, a, "/"); print a[1]; exit}')
 	fi
 	command_args="httpd -f -p ${PANEL_ADDR:-0.0.0.0}:80 -h /www"
 }
