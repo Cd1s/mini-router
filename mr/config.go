@@ -29,6 +29,7 @@ type Config struct {
 	Schedules []Schedule `yaml:"schedules,omitempty"` // sys
 	Guard     Guard      `yaml:"guard,omitempty"`     // baselines every config must keep (guard.go)
 	API       APIConf    `yaml:"api,omitempty"`       // api: tokens for scripts and agents (api_token.go)
+	Notify    Notify     `yaml:"notify,omitempty"`    // sys: where events are pushed (mod_sys_notify.go)
 
 	secrets map[string]string
 }

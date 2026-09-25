@@ -159,6 +159,7 @@ func checkPasswordFrom(remote, stored, pw, msg string) *apiResp {
 	switch {
 	case locked > 0:
 		logf("webui: %d failed logins from %s: locked for %s", loginMax, remote, locked)
+		eventLoginLock(remote, "web UI logins", locked)
 	case fails == 1:
 		logf("webui: failed login from %s", remote)
 	}

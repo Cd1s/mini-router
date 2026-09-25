@@ -313,6 +313,7 @@ func setResult(snap, result string) {
 	}
 	r.Result = result
 	writeRevision(r)
+	eventChange(r) // the event log: applied / confirmed / rolled back (mod_sys_event.go)
 }
 
 func historyKeep(c *Config) int {
