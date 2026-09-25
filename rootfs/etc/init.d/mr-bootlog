@@ -1,0 +1,30 @@
+#!/sbin/openrc-run
+# Boot log on flash: 2 minutes after boot, save the kernel log, service states, addresses and the
+# system log to /etc/mini-router/state/bootlog/ (newest 5 kept). /var/log is RAM, so without this a
+# boot that fails (no LAN, a service that never starts, ...) leaves nothing to look at afterwards.
+description="save a snapshot of this boot to flash"
+depend() {
+	need localmount
+	after *
+}
+start() {
+	ebegin "Scheduling the boot log snapshot"
+	(
+		sleep 120
+		d=/etc/mini-router/state/bootlog
+		mkdir -p "$d"
+		f=$d/boot-$(date +%Y%m%d-%H%M%S).txt
+		{
+			echo "== $(cat /etc/mini-router-release 2>/dev/null | head -1)  uptime: $(cut -d' ' -f1 /proc/uptime)s"
+			echo "== rc-status"; rc-status -a 2>&1
+			echo "== addresses"; ip -br addr 2>&1
+			echo "== routes"; ip route show default 2>&1; ip -6 route show default 2>&1
+			echo "== wifi"; iw dev 2>&1 | grep -E "Interface|channel|ssid"
+			echo "== dmesg"; dmesg 2>&1 | tail -n 400
+			echo "== messages"; grep -v -E "RTR-ADVERT|DHCP(REQUEST|ACK|OFFER|DISCOVER)" /var/log/messages 2>/dev/null | tail -n 300
+		} > "$f" 2>&1
+		chmod 600 "$f"
+		ls -1t "$d"/boot-*.txt 2>/dev/null | tail -n +6 | while read -r old; do rm -f "$old"; done
+	) < /dev/null > /dev/null 2>&1 &
+	eend 0
+}

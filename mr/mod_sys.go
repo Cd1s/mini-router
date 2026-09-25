@@ -168,7 +168,8 @@ func sysRestart(path string) string {
 }
 
 func sysServices(c *Config) []string {
-	s := []string{"ntpd"}
+	// mr-bootlog: keeps a snapshot of every boot on flash (/var/log is RAM and lost on reboot)
+	s := []string{"ntpd", "mr-bootlog"}
 	sv := c.Services
 	if sv.SSH.Enabled {
 		s = append(s, "dropbear")
@@ -229,7 +230,7 @@ func init() {
 			return nil
 		},
 		Services:     sysServices,
-		Managed:      []string{"dropbear", "tailscale", "lucky", "lucky-dns-inotify", "dstatus-agent", "stubby", "mr-panel", "mr-zram", "crond"},
+		Managed:      []string{"dropbear", "tailscale", "lucky", "lucky-dns-inotify", "dstatus-agent", "stubby", "mr-panel", "mr-zram", "crond", "mr-bootlog"},
 		Restart:      sysRestart,
 		RestartOrder: []string{"ntpd", "syslog", "dropbear", "crond", "tailscale", "mr-panel"},
 		Status: func(c *Config, st map[string]any) {
