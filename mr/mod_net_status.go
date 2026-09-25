@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,6 +78,9 @@ func netVerify(c *Config, restarted []string) []string {
 	var errs []string
 	deadline := verifyDeadline()
 	for _, s := range restarted {
+		if s == "mr-network" { // network.sh ran again: did every link take its MTU?
+			errs = append(errs, linkMTUErrors(c)...)
+		}
 		var w *WAN
 		what := ""
 		switch {
@@ -93,6 +97,26 @@ func netVerify(c *Config, restarted []string) []string {
 		}
 		if w != nil && !waitFor(deadline, func() bool { return hasIPv4(w.Ifname()) }) {
 			errs = append(errs, w.Name+": "+what+" within 90s")
+		}
+	}
+	return errs
+}
+
+// linkMTUErrors: WAN devices that network.sh had to raise above 1500 (e.g. 1508 for a PPPoE mtu of
+// 1500, RFC 4638) but that are below that now: the network card or its driver refused it, and pppd
+// would quietly stay at 1492. The apply is rolled back instead of keeping a setting this hardware
+// cannot do.
+func linkMTUErrors(c *Config) []string {
+	need := wanLinkMTUs(c)
+	var devs []string
+	for d := range need {
+		devs = append(devs, d)
+	}
+	sort.Strings(devs)
+	var errs []string
+	for _, d := range devs {
+		if got := atoi(sysRead(d, "mtu")); need[d] > 1500 && got > 0 && got < need[d] {
+			errs = append(errs, fmt.Sprintf("%s: MTU %d, router.yaml needs %d there and the device refused it (PPPoE: use mtu 1492)", d, got, need[d]))
 		}
 	}
 	return errs
@@ -316,6 +340,7 @@ type wanRT struct {
 	Service     string   `json:"service,omitempty"`
 	Up          bool     `json:"up"` // has an IPv4 address
 	IP          string   `json:"ip,omitempty"`
+	MTU         int      `json:"mtu,omitempty"` // of the L3 interface while up: PPPoE 1500 = RFC 4638 granted
 	Gateway     string   `json:"gateway,omitempty"`
 	DNS         []string `json:"dns,omitempty"`
 	Since       int64    `json:"since,omitempty"`
@@ -353,7 +378,7 @@ func wanRuntime(c *Config) wanRuntimeView {
 		t, m := c.WANTable(w.Name)
 		r := wanRT{Name: w.Name, Proto: w.Proto, Dev: w.Ifname(), Service: netService(w), Table: t, Mark: m, Metric: w.Metric}
 		if a := ipv4Addrs(r.Dev); len(a) > 0 {
-			r.Up, r.IP = true, strings.SplitN(a[0], "/", 2)[0]
+			r.Up, r.IP, r.MTU = true, strings.SplitN(a[0], "/", 2)[0], atoi(sysRead(r.Dev, "mtu"))
 			if l, ok := readLease(w.Name); ok {
 				r.Gateway, r.DNS, r.Since = l.Gateway, l.DNS, l.Since
 			}
