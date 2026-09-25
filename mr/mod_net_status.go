@@ -229,7 +229,7 @@ func readPorts(c *Config) []portInfo {
 		if d == "lo" {
 			continue
 		}
-		p := portInfo{Name: d, Role: roles[d], Oper: effOper(sysRead(d, "operstate"), sysRead(d, "flags")), MTU: atoi(sysRead(d, "mtu")), MAC: sysRead(d, "address")}
+		p := portInfo{Name: d, Role: roles[d], Oper: effOper(sysRead(d, "operstate"), sysRead(d, "flags"), sysRead(d, "carrier")), MTU: atoi(sysRead(d, "mtu")), MAC: sysRead(d, "address")}
 		if raw := sysRead(d, "operstate"); raw != p.Oper {
 			p.OperRaw = raw
 		}

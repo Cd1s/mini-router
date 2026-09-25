@@ -156,7 +156,7 @@ func monCmd(c *Config, args []string) error {
 type monIface struct {
 	Name  string `json:"name"`
 	Role  string `json:"role,omitempty"`     // wan | wan-dev | lan | port | wifi | vpn
-	State string `json:"state"`              // up | down | … (operstate; ppp/tun "unknown" resolved by IFF_UP|IFF_RUNNING)
+	State string `json:"state"`              // up | down | … (operstate; ppp/tun "unknown" resolved by IFF_UP + carrier)
 	Raw   string `json:"oper_raw,omitempty"` // the kernel's operstate when State was derived from the flags
 	RX    uint64 `json:"rx"`                 // bytes
 	TX    uint64 `json:"tx"`
@@ -302,7 +302,7 @@ func monIfaces(c *Config) []monIface {
 		n := func(i int) uint64 { v, _ := strconv.ParseUint(f[i], 10, 64); return v }
 		sys := monPath("/sys/class/net/" + name)
 		raw := strings.TrimSpace(readFile(sys + "/operstate"))
-		it := monIface{Name: name, Role: roles[name], State: effOper(raw, readFile(sys+"/flags")),
+		it := monIface{Name: name, Role: roles[name], State: effOper(raw, readFile(sys+"/flags"), readFile(sys+"/carrier")),
 			RX: n(0), RXP: n(1), TX: n(8), TXP: n(9), Err: n(2) + n(10), Drop: n(3) + n(11)}
 		if raw != it.State {
 			it.Raw = raw
