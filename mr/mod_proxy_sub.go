@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,7 +61,7 @@ func (b *proxyCapBuf) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-var reProxyHTTPStatus = regexp.MustCompile(`^HTTP/[0-9.]+ ([0-9]{3})`)
+var reProxyHTTPStatus = lazyRegexp(`^HTTP/[0-9.]+ ([0-9]{3})`)
 
 // proxyWgetInfo reads wget -S output: the last HTTP status and the subscription-userinfo header
 // (upload / download / total bytes, expire unix time) many subscription services send.

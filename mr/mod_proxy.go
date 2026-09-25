@@ -25,7 +25,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -171,12 +170,12 @@ var proxySSMethods = map[string]int{
 var proxyReserved = map[string]bool{"direct": true, "local": true, "fakeip": true, "dns-in": true, "tproxy4": true, "tproxy6": true, "GLOBAL": true}
 
 var (
-	reProxyHost     = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,62})(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}))*$`)
-	reProxyDomain   = regexp.MustCompile(`^[a-z0-9_]([a-z0-9_-]{0,62})(\.[a-z0-9_]([a-z0-9_-]{0,62}))*$`)
-	reProxySecret   = regexp.MustCompile(`^[a-z0-9_-]{1,40}$`)
-	reProxyURL      = regexp.MustCompile(`^https?://[A-Za-z0-9._~:/?&=%+-]{1,200}$`)
-	reProxyInterval = regexp.MustCompile(`^[1-9][0-9]{0,3}[smh]$`)
-	reProxyOutType  = regexp.MustCompile(`^[a-z0-9-]{1,20}$`)
+	reProxyHost     = lazyRegexp(`^[A-Za-z0-9]([A-Za-z0-9-]{0,62})(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}))*$`)
+	reProxyDomain   = lazyRegexp(`^[a-z0-9_]([a-z0-9_-]{0,62})(\.[a-z0-9_]([a-z0-9_-]{0,62}))*$`)
+	reProxySecret   = lazyRegexp(`^[a-z0-9_-]{1,40}$`)
+	reProxyURL      = lazyRegexp(`^https?://[A-Za-z0-9._~:/?&=%+-]{1,200}$`)
+	reProxyInterval = lazyRegexp(`^[1-9][0-9]{0,3}[smh]$`)
+	reProxyOutType  = lazyRegexp(`^[a-z0-9-]{1,20}$`)
 )
 
 func init() {

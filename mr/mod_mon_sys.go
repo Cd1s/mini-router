@@ -4,7 +4,6 @@ package main
 
 import (
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,8 +47,8 @@ func monParsePidStat(s string, pageKB uint64) (monProc, bool) {
 
 var (
 	// key=value / key:value arguments whose key looks secret, and flags whose next argument is one
-	monSecretKV   = regexp.MustCompile(`(?i)^(-{0,2}[a-z0-9_.-]*(?:pass|secret|token|auth-?key|psk|api-?key|private-?key)[a-z0-9_.-]*[=:])(.+)$`)
-	monSecretFlag = regexp.MustCompile(`(?i)^-{1,2}[a-z0-9_.-]*(?:pass|secret|token|auth-?key|psk|api-?key|private-?key)[a-z0-9_.-]*$`)
+	monSecretKV   = lazyRegexp(`(?i)^(-{0,2}[a-z0-9_.-]*(?:pass|secret|token|auth-?key|psk|api-?key|private-?key)[a-z0-9_.-]*[=:])(.+)$`)
+	monSecretFlag = lazyRegexp(`(?i)^-{1,2}[a-z0-9_.-]*(?:pass|secret|token|auth-?key|psk|api-?key|private-?key)[a-z0-9_.-]*$`)
 )
 
 // monCmdline turns /proc/<pid>/cmdline into one display line with secret-looking values masked.

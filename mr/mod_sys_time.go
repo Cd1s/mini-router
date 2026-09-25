@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -247,7 +246,7 @@ func sysLocation(c *Config) *time.Location {
 	return time.UTC
 }
 
-var reNTPHost = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,62})(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}))*\.?$`)
+var reNTPHost = lazyRegexp(`^[A-Za-z0-9]([A-Za-z0-9-]{0,62})(\.[A-Za-z0-9]([A-Za-z0-9-]{0,62}))*\.?$`)
 
 // validNTPServer: an IP address or a host name (busybox ntpd -p argument; no "keyno:" prefixes).
 func validNTPServer(s string) bool {

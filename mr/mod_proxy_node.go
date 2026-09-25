@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -122,12 +121,12 @@ func proxyNodeKeys(n *ProxyNode) []string {
 }
 
 var (
-	reProxyUUID    = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-	reProxyALPN    = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,32}$`)
-	reProxyPath    = regexp.MustCompile(`^/[A-Za-z0-9._~!$&()*+,;=:@%/-]{0,200}$`)
-	reProxyGRPC    = regexp.MustCompile(`^[A-Za-z0-9._~/-]{1,128}$`)
-	reProxyShortID = regexp.MustCompile(`^([0-9a-fA-F]{2}){0,8}$`)
-	reProxyHop     = regexp.MustCompile(`^[0-9]{1,5}(-[0-9]{1,5})?(,[0-9]{1,5}(-[0-9]{1,5})?){0,15}$`)
+	reProxyUUID    = lazyRegexp(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	reProxyALPN    = lazyRegexp(`^[A-Za-z0-9._/-]{1,32}$`)
+	reProxyPath    = lazyRegexp(`^/[A-Za-z0-9._~!$&()*+,;=:@%/-]{0,200}$`)
+	reProxyGRPC    = lazyRegexp(`^[A-Za-z0-9._~/-]{1,128}$`)
+	reProxyShortID = lazyRegexp(`^([0-9a-fA-F]{2}){0,8}$`)
+	reProxyHop     = lazyRegexp(`^[0-9]{1,5}(-[0-9]{1,5})?(,[0-9]{1,5}(-[0-9]{1,5})?){0,15}$`)
 )
 
 // value sets (enums) of the structured node fields

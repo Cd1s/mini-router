@@ -16,7 +16,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -476,7 +475,7 @@ func hookDhcpcd(c *Config) error {
 	return refreshLan6()
 }
 
-var reIAPD = regexp.MustCompile(`^new_dhcp6_ia_pd([0-9]+)_prefix([0-9]+)=([0-9a-fA-F:]+)$`)
+var reIAPD = lazyRegexp(`^new_dhcp6_ia_pd([0-9]+)_prefix([0-9]+)=([0-9a-fA-F:]+)$`)
 
 // delegatedPrefixes returns the prefixes dhcpcd reports for the WAN interface itself
 // (new_dhcp6_ia_pd1_prefix1=2405:...:: plus new_dhcp6_ia_pd1_prefix1_length=64) as CIDRs.

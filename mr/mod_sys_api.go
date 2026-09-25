@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,7 +19,7 @@ import (
 	"time"
 )
 
-var hostRe = regexp.MustCompile(`^[A-Za-z0-9.:-]{1,253}$`)
+var hostRe = lazyRegexp(`^[A-Za-z0-9.:-]{1,253}$`)
 
 // apiDiag runs ping / ping6 / traceroute / traceroute6 / nslookup with a hard timeout. Arguments are
 // fixed; only the target is user-supplied and must look like a host name or address. The old
@@ -285,7 +284,7 @@ type logEntry struct {
 	Lvl              int
 }
 
-var reLogTag = regexp.MustCompile(`^([A-Za-z0-9_./@-]{1,64})(\[[0-9]+\])?:`)
+var reLogTag = lazyRegexp(`^([A-Za-z0-9_./@-]{1,64})(\[[0-9]+\])?:`)
 
 // parseSyslogLine reads busybox syslogd's "Mmm dd hh:mm:ss host facility.level tag[pid]: message".
 func parseSyslogLine(l string) logEntry {
