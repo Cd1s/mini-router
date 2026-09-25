@@ -1,0 +1,47 @@
+From: mini-router
+Subject: net: ethernet: mtk_wed: increase WED v2 WDMA RESV_BUFF to 0x80
+
+Backport of upstream commit c0ef04232f9f (Linux 7.x, 2026-08; not in 6.18.52 nor in OpenWrt's
+patches-6.18). Upstream message:
+
+  Change WDMA RESV_BUFF from 0x40 to 0x80 to avoid CDM TX FIFO overflow.
+  Without this patch mt7986 and mt7981 may have WDMA TX hang issue. This
+  patch was pulled from mtk-openwrt-feeds GPL open source project.
+
+  Link: https://github.com/mediatek/mtk-openwrt-feeds/commit/07c87502e854b68b48544d101b6fe17ec059b97b
+  Signed-off-by: Shiji Yang <yangshiji66@outlook.com>
+  Reviewed-by: Simon Horman <horms@kernel.org>
+  Acked-by: Lorenzo Bianconi <lorenzo@kernel.org>
+  Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+
+The AX6000 (MT7986A) attaches WED version 2 ("attaching wed device 0 version 2"): WiFi hardware
+forwarding goes through this WDMA.
+
+diff --git a/drivers/net/ethernet/mediatek/mtk_wed.c b/drivers/net/ethernet/mediatek/mtk_wed.c
+index 10d9beaae37215..53d3b7e00e1cdd 100644
+--- a/drivers/net/ethernet/mediatek/mtk_wed.c
++++ b/drivers/net/ethernet/mediatek/mtk_wed.c
+@@ -2071,6 +2071,11 @@ mtk_wed_dma_enable(struct mtk_wed_device *dev)
+ 		wdma_set(dev, MTK_WDMA_GLO_CFG, MTK_WDMA_GLO_CFG_TX_DMA_EN);
+ 	}
+ 
++	if (mtk_wed_is_v2(dev->hw))
++		wdma_m32(dev, MTK_WDMA_GLO_CFG,
++			 MTK_WDMA_GLO_CFG_RESV_BUFF,
++			 FIELD_PREP(MTK_WDMA_GLO_CFG_RESV_BUFF, 0x80));
++
+ 	wed_set(dev, MTK_WED_GLO_CFG,
+ 		MTK_WED_GLO_CFG_TX_DMA_EN |
+ 		MTK_WED_GLO_CFG_RX_DMA_EN);
+diff --git a/drivers/net/ethernet/mediatek/mtk_wed_regs.h b/drivers/net/ethernet/mediatek/mtk_wed_regs.h
+index c71190924816c5..e5f83100ded522 100644
+--- a/drivers/net/ethernet/mediatek/mtk_wed_regs.h
++++ b/drivers/net/ethernet/mediatek/mtk_wed_regs.h
+@@ -433,6 +433,7 @@ struct mtk_wdma_desc {
+ #define MTK_WDMA_GLO_CFG_TX_DMA_BUSY			BIT(1)
+ #define MTK_WDMA_GLO_CFG_RX_DMA_EN			BIT(2)
+ #define MTK_WDMA_GLO_CFG_RX_DMA_BUSY			BIT(3)
++#define MTK_WDMA_GLO_CFG_RESV_BUFF			GENMASK(23, 16)
+ #define MTK_WDMA_GLO_CFG_RX_INFO3_PRERES		BIT(26)
+ #define MTK_WDMA_GLO_CFG_RX_INFO2_PRERES		BIT(27)
+ #define MTK_WDMA_GLO_CFG_RX_INFO1_PRERES		BIT(28)
