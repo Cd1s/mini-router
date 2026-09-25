@@ -110,7 +110,7 @@ for cfg in "home $REPO/examples/router.yaml $REPO/mr/testdata/secrets.yaml" "lab
 		fi
 		cmd=$(sed -n 's/^command=["'"'"']\{0,1\}\([^ "'"'"']*\).*/\1/p' "$f" | head -1)
 		case $cmd in
-		*'$'*) cmd=$(printf '%s' "$cmd" | sed 's/\${\{0,1\}RC_SVCNAME[^}/]*}\{0,1\}/'"${s%%.*}"'/') ;;
+		*'$'*) cmd=$(printf '%s' "$cmd" | sed 's/\${\{0,1\}\(RC_\)\{0,1\}SVCNAME[^}/]*}\{0,1\}/'"${s%%.*}"'/') ;;
 		esac
 		case $cmd in /*) [ -e "$R$cmd" ] || gaps="$gaps $s(no $cmd)" ;; esac
 	done < "/tmp/$1/etc/mini-router/gen/services"

@@ -9,8 +9,21 @@ start() {
 	modprobe -q zram 2>/dev/null
 	[ -e /sys/block/zram0 ] || { eend 1 "no zram"; return 1; }
 	if ! grep -q '^/dev/zram0 ' /proc/swaps; then
-		echo zstd > /sys/block/zram0/comp_algorithm 2>/dev/null || echo lzo > /sys/block/zram0/comp_algorithm
-		echo $(( $(awk '/MemTotal/{print $2}' /proc/meminfo) * 1024 / 4 )) > /sys/block/zram0/disksize
+		# configure only an unused device (a restart finds it initialized: "Resource busy")
+		if [ "$(cat /sys/block/zram0/disksize)" = 0 ]; then
+			for a in zstd lzo-rle lzo; do
+				echo $a > /sys/block/zram0/comp_algorithm 2>/dev/null && break
+			done
+			echo $(( $(awk '/MemTotal/{print $2}' /proc/meminfo) * 1024 / 4 )) > /sys/block/zram0/disksize
+		fi
+		# the device node appears asynchronously (mdev) right after the module loads: at boot mkswap
+		# ran before it existed and the service failed
+		i=0
+		while [ ! -b /dev/zram0 ] && [ $i -lt 50 ]; do
+			sleep 0.1
+			i=$((i + 1))
+		done
+		[ -b /dev/zram0 ] || mknod /dev/zram0 b "$(cut -d: -f1 /sys/block/zram0/dev)" "$(cut -d: -f2 /sys/block/zram0/dev)"
 		mkswap /dev/zram0 >/dev/null && swapon -p 100 /dev/zram0
 	fi
 	eend $?
