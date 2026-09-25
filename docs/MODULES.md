@@ -51,7 +51,12 @@ Register exactly one `Module` in `init()`:
 - `Secrets(c)` — names of every secret this module's config references (so the UI can show 已设置).
 
 Rollback (failed/unconfirmed apply, `mr rollback`) restores files, restarts their services and
-reconciles the default runlevel with the restored config (`reconcileRunlevel`).
+reconciles the default runlevel with the restored config (`reconcileRunlevel`). From the snapshot until the
+change is accepted (the apply ends without `--confirm`, or `mr confirm`) the marker
+`/etc/mini-router/confirm-pending` (JSON: snapshot, state applying | pending | reverting, deadline, origin) is on
+flash: if the router goes down in that window, the next boot restores the snapshot before any service starts
+(`mr rollback --boot` from mr-preinit, or the `mr-unconfirmed` boot service on Alpine installs) and fixes the
+runlevel links (`linkRunlevel`).
 
 Cross-module helpers: `c.LANNets()`, `c.BridgeFor(network)`, `c.LANBridges()`, `c.WANIfnames()`,
 `c.WANTable(name)`, `c.WANByName(name)`, `c.Secret(key)`.

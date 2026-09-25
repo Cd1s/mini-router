@@ -303,6 +303,8 @@ for s in networking dhcpcd; do
 	for rl in boot default; do rc-update del "$s" "$rl" > /dev/null 2>&1 || :; done
 done
 [ -f /etc/network/interfaces ] && mv /etc/network/interfaces /etc/network/interfaces.before-mini-router
+# a change that was never confirmed (power cut in the confirm window) is rolled back at the next boot
+rc-update add mr-unconfirmed boot > /dev/null 2>&1 || :
 /usr/sbin/mr apply || die "apply failed (it was rolled back); see 'mr plan' and /var/log/messages"
 say "完成 / done: http://$host/  (admin password as entered)"
 echo "配置文件 / config: $CONF/router.yaml · 命令 / commands: mr plan | mr apply | mr status | mr rollback"

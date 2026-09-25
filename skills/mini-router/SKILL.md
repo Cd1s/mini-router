@@ -28,6 +28,7 @@ No python/jq there: edit YAML with care, or edit a copy on your side and send it
 3. **Apply with a safety net**: `mr apply --confirm 120`. It prints the plan, applies, verifies services; failures
    roll back at once. Then verify (step 4) and run **`mr confirm` within 120 s** — without it the change is rolled
    back automatically (that is the net when you cut your own connection; never forget it when all is fine).
+   A reboot or power cut before `mr confirm` rolls the change back at boot as well.
 4. **Verify by reading back**: the live state, not the exit code (`mr status`, `nft list ruleset | grep …`,
    `mr wifi status`, a real connection test).
 5. History: `mr history` (snapshots), `mr rollback [SNAPSHOT]`; every apply is logged in `/etc/router-changes.log`

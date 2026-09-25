@@ -124,13 +124,16 @@ func handleAPI(r apiReq) apiResp {
 		confirm()
 		return apiResp{body: map[string]any{"ok": true}}
 	case "revert": // undo a pending --confirm apply right now instead of waiting for the timer
-		snap, err := os.ReadFile(ConfirmFile)
-		if err != nil {
+		p, err := readPending()
+		if err != nil || p.State != statePending {
 			return errResp(409, "nothing pending")
 		}
-		os.Remove(ConfirmFile)
+		p.State = stateReverting // the timer leaves it alone; the rollback removes the marker when done
+		if err := setPending(*p); err != nil {
+			return errResp(500, "%v", err)
+		}
 		self, _ := os.Executable()
-		startDetached(self, "rollback", filepath.Base(string(snap)))
+		startDetached(self, "rollback", filepath.Base(p.Snapshot))
 		return apiResp{body: map[string]any{"ok": true}}
 	case "history":
 		return apiHistory()
@@ -452,6 +455,7 @@ type jobState struct {
 	Ended   int64  `json:"ended,omitempty"`
 	Output  string `json:"output"`
 	Confirm int    `json:"confirm"`
+	Via     string `json:"via,omitempty"` // origin recorded in the pending marker (web UI | restore)
 }
 
 func apiApply(r apiReq) apiResp {
@@ -478,7 +482,7 @@ func apiApply(r apiReq) apiResp {
 	if err := writeSecrets(CandidateSec, sec); err != nil {
 		return errResp(500, "%v", err)
 	}
-	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs})
+	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: "web UI"})
 	self, _ := os.Executable()
 	startDetached(self, "apply-job", strconv.Itoa(confirmSecs))
 	return apiResp{body: map[string]any{"ok": true, "confirm": confirmSecs}}
@@ -488,7 +492,11 @@ func apiApply(r apiReq) apiResp {
 func runApplyJob(confirmSecs int) error {
 	logFile, _ := os.OpenFile(JobLog, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 	os.Stdout, os.Stderr = logFile, logFile
-	err := ApplyCandidate(CandidateYAML, CandidateSec, confirmSecs)
+	via := readJob().Via
+	if via == "" {
+		via = "web UI"
+	}
+	err := ApplyCandidate(CandidateYAML, CandidateSec, confirmSecs, via)
 	logFile.Close()
 	out, _ := os.ReadFile(JobLog)
 	j := readJob()

@@ -134,6 +134,9 @@ U-Boot 的 bootargs 里没有 `init=`，内核运行 `/sbin/init` → 就是 `mr
    `/tmp/keep` 就重启回闪存（内核命令行带 `mr.keep` 则不启用）。
 4. 两种情况下，如果有 `/etc/mini-router/.firstboot`（下发的配置），先 `mr validate` + `mr render /`，再让 default
    运行级正好等于 `gen/services`，然后删除标记；配置无效则保留出厂文件和标记，并写内核日志。
+   闪存启动时在这之前还检查 `/etc/mini-router/confirm-pending`：有它说明上次在 apply 过程中或确认窗口内断电 / 重启，
+   这份没被确认的改动由 `mr rollback --boot` 回滚（还原快照里的文件、修正 default 运行级的链接，不重启任何服务），
+   写入 `/etc/router-changes.log` 和内核日志。Alpine 安装没有 preinit，由 boot 运行级的 `mr-unconfirmed` 做同样的事。
 5. 任何一步失败都继续往下走，最后总是 `exec busybox init`（最坏情况：只读根）。
 
 日志写 `/dev/kmsg`（`dmesg | grep mr-preinit`）。
