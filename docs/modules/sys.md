@@ -74,7 +74,7 @@ Validation (the security boundary — everything below ends up in a file, a cron
 | File | Content | On change |
 |---|---|---|
 | `/etc/hostname` | hostname | `hostname` |
-| `/etc/sysctl.d/90-mini-router.conf` | forwarding, syncookies, fq_codel, `nf_conntrack_max=100000`, … + `system.sysctl` | sysctl reload |
+| `/etc/sysctl.d/90-mini-router.conf` | forwarding, syncookies, fq_codel, `nf_conntrack_max=100000`, no ICMP redirects (`send_redirects=0` for `all` and `default`), … + `system.sysctl` | sysctl reload |
 | `/etc/modules-load.d/mr-sys.conf` | `nf_conntrack` | — (boot) |
 | `/etc/conf.d/sysctl` | `rc_after="modules"` | — (boot) |
 | `/etc/localtime` | TZif v2 built from `system.timezone` (see below) | restart `syslog` (timestamps) |

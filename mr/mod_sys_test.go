@@ -136,7 +136,8 @@ func TestSysRenderHome(t *testing.T) {
 			t.Errorf("%s = %q, want %q", p, f[p], want)
 		}
 	}
-	wantSubs(t, "sysctl", f["/etc/sysctl.d/90-mini-router.conf"], "net.netfilter.nf_conntrack_max=100000\n", "net.ipv4.tcp_congestion_control=bbr\n", "net.ipv4.ip_forward=1\n")
+	wantSubs(t, "sysctl", f["/etc/sysctl.d/90-mini-router.conf"], "net.netfilter.nf_conntrack_max=100000\n", "net.ipv4.tcp_congestion_control=bbr\n", "net.ipv4.ip_forward=1\n",
+		"net.ipv4.conf.all.send_redirects=0\n", "net.ipv4.conf.default.send_redirects=0\n")
 	wantSubs(t, "mr-panel", f["/etc/conf.d/mr-panel"], "PANEL_ADDR=192.168.1.6\n")
 	wantSubs(t, "rc_after", f["/etc/conf.d/sysctl"], `rc_after="modules"`)
 	loc, err := time.LoadLocationFromTZData("x", []byte(f["/etc/localtime"]))

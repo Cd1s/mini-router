@@ -72,6 +72,13 @@ func renderSysctl(c *Config) string {
 		"net.ipv4.conf.all.arp_ignore":         "1",
 		"net.ipv4.conf.default.arp_ignore":     "1",
 		"net.ipv4.icmp_echo_ignore_broadcasts": "1",
+		// no ICMP redirects: a client that follows one (static route to a LAN host, policy routing,
+		// side-router setups) bypasses the router, and conntrack, the firewall and flow offload
+		// only ever see its first packet. The kernel sends one when all OR the netdev's value is
+		// set; writing default also resets every netdev not set on its own (devinet_copy_dflt_conf)
+		// and is what bridges / PPP links created later start from.
+		"net.ipv4.conf.all.send_redirects":     "0",
+		"net.ipv4.conf.default.send_redirects": "0",
 		"net.core.default_qdisc":               "fq_codel",
 		"net.core.rps_sock_flow_entries":       "32768",
 		"net.core.netdev_max_backlog":          "2000",
