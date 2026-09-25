@@ -2,10 +2,14 @@ package main
 
 import "syscall"
 
-// clockSynced reports whether the kernel clock is marked synchronized (busybox ntpd clears
-// STA_UNSYNC once it disciplines the clock; adjtimex then no longer returns TIME_ERROR).
-// The second result is false when the state cannot be read.
+// clockSynced reports whether NTP keeps the clock right. The image's ntpd hook (clock-save) keeps a
+// marker in /run/mr-clock (ntpMarker): busybox ntpd never lowers the kernel's maxerror, so adjtimex
+// reports TIME_ERROR / STA_UNSYNC even while it disciplines the clock. adjtimex is the fallback for
+// systems without the marker directory. The second result is false when the state cannot be read.
 func clockSynced() (bool, bool) {
+	if s, known, _ := ntpMarker(); known {
+		return s, true
+	}
 	var tx syscall.Timex
 	state, err := syscall.Adjtimex(&tx)
 	if err != nil {

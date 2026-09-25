@@ -3,9 +3,10 @@ package main
 // sys module: hostname, time (timezone, NTP client/server), sysctl, SSH (dropbear, managed
 // authorized_keys), add-on services (tailscale, lucky, dstatus, stubby, web UI, zram), dynamic DNS,
 // Wake-on-LAN, scheduled tasks (busybox crond), backup/restore, firmware upgrade / factory reset, logs,
-// diagnostics. Owns router.yaml: system, services, schedules. Files: mod_sys_time.go (TZ, TZif, NTP),
-// mod_sys_ssh.go, mod_sys_cron.go, mod_sys_ddns.go, mod_sys_wol.go, mod_sys_backup.go, mod_sys_fw.go,
-// mod_sys_api.go.
+// diagnostics, `mr doctor`, the event log and notifications. Owns router.yaml: system, services, schedules,
+// notify. Files: mod_sys_time.go (TZ, TZif, NTP), mod_sys_ssh.go, mod_sys_cron.go, mod_sys_ddns.go,
+// mod_sys_wol.go, mod_sys_backup.go, mod_sys_fw.go, mod_sys_api.go, mod_sys_doctor.go, mod_sys_event.go,
+// mod_sys_notify.go.
 // Docs: docs/modules/sys.md.
 
 import (
@@ -239,6 +240,7 @@ func init() {
 				c.System.NTP = []string{"pool.ntp.org"} // no RTC: the clock must come from somewhere
 			}
 			ddnsDefaults(c)
+			notifyDefaults(c)
 		},
 		Validate: sysValidate,
 		Render:   sysRender,
@@ -275,22 +277,30 @@ func init() {
 			if ddnsOn(c) {
 				st["ddns"] = ddnsSummary(c)
 			}
+			if d := doctorSummary(); d != nil {
+				st["doctor"] = d
+			}
+			st["events"] = eventRecent(8)
 		},
 		// DDNS: a WAN that came up / renewed / got a prefix, or a failover, may have changed the
 		// address; an apply may have changed the records. Both only start a background sync (a DDNS
 		// failure never fails an apply).
+		// Events: a WAN that went down / came back / failed over (mod_sys_event.go).
 		OnWAN: func(c *Config, wan, event string) {
 			if ddnsOn(c) && ddnsUses(c, event) {
 				ddnsKick()
 			}
+			eventOnWAN(c, wan, event)
 		},
 		Verify: func(c *Config, restarted []string) []string {
 			if ddnsOn(c) {
 				ddnsKick()
 			}
+			notifyInit(c)    // new channels start at the end of the event log
+			eventSchedule(c) // background health checks: on, off, another interval
 			return nil
 		},
-		Secrets: ddnsSecrets,
+		Secrets: func(c *Config) []string { return append(ddnsSecrets(c), notifySecrets(c)...) },
 		API: map[string]func(r apiReq) apiResp{
 			"diag":              apiDiag,
 			"service":           apiService,
@@ -308,11 +318,17 @@ func init() {
 			"sys.ddns":          apiSysDDNS,
 			"sys.ddnsupdate":    apiSysDDNSUpdate,
 			"sys.wol":           apiSysWOL,
+			"sys.doctor":        apiSysDoctor,
+			"sys.events":        apiSysEvents,
+			"sys.notifytest":    apiSysNotifyTest,
 		},
 		Commands: map[string]func(c *Config, args []string) error{
-			"sys":  sysCommand,
-			"ddns": ddnsCommand,
-			"wol":  wolCommand,
+			"sys":    sysCommand,
+			"ddns":   ddnsCommand,
+			"wol":    wolCommand,
+			"doctor": doctorCommand,
+			"event":  eventCommand,
+			"notify": notifyCommand,
 		},
 	})
 }
@@ -364,6 +380,7 @@ func sysValidate(c *Config, v *Validator) {
 	validateSSH(c, v)
 	validateSchedules(c, v)
 	validateDDNS(c, v)
+	validateNotify(c, v)
 }
 
 // apiSysScheduleCheck: POST {cron, action, target} → {ok, error, cron (normalized)} so the schedule

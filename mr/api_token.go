@@ -70,7 +70,7 @@ var tokenActions = map[string]string{
 	"wifi.status": "read", "wifi.stations": "read", "clients": "read", "wifi.survey": "read",
 	"dns.stats": "read", "dns.leases": "read", "fw.stats": "read", "proxy.status": "read",
 	"mon.now": "read", "mon.history": "read", "mon.devices": "read", "mon.conns": "read", "mon.procs": "read", "mon.dmesg": "read",
-	"sys.services": "read", "sys.time": "read",
+	"sys.services": "read", "sys.time": "read", "sys.doctor": "read", "sys.events": "read",
 	// operate: runtime actions that do not change the config
 	"net.redial": "operate", "wifi.kick": "operate", "wifi.scan": "operate", "dns.release": "operate",
 	"proxy.delay": "operate", "proxy.select": "operate", "service": "operate", "diag": "operate",
@@ -80,9 +80,10 @@ var tokenActions = map[string]string{
 
 // tokenLocked: config a token can never change. The token list (a token could extend itself), SSH
 // (keys and password logins are a root shell: the password, secrets, firmware), sysctl
-// (kernel.core_pattern and kernel.modprobe run programs as root), the guard (the owner's baselines).
+// (kernel.core_pattern and kernel.modprobe run programs as root), the guard (the owner's baselines),
+// notify (an agent must not silence or redirect the owner's alerts).
 // Local file paths and items that reference secrets: see lockedChanges.
-var tokenLocked = []string{"api", "services.ssh", "system.sysctl", "guard"}
+var tokenLocked = []string{"api", "services.ssh", "system.sysctl", "guard", "notify"}
 
 // variables so tests can point them elsewhere
 var (
@@ -271,6 +272,7 @@ func tokenAuth(r apiReq, c *Config, now time.Time) (*APIToken, *apiResp) {
 		switch {
 		case locked > 0:
 			logf("api: %d bad tokens / passwords from %s: locked for %s", loginMax, r.remote, locked)
+			eventLoginLock(r.remote, "API tokens / passwords", locked)
 		case fails == 1:
 			logf("api: bad token from %s", r.remote)
 		}
