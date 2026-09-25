@@ -9,6 +9,8 @@
 #  4. authorized_keys: managed block, and every line this host already had is still there
 #  5. every rendered conf.d file parses as sh and sets what the init scripts read
 #  6. `mr sys backup`: archive content, secrets only on request and never the web UI password hash
+#  7. sysctl, real kernel (network namespace): after the rendered file is loaded no netdev sends ICMP
+#     redirects — neither one that existed before nor one created after
 set -eu
 : "${OUT:?}" "${ROOT:?}"
 MR=$OUT/mr-host
@@ -127,3 +129,23 @@ grep -q '^pppoe_password:' "$B/etc/mini-router/secrets.yaml" || fail "backup -se
 if grep -q webui_password "$B/etc/mini-router/secrets.yaml"; then fail "backup contains the web UI password hash"; fi
 rm -f /etc/mini-router/proxy/leak.domains
 ok "backup"
+
+# 7. ICMP redirects off everywhere: the kernel sends one when conf.all OR conf.<dev> is set. Writing
+#    conf.default copies the value to every netdev whose own value was never written (the boot run:
+#    nothing else sets send_redirects); a netdev created later starts from default. (One created after
+#    an earlier write to default also inherits the "written" flag and misses later changes of default.)
+NS=mrcisys$$
+ip netns add "$NS"
+# shellcheck disable=SC2064
+trap "ip netns del $NS 2>/dev/null" EXIT
+ip -n "$NS" link add early type dummy
+grep '^net\.ipv4\.conf\.' "$H/etc/sysctl.d/90-mini-router.conf" > "$OUT/sys-netns.conf"
+ip netns exec "$NS" sysctl -q -p "$OUT/sys-netns.conf"
+ip -n "$NS" link add late type dummy
+for d in all default early late; do
+	v=$(ip netns exec "$NS" cat "/proc/sys/net/ipv4/conf/$d/send_redirects")
+	[ "$v" = 0 ] || fail "send_redirects on $d is $v after loading the rendered sysctl file"
+done
+ip netns del "$NS"
+trap - EXIT
+ok "no ICMP redirects on netdevs created before or after the sysctl file"
