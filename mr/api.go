@@ -496,7 +496,7 @@ func apiApply(r apiReq) apiResp {
 		confirmSecs = 120
 	}
 	os.MkdirAll(RunDir, 0700)
-	if err := writeAtomic(CandidateYAML, append([]byte("# written by the web UI\n"), y...), 0600); err != nil {
+	if err := writeAtomic(CandidateYAML, uiConfigYAML(y, c), 0600); err != nil {
 		return errResp(500, "%v", err)
 	}
 	if err := writeSecrets(CandidateSec, sec); err != nil {
