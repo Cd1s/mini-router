@@ -146,20 +146,57 @@ function registerPage(group, id, title, order, render){
 }
 function pageTitle(id){ const p=NAVREG.find(x=>x.id===id); return p?p.title:""; }
 
+// per-browser conveniences (collapsed nav groups, theme): storage may be unavailable, never required
+function pref(k, v){ try { if (v===undefined) return localStorage.getItem("mr."+k); if (v===null) localStorage.removeItem("mr."+k); else localStorage.setItem("mr."+k, v); } catch(e){} return null; }
+const THEMES = [["", "◐", "跟随系统"], ["light", "☀", "浅色"], ["dark", "☾", "深色"]];
+function applyTheme(t){ const r=document.documentElement; if (!r) return; if (t) r.dataset.theme = t; else delete r.dataset.theme; }
+applyTheme(pref("theme")||"");
+function themeBtn(){
+  const b = h("button",{class:"hbtn",type:"button"});
+  const draw = ()=>{ const t=THEMES.find(x=>x[0]===(pref("theme")||""))||THEMES[0]; b.textContent=t[1]; b.title="主题："+t[2]; };
+  b.onclick = ()=>{ const i=THEMES.findIndex(x=>x[0]===(pref("theme")||"")); const t=THEMES[(i+1)%THEMES.length]; pref("theme", t[0]||null); applyTheme(t[0]); draw(); toast("主题："+t[2]); };
+  draw(); return b;
+}
+const logo = size=>h("img",{src:"logo.svg",alt:"",width:size,height:size});
+
+// mobile drawer: the ☰ button opens it; the backdrop, ✕, Esc and every link close it
+function setNav(open){
+  $("#nav").classList.toggle("open", open);
+  $("#scrim").classList.toggle("on", open);
+  document.body.classList.toggle("navopen", open);
+}
+window.addEventListener("keydown", e=>{ if (e.key==="Escape" && $("#nav")?.classList.contains("open")) setNav(false); });
+// nav groups collapse on tap; the set of collapsed groups is remembered
+function shutGroups(){ return (pref("navshut")||"").split(",").filter(Boolean); }
+function setGroup(g, shut){
+  const list = shutGroups().filter(x=>x!==g); if (shut) list.push(g);
+  pref("navshut", list.length ? list.join(",") : null);
+  document.querySelectorAll(`nav [data-g="${g}"]`).forEach(e=>e.classList.toggle("shut", shut));
+}
+
 function renderShell(){
-  const nav = h("nav",{id:"nav"}, h("div",{class:"brand"},"mini-router", h("small",{id:"brandsub"}, "")),
+  const shut = shutGroups();
+  const group = (g, label, links)=>[
+    h("div",{class:"grp"+(shut.includes(g)?" shut":""), "data-g":g, role:"button", tabindex:0,
+      onclick:()=>setGroup(g, !shutGroups().includes(g)),
+      onkeydown:e=>{ if (e.key==="Enter"||e.key===" "){ e.preventDefault(); setGroup(g, !shutGroups().includes(g)); } }},
+      h("span",{},label)),
+    h("div",{class:"items"+(shut.includes(g)?" shut":""), "data-g":g}, links)];
+  const nav = h("nav",{id:"nav"},
+    h("div",{class:"brand"}, logo(30), h("div",{class:"n"},"Mini-Router", h("small",{id:"brandsub"}, "")),
+      h("button",{class:"x",type:"button",title:"关闭菜单","aria-label":"关闭菜单",onclick:()=>setNav(false)},"×")),
     NAV_GROUPS.map(([g,label])=>{
       const items = NAVREG.filter(p=>p.group===g).sort((a,b)=>a.order-b.order);
-      return items.length ? [h("div",{class:"grp"},label), items.map(p=>h("a",{href:"#"+p.id, "data-p":p.id},p.title))] : null;
+      return items.length ? group(g, label, items.map(p=>h("a",{href:"#"+p.id, "data-p":p.id, onclick:()=>setNav(false)},p.title))) : null;
     }),
-    h("div",{class:"grp"},"账户"),
-    h("a",{href:"#", onclick:async e=>{e.preventDefault(); await api("logout",{}).catch(()=>{}); location.reload();}},"退出登录"));
+    group("account", "账户", h("a",{href:"#", onclick:async e=>{e.preventDefault(); await api("logout",{}).catch(()=>{}); location.reload();}},"退出登录")));
   const pend = h("div",{id:"pending"},
     h("span",{class:"t"}, h("b",{},"有未应用的更改。"), h("span",{class:"mut"}," 应用前会先校验并显示变更计划，应用后需在倒计时内确认，否则自动回滚。")),
     h("button",{class:"btn",onclick:async()=>{ await loadConfig(); show(S.page); toast("已放弃更改"); }},"放弃"),
     h("button",{class:"btn p",onclick:startApply},"保存并应用"));
-  $("#root").replaceChildren(h("div",{id:"app"}, nav,
-    h("main",{}, h("header",{}, h("button",{id:"menu",onclick:()=>$("#nav").classList.toggle("open")},"☰"), h("h1",{id:"title"},""), h("span",{class:"meta",id:"hmeta"},"")),
+  $("#root").replaceChildren(h("div",{id:"app"}, nav, h("div",{id:"scrim",onclick:()=>setNav(false)}),
+    h("main",{}, h("header",{}, h("button",{id:"menu",type:"button","aria-label":"菜单",onclick:()=>setNav(!$("#nav").classList.contains("open"))},"☰"),
+        h("h1",{id:"title"},""), h("span",{class:"meta",id:"hmeta"},""), themeBtn()),
       h("div",{class:"content",id:"page"}))), pend);
   touch();
 }
@@ -170,7 +207,9 @@ function show(p){
   S.page=p;
   clearInterval(S.timer); S.timer=null;
   document.querySelectorAll("nav a[data-p]").forEach(a=>a.classList.toggle("act", a.dataset.p===p));
-  $("#nav").classList.remove("open");
+  const g = (NAVREG.find(x=>x.id===p)||{}).group;
+  if (g && shutGroups().includes(g)) setGroup(g, false); // never hide the page you are on
+  setNav(false);
   $("#title").textContent = pageTitle(p);
   const pg = $("#page"); pg.replaceChildren(h("div",{class:"mut"},"加载中…"));
   Promise.resolve().then(()=>PAGES[p]()).then(el=>{ if(S.page===p) pg.replaceChildren(el); })
@@ -324,7 +363,7 @@ function renderLogin(setup){
   const go = async e=>{ e.preventDefault(); err.textContent="";
     if (setup && p.value!==p2.value) return err.textContent="两次输入不一致";
     try { await api(setup?"setup":"login",{password:p.value}); boot(); } catch(x){ err.textContent=x.message; } };
-  $("#root").replaceChildren(h("div",{class:"login"}, h("form",{onsubmit:go}, card(setup?"设置管理员密码":"登录 mini-router",
+  $("#root").replaceChildren(h("div",{class:"login"}, h("div",{class:"logo"}, logo(40), "Mini-Router"), h("form",{onsubmit:go}, card(setup?"设置管理员密码":"登录",
     [setup?h("div",{class:"mut"},"首次使用：请设置管理员密码（至少 8 位，只能在内网设置）。"):null, p, p2, err, h("button",{class:"btn p",type:"submit"}, setup?"设置并登录":"登录")]))));
   p.focus();
 }

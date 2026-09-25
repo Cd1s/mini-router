@@ -35,6 +35,15 @@ const usage = `mr — mini-router control
   mr hook ppp-up|ppp-down ... called by pppd
   mr hook dhcpcd              called by dhcpcd
   mr version
+
+module commands (JSON output unless noted):
+  mr wan status | health      WAN state; multi-WAN health
+  mr wifi status | stations | survey | scan PHY | kick MAC [IFNAME]
+  mr dns stats | leases | query NAME [TYPE] [SERVER] | release IP [MAC] | querylog on [MIN]|off|show
+  mr proxy status | check | delay [NODE|GROUP] | select GROUP NODE | parse [--secrets] [FILE] | fetch [--secrets] URL|SUB
+  mr mon now | history | devices | conns [JSON] | procs | dmesg
+  mr sys run ACTION [TARGET] | backup [-secrets] FILE|- | restore [-confirm SECS] FILE | keys
+  mr led                      set the status LEDs from the WAN state
 `
 
 func main() {

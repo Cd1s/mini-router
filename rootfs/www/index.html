@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mini-router</title>
+<title>Mini-Router</title>
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<meta name="theme-color" content="#1f2733">
 <style>
 :root{
   --bg:#f3f5f8;--panel:#fff;--side:#1f2733;--side-fg:#c9d1dc;--side-act:#2f6fed;--fg:#1d2430;--mut:#6b7686;
@@ -20,9 +22,17 @@ html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-sys
 a{color:var(--acc)}
 #app{display:flex;min-height:100vh}
 nav{width:212px;flex:none;background:var(--side);color:var(--side-fg);position:sticky;top:0;height:100vh;overflow:auto}
-nav .brand{padding:16px 18px;font-weight:700;color:#fff;font-size:16px;letter-spacing:.3px}
-nav .brand small{display:block;font-weight:400;color:var(--side-fg);font-size:12px;opacity:.8}
-nav .grp{padding:10px 18px 4px;font-size:11px;text-transform:uppercase;letter-spacing:.8px;opacity:.55}
+nav .brand{display:flex;align-items:center;gap:10px;padding:14px 14px 14px 16px;font-weight:700;color:#fff;font-size:16px;letter-spacing:.2px}
+nav .brand img{width:30px;height:30px;flex:none}
+nav .brand .n{flex:1;min-width:0}
+nav .brand small{display:block;font-weight:400;color:var(--side-fg);font-size:12px;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+nav .x{display:none;background:none;border:0;color:var(--side-fg);font-size:22px;line-height:1;padding:4px 6px;cursor:pointer}
+nav .grp{display:flex;align-items:center;padding:10px 14px 4px 18px;font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--side-fg);opacity:.6;cursor:pointer;user-select:none;-webkit-user-select:none}
+nav .grp:hover{opacity:.9}
+nav .grp span{flex:1}
+nav .grp:after{content:"";width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);margin:0 4px 3px 0;transition:transform .15s}
+nav .grp.shut:after{transform:rotate(-45deg);margin-bottom:0}
+nav .items.shut{display:none}
 nav a{display:block;padding:8px 18px 8px 22px;color:var(--side-fg);text-decoration:none;border-left:3px solid transparent}
 nav a:hover{background:rgba(255,255,255,.05)}
 nav a.act{color:#fff;background:rgba(47,111,237,.18);border-left-color:var(--side-act)}
@@ -30,7 +40,10 @@ main{flex:1;min-width:0}
 header{display:flex;align-items:center;gap:12px;padding:12px 24px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
 header h1{font-size:17px;margin:0;flex:1}
 header .meta{color:var(--mut);font-size:12px}
-#menu{display:none;background:none;border:0;font-size:20px;color:var(--fg);cursor:pointer}
+#menu{display:none;background:none;border:0;font-size:20px;color:var(--fg);cursor:pointer;padding:2px 6px;margin-left:-6px}
+.hbtn{background:none;border:1px solid var(--line);border-radius:5px;color:var(--mut);font-size:14px;line-height:1;padding:5px 7px;cursor:pointer}
+.hbtn:hover{color:var(--fg);border-color:var(--acc)}
+#scrim{display:none}
 .content{padding:20px 24px 90px;max-width:1280px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);margin-bottom:18px}
 .card>h2{font-size:14px;margin:0;padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
@@ -96,12 +109,20 @@ pre{background:var(--code);border:1px solid var(--line);border-radius:6px;paddin
 .modal .box .f{padding:12px 18px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
 .err{color:var(--bad)}
 .login{max-width:360px;margin:12vh auto;padding:0 16px}
+.login .logo{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:18px;font-size:20px;font-weight:700}
+.login .logo img{width:40px;height:40px}
 .login .card .body{display:grid;gap:12px}
 .toast{position:fixed;top:14px;right:14px;background:var(--side);color:#fff;padding:9px 14px;border-radius:6px;z-index:30;box-shadow:0 4px 12px rgba(0,0,0,.2)}
 @media (max-width:820px){
-  nav{position:fixed;left:-240px;z-index:15;transition:left .15s}
-  nav.open{left:0}
+  nav{position:fixed;left:-280px;width:260px;z-index:15;transition:left .18s ease;overscroll-behavior:contain}
+  nav.open{left:0;box-shadow:4px 0 24px rgba(0,0,0,.35)}
+  nav .x{display:block}
+  nav a{padding:11px 18px 11px 22px}
+  nav .grp{padding:14px 14px 6px 18px}
+  #scrim.on{display:block;position:fixed;inset:0;background:rgba(10,14,20,.45);z-index:14}
+  body.navopen{overflow:hidden}
   #menu{display:block}
+  header .meta{display:none}
   #pending{left:0;padding:10px 16px}
   header{padding:10px 16px}
   .content{padding:16px 16px 100px}
