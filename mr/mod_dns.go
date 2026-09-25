@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -425,7 +424,7 @@ func splitFile(name string) (string, bool) {
 	return "", false
 }
 
-var domainRe = regexp.MustCompile(`^[A-Za-z0-9_*.-]+$`)
+var domainRe = lazyRegexp(`^[A-Za-z0-9_*.-]+$`)
 
 func apiDNSList(r apiReq) apiResp {
 	var in struct {
@@ -525,16 +524,16 @@ func init() {
 	})
 }
 
-var reDomain = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,62}\.)*[A-Za-z0-9-]{1,63}$`)
+var reDomain = lazyRegexp(`^[A-Za-z0-9]([A-Za-z0-9-]{0,62}\.)*[A-Za-z0-9-]{1,63}$`)
 
 var (
-	reLease    = regexp.MustCompile(`^([0-9]+[smhdw]?|infinite)$`)
-	reLeaseV6  = regexp.MustCompile(`^([0-9]+[smhdw]|infinite)$`) // unit required: a bare number would read as a prefix length
-	reHostname = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,62})$`)
-	reOptTok   = regexp.MustCompile(`^[A-Za-z0-9._:/@+=-]{1,200}$`)
+	reLease    = lazyRegexp(`^([0-9]+[smhdw]?|infinite)$`)
+	reLeaseV6  = lazyRegexp(`^([0-9]+[smhdw]|infinite)$`) // unit required: a bare number would read as a prefix length
+	reHostname = lazyRegexp(`^[A-Za-z0-9]([A-Za-z0-9-]{0,62})$`)
+	reOptTok   = lazyRegexp(`^[A-Za-z0-9._:/@+=-]{1,200}$`)
 	// dhcp-host fields dnsmasq reads as a lease time or a keyword instead of a host name
 	// ("12345", "5m", "infinite", "ignore" = never answer this MAC)
-	reNotHostname = regexp.MustCompile(`^([0-9]+[smhdwSMHDW]?|infinite|ignore)$`)
+	reNotHostname = lazyRegexp(`^([0-9]+[smhdwSMHDW]?|infinite|ignore)$`)
 )
 
 // dhcpOptReserved: option numbers the router sets itself or that belong to the DHCP protocol.

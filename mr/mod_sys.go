@@ -10,7 +10,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -302,8 +301,8 @@ func init() {
 }
 
 var (
-	reHostnameSys = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,62})$`)
-	reSysctlKey   = regexp.MustCompile(`^[a-z0-9_]+(\.[A-Za-z0-9_-]+)+$`)
+	reHostnameSys = lazyRegexp(`^[A-Za-z0-9]([A-Za-z0-9-]{0,62})$`)
+	reSysctlKey   = lazyRegexp(`^[a-z0-9_]+(\.[A-Za-z0-9_-]+)+$`)
 )
 
 func sysValidate(c *Config, v *Validator) {

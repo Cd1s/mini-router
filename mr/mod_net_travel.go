@@ -32,7 +32,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -136,8 +135,8 @@ func classify(code int, bodyLen int) string {
 }
 
 var (
-	reMetaRefresh = regexp.MustCompile(`(?is)<meta[^>]+http-equiv\s*=\s*["']?refresh["']?[^>]*?content\s*=\s*["'][^"';]*;\s*url\s*=\s*['"]?([^"'>\s]+)`)
-	reJSLocation  = regexp.MustCompile(`(?i)\blocation(?:\.href)?\s*=\s*["']([^"']+)["']|\blocation\.(?:replace|assign)\(\s*["']([^"']+)["']`)
+	reMetaRefresh = lazyRegexp(`(?is)<meta[^>]+http-equiv\s*=\s*["']?refresh["']?[^>]*?content\s*=\s*["'][^"';]*;\s*url\s*=\s*['"]?([^"'>\s]+)`)
+	reJSLocation  = lazyRegexp(`(?i)\blocation(?:\.href)?\s*=\s*["']([^"']+)["']|\blocation\.(?:replace|assign)\(\s*["']([^"']+)["']`)
 )
 
 // portalFromBody finds the login page of a portal that answers 200 with a page that moves on by

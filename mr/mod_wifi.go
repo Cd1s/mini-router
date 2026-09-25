@@ -8,7 +8,6 @@ package main
 import (
 	"encoding/hex"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -484,12 +483,12 @@ func init() {
 }
 
 var (
-	reHTM = regexp.MustCompile(`^HE(20|40|80|160)$`)
+	reHTM = lazyRegexp(`^HE(20|40|80|160)$`)
 	// generic profile: 802.11n / ac / ax
-	reHTMGeneric = regexp.MustCompile(`^(HT(20|40)|VHT(20|40|80|160)|HE(20|40|80|160))$`)
-	reChans      = regexp.MustCompile(`^[0-9]+(-[0-9]+)?( [0-9]+(-[0-9]+)?)*$`)
-	reCC         = regexp.MustCompile(`^[A-Z]{2}$`)
-	rePhy        = regexp.MustCompile(`^phy[0-9]$`)
+	reHTMGeneric = lazyRegexp(`^(HT(20|40)|VHT(20|40|80|160)|HE(20|40|80|160))$`)
+	reChans      = lazyRegexp(`^[0-9]+(-[0-9]+)?( [0-9]+(-[0-9]+)?)*$`)
+	reCC         = lazyRegexp(`^[A-Z]{2}$`)
+	rePhy        = lazyRegexp(`^phy[0-9]$`)
 )
 
 // saeSuffixes are the parts hostapd's sae_password parser splits off; a passphrase containing one

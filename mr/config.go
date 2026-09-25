@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -80,13 +79,13 @@ const RulePref = 5300
 
 // shared validation helpers
 var (
-	reName  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,14}$`)
-	reLabel = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,40}$`) // free-form rule names
-	reMAC   = regexp.MustCompile(`^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$`)
-	rePort  = regexp.MustCompile(`^[0-9]{1,5}(-[0-9]{1,5})?$`)
-	reMark  = regexp.MustCompile(`^0x[0-9a-fA-F]{1,8}$`)
-	reDev   = regexp.MustCompile(`^[A-Za-z0-9_.@-]{1,15}$`)
-	rePath  = regexp.MustCompile(`^/[A-Za-z0-9_./-]{1,200}$`)
+	reName  = lazyRegexp(`^[a-z][a-z0-9_-]{0,14}$`)
+	reLabel = lazyRegexp(`^[A-Za-z0-9_.-]{1,40}$`) // free-form rule names
+	reMAC   = lazyRegexp(`^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$`)
+	rePort  = lazyRegexp(`^[0-9]{1,5}(-[0-9]{1,5})?$`)
+	reMark  = lazyRegexp(`^0x[0-9a-fA-F]{1,8}$`)
+	reDev   = lazyRegexp(`^[A-Za-z0-9_.@-]{1,15}$`)
+	rePath  = lazyRegexp(`^/[A-Za-z0-9_./-]{1,200}$`)
 )
 
 // Validate returns every problem found, so one run shows all mistakes.

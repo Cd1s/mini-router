@@ -13,7 +13,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -315,7 +314,7 @@ func netDefaults(c *Config) {
 	}
 }
 
-var reNetName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,9}$`)
+var reNetName = lazyRegexp(`^[a-z][a-z0-9_-]{0,9}$`)
 
 // validDev: a netdev name that is safe as a shell word / command argument.
 func validDev(s string) bool { return reDev.MatchString(s) && !strings.HasPrefix(s, "-") }

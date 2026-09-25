@@ -40,6 +40,14 @@ ls -la "$ROOT/out/mr"
 go build -o "$OUT/mr-host" .
 cd "$ROOT"
 
+step "init cost of mr (every CGI request and hook pays it)"
+b=$(GODEBUG=inittrace=1 "$OUT/mr-host" version 2>&1 | sed -n 's/^init main .* clock, \([0-9]*\) bytes.*/\1/p')
+if [ -z "$b" ] || [ "$b" -ge 262144 ]; then
+	echo "FAIL: init of package main allocates ${b:-?} bytes (budget 256 KiB) — a package-level regexp.MustCompile? use lazyRegexp"
+	exit 1
+fi
+echo "ok: init main allocates $b bytes"
+
 step "shellcheck"
 files=$(grep -rlE '^#!/(bin/sh|sbin/openrc-run)' rootfs build tools)
 # openrc-run scripts are POSIX sh with openrc-provided variables/functions

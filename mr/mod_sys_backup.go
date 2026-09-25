@@ -32,7 +32,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,7 +59,7 @@ var (
 	backupListDirs = map[string]string{"dns": "/etc/mini-router/dns", "proxy": "/etc/mini-router/proxy"}
 )
 
-var reBackupFile = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+var reBackupFile = lazyRegexp(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
 func validListName(n string) bool { return reBackupFile.MatchString(n) && !strings.Contains(n, "..") }
 

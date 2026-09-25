@@ -16,7 +16,6 @@ package main
 import (
 	"fmt"
 	"net"
-	"regexp"
 	"strings"
 )
 
@@ -166,7 +165,7 @@ func fwDefaults(c *Config) {
 const fwMaxList = 64
 
 var (
-	reFwTime = regexp.MustCompile(`^([01][0-9]|2[0-3]):([0-5][0-9])-([01][0-9]|2[0-4]):([0-5][0-9])$`)
+	reFwTime = lazyRegexp(`^([01][0-9]|2[0-3]):([0-5][0-9])-([01][0-9]|2[0-4]):([0-5][0-9])$`)
 	fwDayNum = map[string]int{"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6}
 )
 

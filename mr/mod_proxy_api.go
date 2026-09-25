@@ -13,7 +13,6 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -133,7 +132,7 @@ func dnsParseA(m []byte, id uint16) (netip.Addr, int, error) {
 
 // ---- sing-box clash API client (loopback only) ----
 
-var reProxyAPISecret = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+var reProxyAPISecret = lazyRegexp(`^[A-Za-z0-9_-]{1,128}$`)
 
 func proxyAPISecret() string {
 	var v struct {
@@ -530,7 +529,7 @@ func apiProxySelect(r apiReq) apiResp {
 
 // List files the web UI may create/edit: /etc/mini-router/proxy/<name>.domains|.cidrs only
 // (rules may reference any absolute path, but the UI can never read or write outside this directory).
-var reProxyListFile = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}\.(domains|cidrs)$`)
+var reProxyListFile = lazyRegexp(`^[A-Za-z0-9_-]{1,40}\.(domains|cidrs)$`)
 
 type proxyListInfo struct {
 	Name    string `json:"name"`
