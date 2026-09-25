@@ -56,7 +56,10 @@ change is accepted (the apply ends without `--confirm`, or `mr confirm`) the mar
 `/etc/mini-router/confirm-pending` (JSON: snapshot, state applying | pending | reverting, deadline, origin) is on
 flash: if the router goes down in that window, the next boot restores the snapshot before any service starts
 (`mr rollback --boot` from mr-preinit, or the `mr-unconfirmed` boot service on Alpine installs) and fixes the
-runlevel links (`linkRunlevel`).
+runlevel links (`linkRunlevel`). While the marker exists every other change is refused (`mr apply`, the web UI's
+apply, `mr sys restore`: `pendingBlocks`; the marker is claimed with O_EXCL, so two applies started at once cannot
+both run); `mr confirm` keeps the change, `mr rollback` (no argument) undoes it. Every API answer to a logged-in
+client carries `X-MR-Pending: {"state","via","left"}`, and the web UI shows a banner with 保留 / 回滚 on every page.
 
 Cross-module helpers: `c.LANNets()`, `c.BridgeFor(network)`, `c.LANBridges()`, `c.WANIfnames()`,
 `c.WANTable(name)`, `c.WANByName(name)`, `c.Secret(key)`.

@@ -79,7 +79,11 @@ def base_config():
     return cfg
 
 
-STATE = {"cfg": base_config(), "job": None, "pending": False}
+STATE = {"cfg": base_config(), "job": None, "pending": False, "deadline": 0}
+
+
+def pending_view():
+    return {"state": "pending", "via": "web UI", "left": max(0, STATE["deadline"] - int(time.time()))}
 
 
 def plan_for(new):
@@ -102,6 +106,8 @@ class H(http.server.SimpleHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(b)))
+        if STATE["pending"]:  # like `mr api`: every answer carries the change waiting for confirmation
+            self.send_header("X-MR-Pending", json.dumps(pending_view()))
         self.end_headers()
         self.wfile.write(b)
 
@@ -127,13 +133,17 @@ class H(http.server.SimpleHTTPRequestHandler):
             p, empty = plan_for(body.get("config", {}))
             return self.send_json({"errors": [], "plan": p, "empty": empty})
         if a == "apply":
+            if STATE["pending"]:
+                return self.send_json({"error": "a change (web UI) is waiting for confirmation", "pending": pending_view()}, 409)
             STATE["cfg"]["config"] = body.get("config", {})
             now = int(time.time())
             STATE["job"] = {"state": "ok", "started": now, "ended": now, "output": "plan:\n  (mock)\napplied (snapshot mock.tar.gz)\n", "confirm": body.get("confirm", 120)}
             STATE["pending"] = True
+            STATE["deadline"] = now + body.get("confirm", 120)
             return self.send_json({"ok": True, "confirm": body.get("confirm", 120)})
         if a == "job":
-            return self.send_json({"job": STATE["job"] or {}, "confirm_pending": STATE["pending"]})
+            return self.send_json({"job": STATE["job"] or {}, "confirm_pending": STATE["pending"],
+                                   "pending": pending_view() if STATE["pending"] else None})
         if a in ("confirm", "revert"):
             STATE["pending"] = False
             return self.send_json({"ok": True})

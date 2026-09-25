@@ -31,16 +31,52 @@ async function api(action, body){
   const opt = {method: body===undefined?"GET":"POST", headers:{"X-MR":"1"}, credentials:"same-origin"};
   if (body!==undefined){ opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
   const r = await fetch("/cgi-bin/api?a="+action, opt);
+  pendingFrom(r);
   let j = {}; try { j = await r.json(); } catch(e) {}
   if (r.status===401 && action!=="login"){ S.auth=false; renderLogin(); throw new Error("未登录"); }
   if (!r.ok) { const e=new Error(j.error || (j.errors||[]).join("; ") || ("HTTP "+r.status)); e.data=j; throw e; }
   return j;
 }
 
+// ---------- change waiting for confirmation ----------
+// Every API answer carries X-MR-Pending while a change is not accepted yet — made here, in another
+// browser, by `mr apply` over SSH or by an agent. The banner on top of every page shows it with
+// 保留 / 回滚; quiet pages ask every 10 s. No other change can be applied until it is settled.
+const VIA = {"web UI":"网页", "mr apply":"命令行 mr apply", "restore":"恢复备份"};
+function pendingFrom(r){
+  let p = null;
+  const v = r.headers.get("X-MR-Pending");
+  if (v) try { p = JSON.parse(v); } catch(e) {}
+  S.apiAt = Date.now();
+  if (JSON.stringify(p) !== JSON.stringify(S.pend)){ S.pend = p; S.pendAt = Date.now(); drawPending(); }
+}
+function pendLeft(){ return Math.max(0, (S.pend.left||0) - Math.floor((Date.now()-S.pendAt)/1000)); }
+function drawPending(){
+  const b = $("#pbanner"); if (!b) return;
+  const p = S.pend;
+  b.classList.toggle("on", !!p);
+  if (!p) return b.replaceChildren();
+  const via = VIA[p.via] || p.via || "未知来源";
+  if (p.state==="applying") return b.replaceChildren(h("span",{class:"t"}, h("b",{},"正在应用更改"), "（"+via+"）…"));
+  if (p.state==="reverting") return b.replaceChildren(h("span",{class:"t"}, h("b",{},"正在回滚更改"), "（"+via+"）…"));
+  const reload = async ()=>{ if (!dirty()){ await loadConfig(); show(S.page); } };
+  b.replaceChildren(
+    h("span",{class:"t"}, h("b",{},"有待确认的更改"), "（"+via+"）", p.state==="pending" ? [h("span",{id:"pleft"}, pendLeft()+" 秒"), "后自动回滚。"] : "。", h("span",{class:"mut"}," 确认前不能应用新的更改。")),
+    h("button",{class:"btn sm d",onclick:async()=>{ if(!confirm("回滚这次更改（"+via+"）？")) return;
+      try { await api("revert",{}); toast("正在回滚…",4000); setTimeout(()=>api("job").then(reload).catch(()=>{}), 5000); } catch(e){ toast(e.message,4000); } }},"回滚"),
+    h("button",{class:"btn sm p",onclick:async()=>{
+      try { await api("confirm",{}); toast("已保留新配置"); await api("job"); await reload(); } catch(e){ toast(e.message,4000); } }},"保留"));
+}
+setInterval(()=>{
+  if (!S.auth) return;
+  const e = $("#pleft"); if (e && S.pend) e.textContent = pendLeft()+" 秒";
+  if (Date.now()-(S.apiAt||0) > 10000) api("job").catch(()=>{});
+}, 1000);
+
 // ---------- state ----------
 const S = {
   auth:false, page:"overview", cfg:null, orig:"", secrets:{}, secretsSet:{},
-  status:null, prevWan:{}, net:null, timer:null, tabs:{},
+  status:null, prevWan:{}, net:null, timer:null, tabs:{}, pend:null, pendAt:0, apiAt:0,
 };
 const dirty = () => S.cfg && (JSON.stringify(S.cfg)!==S.orig || Object.keys(S.secrets).length>0);
 function touch(){ const p=$("#pending"); if(!p) return; p.classList.toggle("on", dirty()); }
@@ -195,10 +231,10 @@ function renderShell(){
     h("button",{class:"btn",onclick:async()=>{ await loadConfig(); show(S.page); toast("已放弃更改"); }},"放弃"),
     h("button",{class:"btn p",onclick:startApply},"保存并应用"));
   $("#root").replaceChildren(h("div",{id:"app"}, nav, h("div",{id:"scrim",onclick:()=>setNav(false)}),
-    h("main",{}, h("header",{}, h("button",{id:"menu",type:"button","aria-label":"菜单",onclick:()=>setNav(!$("#nav").classList.contains("open"))},"☰"),
-        h("h1",{id:"title"},""), h("span",{class:"meta",id:"hmeta"},""), themeBtn()),
+    h("main",{}, h("div",{class:"top"}, h("header",{}, h("button",{id:"menu",type:"button","aria-label":"菜单",onclick:()=>setNav(!$("#nav").classList.contains("open"))},"☰"),
+        h("h1",{id:"title"},""), h("span",{class:"meta",id:"hmeta"},""), themeBtn()), h("div",{id:"pbanner",role:"status"})),
       h("div",{class:"content",id:"page"}))), pend);
-  touch();
+  touch(); drawPending();
 }
 window.addEventListener("hashchange", ()=>show(location.hash.slice(1)||"overview"));
 
@@ -348,6 +384,7 @@ function modal(title, body, buttons){
   document.body.append(m); return m;
 }
 async function startApply(){
+  if (S.pend) return toast("有待确认的更改：请先在页面顶部点“保留”或“回滚”，再应用新的更改。", 5000);
   const payload = {config:S.cfg, secrets:S.secrets};
   let v;
   try { v = await api("validate", payload); } catch(e){ return toast("校验请求失败："+e.message, 5000); }
@@ -361,7 +398,9 @@ async function startApply(){
 }
 async function doApply(payload){
   try { await api("apply", Object.assign({confirm:120}, payload)); } catch(e){
-    return modal("应用失败", h("pre",{}, e.data&&e.data.errors?e.data.errors.join("\n"):e.message), [h("button",{class:"btn p",onclick:ev=>ev.target.closest(".modal").remove()},"关闭")]);
+    const msg = e.data&&e.data.pending ? "有待确认的更改（"+(VIA[e.data.pending.via]||e.data.pending.via)+"）：请先在页面顶部点“保留”或“回滚”。"
+      : e.data&&e.data.errors ? e.data.errors.join("\n") : e.message;
+    return modal("应用失败", h("pre",{}, msg), [h("button",{class:"btn p",onclick:ev=>ev.target.closest(".modal").remove()},"关闭")]);
   }
   const log = h("pre",{},"");
   const stateEl = h("div",{style:"margin-bottom:8px"},"正在应用…");

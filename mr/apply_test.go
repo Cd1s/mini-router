@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // confirmEnv points the history, the pending marker, the change log and OpenRC's directories into a
@@ -165,12 +167,12 @@ func TestBootRollbackBadMarker(t *testing.T) {
 
 func TestConfirmStates(t *testing.T) {
 	confirmEnv(t)
-	if err := confirm(); err != nil {
-		t.Fatalf("nothing pending: %v", err)
+	if ok, err := confirm(); ok || err != nil {
+		t.Fatalf("nothing pending: %v %v", ok, err)
 	}
 	for _, st := range []string{stateApplying, stateReverting} {
 		setPending(pendingApply{Snapshot: "/x.tar.gz", State: st})
-		if err := confirm(); err == nil {
+		if _, err := confirm(); err == nil {
 			t.Errorf("confirm accepted while %s", st)
 		}
 		if _, err := os.Stat(ConfirmFile); err != nil {
@@ -178,8 +180,8 @@ func TestConfirmStates(t *testing.T) {
 		}
 	}
 	setPending(pendingApply{Snapshot: "/x.tar.gz", State: statePending, Deadline: 1})
-	if err := confirm(); err != nil {
-		t.Fatal(err)
+	if ok, err := confirm(); !ok || err != nil {
+		t.Fatal(ok, err)
 	}
 	if _, err := os.Stat(ConfirmFile); !errors.Is(err, fs.ErrNotExist) {
 		t.Error("confirm kept the marker")
@@ -209,5 +211,107 @@ func TestTimerLeavesOtherChangesAlone(t *testing.T) {
 	clearPending("/h/mine.tar.gz")
 	if _, err := readPending(); !errors.Is(err, fs.ErrNotExist) {
 		t.Error("clearPending kept the marker")
+	}
+}
+
+// While a change waits for confirmation (or is still applying / being rolled back), every other way
+// to change the config is refused — applied on top, the first change would be kept by a rollback of
+// the second without anyone confirming it (Cd1s/mini-router#10). Keeping or rolling it back lifts it.
+func TestApplyRefusedWhilePending(t *testing.T) {
+	confirmEnv(t)
+	c := testConfig(t)
+	if err := pendingBlocks(); err != nil {
+		t.Fatalf("nothing pending: %v", err)
+	}
+	for _, p := range []pendingApply{
+		{Snapshot: "/h/a.tar.gz", State: statePending, Deadline: time.Now().Unix() + 90, Via: "web UI"},
+		{Snapshot: "/h/a.tar.gz", State: stateApplying, Via: "mr apply"},
+		{Snapshot: "/h/a.tar.gz", State: stateReverting, Via: "restore"},
+	} {
+		setPending(p)
+		err := applyWith(c, false, 120, nil, "mr apply")
+		if err == nil || !strings.Contains(err.Error(), p.Via) {
+			t.Errorf("%s: second apply not refused: %v", p.State, err)
+		}
+		if p.State == statePending && !strings.Contains(err.Error(), "waiting for confirmation (rolled back in 9") {
+			t.Errorf("message: %v", err)
+		}
+		r := apiApply(apiReq{method: "POST", body: []byte(`{"config":{}}`)})
+		if r.status != 409 || r.body.(map[string]any)["pending"].(map[string]any)["state"] != p.State {
+			t.Errorf("%s: web UI apply: %d %v", p.State, r.status, r.body)
+		}
+		if _, _, err := startRestore(&restoreSet{}, 120); err == nil {
+			t.Errorf("%s: restore not refused", p.State)
+		}
+		if got, _ := readPending(); got == nil || *got != p {
+			t.Errorf("%s: the refused apply touched the marker: %+v", p.State, got)
+		}
+		if ents, _ := os.ReadDir(HistoryDir); len(ents) != 0 {
+			t.Errorf("%s: the refused apply took a snapshot", p.State)
+		}
+	}
+	// a dry run (mr apply --dry-run) still shows the plan
+	if err := applyWith(c, true, 0, nil, "mr apply"); err != nil {
+		t.Errorf("dry run refused: %v", err)
+	}
+	setPending(pendingApply{Snapshot: "/h/a.tar.gz", State: statePending, Deadline: 1})
+	if _, err := confirm(); err != nil || pendingBlocks() != nil {
+		t.Errorf("confirmed, still blocked: %v %v", err, pendingBlocks())
+	}
+	os.WriteFile(ConfirmFile, []byte("{garbage"), 0600)
+	if err := pendingBlocks(); err == nil || !strings.Contains(err.Error(), "mr confirm") {
+		t.Errorf("unreadable marker: %v", err)
+	}
+	if v := pendingView(); v["state"] != "unknown" {
+		t.Errorf("view of an unreadable marker: %v", v)
+	}
+}
+
+// Two applies started at the same moment: exactly one claims the marker.
+func TestClaimPendingIsExclusive(t *testing.T) {
+	confirmEnv(t)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	won := 0
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if claimPending(pendingApply{Snapshot: "/h/a.tar.gz", State: stateApplying, Via: "mr apply"}) == nil {
+				mu.Lock()
+				won++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if won != 1 {
+		t.Fatalf("%d applies claimed the marker", won)
+	}
+	if v := pendingView(); v["state"] != stateApplying || v["via"] != "mr apply" {
+		t.Errorf("view: %v", v)
+	}
+	clearPending("")
+	if pendingView() != nil || claimPending(pendingApply{Snapshot: "/h/b.tar.gz", State: stateApplying}) != nil {
+		t.Error("marker not free after the change was settled")
+	}
+}
+
+// A rollback of the pending change that cannot restore leaves it pending (not stuck in reverting,
+// which would refuse every later apply and `mr confirm`).
+func TestFailedRollbackKeepsChangePending(t *testing.T) {
+	_, cfg, sec := confirmEnv(t)
+	for _, st := range []string{statePending, stateReverting} {
+		setPending(pendingApply{Snapshot: filepath.Join(HistoryDir, "gone.tar.gz"), State: st, Deadline: 1, Via: "web UI"})
+		if err := rollbackCommand(nil, cfg, sec); err == nil {
+			t.Fatalf("%s: rollback of a missing snapshot succeeded", st)
+		}
+		if p, err := readPending(); err != nil || p.State != statePending {
+			t.Errorf("%s: after the failed rollback: %+v %v", st, p, err)
+		}
+	}
+	setPending(pendingApply{Snapshot: "/h/a.tar.gz", State: stateApplying})
+	if err := rollbackCommand(nil, cfg, sec); err == nil || !strings.Contains(err.Error(), "is running") {
+		t.Errorf("rollback during an apply: %v", err)
 	}
 }

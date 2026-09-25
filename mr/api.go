@@ -14,8 +14,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -74,6 +76,12 @@ func runAPI() error {
 	if resp.cookie != "" {
 		fmt.Printf("Set-Cookie: %s\r\n", resp.cookie)
 	}
+	// every page shows a change waiting for confirmation, whoever made it (web UI, SSH, an agent)
+	if v := pendingView(); v != nil && validSession(r.cookie) {
+		if b, err := json.Marshal(v); err == nil {
+			fmt.Printf("X-MR-Pending: %s\r\n", b)
+		}
+	}
 	if resp.status != 0 && resp.status != 200 {
 		fmt.Printf("Status: %d\r\n", resp.status)
 	}
@@ -121,9 +129,18 @@ func handleAPI(r apiReq) apiResp {
 	case "job":
 		return apiJob()
 	case "confirm":
-		confirm()
-		return apiResp{body: map[string]any{"ok": true}}
+		if r.method != "POST" {
+			return errResp(405, "POST required")
+		}
+		ok, err := confirm()
+		if err != nil {
+			return errResp(409, "%v", err)
+		}
+		return apiResp{body: map[string]any{"ok": true, "confirmed": ok}}
 	case "revert": // undo a pending --confirm apply right now instead of waiting for the timer
+		if r.method != "POST" {
+			return errResp(405, "POST required")
+		}
 		p, err := readPending()
 		if err != nil || p.State != statePending {
 			return errResp(409, "nothing pending")
@@ -465,6 +482,9 @@ func apiApply(r apiReq) apiResp {
 	if j := readJob(); j.State == "running" {
 		return errResp(409, "another apply is running")
 	}
+	if err := pendingBlocks(); err != nil {
+		return apiResp{status: 409, body: map[string]any{"error": err.Error(), "pending": pendingView()}}
+	}
 	c, y, sec, confirmSecs, err := candidate(r)
 	if err != nil {
 		return errResp(400, "%v", err)
@@ -530,7 +550,19 @@ func apiJob() apiResp {
 		}
 	}
 	_, pending := os.Stat(ConfirmFile)
-	return apiResp{body: map[string]any{"job": j, "confirm_pending": pending == nil}}
+	return apiResp{body: map[string]any{"job": j, "confirm_pending": pending == nil, "pending": pendingView()}}
+}
+
+// pendingView is what the web UI shows of the pending marker (nil: nothing pending).
+func pendingView() map[string]any {
+	p, err := readPending()
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return map[string]any{"state": "unknown", "via": "", "left": 0}
+	}
+	return map[string]any{"state": p.State, "via": p.Via, "left": p.left()}
 }
 
 func apiHistory() apiResp {
