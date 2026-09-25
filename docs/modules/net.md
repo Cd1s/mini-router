@@ -17,7 +17,8 @@ net 负责路由器的"线"：物理网口和网桥、LAN 与额外网络（访�
 | WAN VLAN | `<device>.<vlan>` 802.1Q 子接口（PPPoE / DHCP / 静态都可以跑在上面） | 无 |
 | 多线路主备 | `mr-wanmon`：busybox sh 循环，每条线路各自 ping 检测目标；故障线路默认路由 metric +10000，策略路由表去掉默认路由 | sh + 每轮几次 ping |
 | 负载均衡 | nft `numgen random` 按权重给新 IPv4 连接打 WAN 标记，connmark 保持 | 无（nftables 规则） |
-| 策略路由 | 按 MAC / 源地址 / 目标地址（可组合）指定出口 WAN | 无 |
+| 策略路由 | 按 MAC / 源地址 / 目标地址 / 域名（可组合）指定出口 WAN | 无 |
+| 按域名选 WAN | dnsmasq 的 `nftset=` 把上游应答里的地址写进 nft 集合，新连接的第一个包按集合打 WAN 标记，之后照常 flowtable / PPE（见下文“按域名”） | 无（dnsmasq 本来就在；集合按需占内核内存） |
 | VLAN 网络 | 额外网络可带 802.1Q 标签：`<port>.<vlan>` 加入该网络的网桥，端口原来的用途不变 | 无 |
 | 接口状态 | `net.ports` 读 `/sys/class/net`：链路、速率、双工、计数、错误；网页显示前面板网口 + 接口表（实时速率） | 无 |
 | WAN DNS | 钩子维护 `/run/mini-router/resolv.conf`（在线线路的 DNS，健康的优先），dnsmasq 读它 | 无 |
@@ -39,7 +40,7 @@ ip rule
 - nft `mark_pre`（prerouting，优先级 mangle+1）里的顺序：
   1. 从 WAN 进来的新连接：`ct mark` = 该 WAN 的标记（端口转发的回包、入站连接从原线路回去）；
   2. 从 LAN 侧各网桥进来且 `ct mark != 0`：恢复 `meta mark` 并 `return`（已有连接保持线路）；
-  3. 策略路由：只标记新连接；
+  3. 策略路由：只标记新连接（按域名的规则匹配 `@pr_<序号>_4` / `@pr_<序号>_6`）；同一连接符合几条时以后面那条为准；
   4. 负载均衡（`mode: balance`）：只处理 `meta mark 0x0` 的新 IPv4 连接，目标不是 LAN 侧网络。
 - 健康检测判定某线路故障时：该线路 main 表默认路由 metric +10000（下一条接管，但检测 ping 仍能从它出去），
   它的 WAN 表删掉默认路由（策略路由 / 均衡 / 恢复标记的流量落到 main = 最好的健康线路），并从均衡表里拿掉。恢复后全部还原。
@@ -49,6 +50,9 @@ ip rule
 **给其它模块（proxy）的约定**：net 用到的 fwmark 是各 WAN 的标记（默认 0x200-0x2ff，策略路由可指定，例如家里的 0x102）。
 net 的 `mark_pre` 链在 mangle+1；LAN 侧有 `ct mark != 0` 的包会被恢复成 `meta mark` 并跳出该链，所以透明代理最好用自己的链
 （优先级 mangle 或更早）、用不和上面冲突的标记位，不要改写这些连接的 `ct mark`；负载均衡不会碰已经有 `meta mark` 的包。
+按域名的策略路由：net 通过 `Module.Dnsmasq` 给主 dnsmasq 加 `nftset=` 行，proxy 的 mr-proxy-dns 用同一个函数
+（`policyNftsetLines`，去掉被代理的域名）；集合 `pr_<序号>_4/6` 在 `defs`，fw 的 `fwLoad` 重载时带回学到的地址
+（`policyDomainCarry`）。
 
 ## router.yaml 参考
 
@@ -148,9 +152,45 @@ policy_routes:
     mac: 02:98:67:90:62:47
     dst: 198.51.100.0/24      # 目标地址或网段
     via: iptv
+  - name: video-via-wan2
+    domains: [video.example, "*.cdn.example.net"]   # 按域名：写 example.com = 它和它的所有子域名
+    domains_file: /etc/mini-router/video.domains    # 可选：更多域名，一行一个，# 注释
+    via: wan2
 ```
 
-只写 MAC 时 IPv4 + IPv6 都生效；写了 src / dst 就只管那个地址族。访问 LAN 侧网络、tailscale、静态路由的流量不受影响。
+没写 src / dst 时 IPv4 + IPv6 都生效；写了 src / dst 就只管那个地址族。访问 LAN 侧网络、tailscale、静态路由的流量不受影响。
+
+#### 按域名（domains / domains_file）
+
+域名条件和 MAC / src / dst 一样可以组合（同时满足），也可以单独用。做法（不新增任何进程）：
+
+1. 两个 dnsmasq（主 dnsmasq 和代理用的 mr-proxy-dns）都生成
+   `nftset=/域名/.../4#inet#mr#pr_<序号>_4,6#inet#mr#pr_<序号>_6`：上游应答里这些域名（及子域名）的 A / AAAA
+   地址被写进 nft 集合 `@pr_<序号>_4` / `@pr_<序号>_6`（序号 = 这条策略在 `policy_routes` 里的位置，从 0 起）。
+2. `mark_pre` 里这条策略的规则只看新连接：目标在集合里 → 打上该 WAN 的标记（和其它策略路由一样，connmark 保持）。
+   之后整条连接照常进 flowtable，由 PPE / WED 硬件转发——只有第一个包查一次集合。
+3. 集合元素默认 1 天过期（dnsmasq 只加不删）；每有一个新连接用到某个地址，它的计时就重新开始，所以正在用的地址
+   不会因为 DNS 缓存还指向它而掉出集合。每个集合最多 16384 个地址。
+4. 防火墙每次重载（apply、PPPoE 重拨、多线路切换）都会重建整张表：学到的地址在同一次加载里带回新集合，
+   剩余时间不变。**域名列表变了**（集合注释里记着列表的哈希）就不带回：删掉的域名不会因为还有人在用就一直走那条线。
+
+注意：
+
+- dnsmasq 只在向上游查询时写集合，从自己缓存回答时不写。刚改完域名 apply 时 dnsmasq 会重启（缓存清空），
+  但设备自己缓存的旧应答在过期前仍会走默认线路；已经建立的连接保持原来的线路。
+- 设备绕过路由器 DNS 时不生效：写死的 DNS 服务器可以用 `dns.redirect` 收回来，浏览器 / 系统的 DoH、DoT 不行。
+- CDN 上几个网站共用 IP 时会一起被分流（这类方案的共性）。
+- dnsmasq 用“最具体”的那行匹配：子域名在别的策略里也列了时，那一行同时写入上级域名策略的集合，
+  所以每个集合都含它所有域名及子域名的地址；同一连接符合几条策略时以后面那条为准。
+- 被代理的域名（proxy 规则）在 mr-proxy-dns 里不写集合：那边的应答是 fake-ip，本来就进代理。
+- IPv6：和只写 MAC 的规则一样，AAAA 地址的连接也按标记走该 WAN 的表；设备的源地址是另一条线路的前缀时，
+  运营商多半会丢掉这个包（支持 Happy Eyeballs 的应用会退回 IPv4）。目标 WAN 没有 IPv6 时，它的表里没有 IPv6
+  默认路由，IPv6 连接照常从有 IPv6 的线路走（能通，但不分流）。
+- `domains_file` 改了要 `mr apply` 才生效（dnsmasq 的配置在 apply 时生成）；读不到、有不是域名的行或一个域名都没有时
+  apply 报错（报行号，不回显内容）。最多 16 条策略带域名（多的域名放进同一条）。
+- 需要带 nftset 的 dnsmasq：M3 镜像装的是 `dnsmasq-dnssec-nftset`；普通 Alpine 安装由 `install.sh` 装它
+  （手动：`apk add dnsmasq-dnssec-nftset`，会替换 `dnsmasq`）。不带 nftset 的 dnsmasq 拒绝这份配置，apply 自动回滚。
+- 看学到了什么：`nft list set inet mr pr_0_4`（地址和剩余时间）。
 
 ### static_routes / multicast（不变）
 
@@ -203,7 +243,8 @@ multicast: {igmp_snooping: false, igmp_proxy: false, upstream: wan2}
   负载均衡时给每条线路设权重，0 = 只做备用。
 - **网络 → LAN 与网络**：改 LAN 地址和 LAN 口；“+ 添加网络”建访客 / IoT 网络：选区域（访客只能上网）、给它整个网口，
   或者填 VLAN ID 并勾选带标签端口（接支持 VLAN 的交换机 / AP）；DHCP 地址池也在这里。WiFi 的 SSID 在“无线设置”里选网络。
-- **路由 → 策略路由**：按 MAC / 源地址 / 目标地址指定出口 WAN；下面是实时 `ip rule`（v4 / v6）。
+- **路由 → 策略路由**：按 MAC / 源地址 / 目标地址 / 域名指定出口 WAN（域名一栏填 `example.com, video.example`，
+  含子域名；更长的列表用 router.yaml 的 `domains_file`）；下面是实时 `ip rule`（v4 / v6）。
 - **路由 → 静态路由**：静态路由表格 + 当前所有路由表。
 - 所有修改点底部“保存并应用”：先校验、显示变更计划，应用后 120 秒内点“保留”，否则自动回滚。
 
@@ -232,3 +273,4 @@ multicast: {igmp_snooping: false, igmp_proxy: false, upstream: wan2}
 - 负载均衡只对 IPv4；单个连接不会被拆到两条线路上（下载一个大文件只用一条线）。
 - 去掉的 VLAN 子接口 / 网桥在重启前不会自动删除（不影响转发，只是残留一个空接口）。
 - DHCP WAN 忽略 option 121（无类静态路由）和服务器下发的 MTU。
+- 按域名选 WAN 依赖设备用路由器的 DNS（DoH / DoT 绕过它），第一次连接前要先有一次上游应答；细节见上文“按域名”。

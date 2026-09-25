@@ -398,6 +398,14 @@ func proxyDnsmasq(c *Config, sets []proxyRuleSet) (string, error) {
 	for _, x := range all {
 		w("server=/%s/127.0.0.1#%d", x, p.dnsPort())
 	}
+	// policy_routes domains (net module): proxied clients resolve here, so this instance fills the
+	// same nft sets as the main dnsmasq; proxied names get fake-ip answers and are left out
+	if lines := policyNftsetLines(c, func(d string) bool { return proxyCovered(d, proxied) }); len(lines) > 0 {
+		w("# policy_routes domains -> nft sets (route by domain)")
+		for _, l := range lines {
+			w("%s", l)
+		}
+	}
 	return b.String(), nil
 }
 

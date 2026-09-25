@@ -51,6 +51,8 @@ LAN 设备 ──TCP/UDP 到 fake-ip 或规则 CIDR──▶ nft proxy_pre (mang
   代价：被代理设备的 DNS 依赖 mr-proxy-dns（supervise-daemon 2 秒内自动拉起；配置由 CI 和每次 apply 的 Verify 验证）。
 - **dns.split 冲突**：如果一个域名既在 dns.split 列表（例如发往 stubby DoT）又在代理规则里，dnsmasq 会把两个上游
   混用。mr-proxy-dns 里自动去掉被代理域名（及其子域名）对应的 split 行，代理优先。
+- **按域名选 WAN**（net 模块的 `policy_routes[].domains`）：被代理的设备用 mr-proxy-dns 解析，所以它也生成同样的
+  `nftset=` 行，把真实应答写进 WAN 集合；被代理的域名（及其子域名）不写（应答是 fake-ip，本来就进代理）。
 - **只接管匹配的流量**：`proxy_pre` 链只看 LAN 区网桥进来、目标在 `@proxy4/@proxy6`（fake-ip 段 + 规则 CIDR，
   已合并去重）、并且是连接**发起方向**（`ct direction original`）的 TCP/UDP；已建立的 TCP 连接用 `socket transparent`
   快速命中。其它包一条规则就 `return`。端口转发 / IPv6 入站连接的对端即使落在代理 CIDR 里，LAN 主机的回包也照常转发，

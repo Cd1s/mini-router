@@ -677,12 +677,15 @@ func fwLoad(c *Config) error {
 	if len(fwAccessEntries(c)) > 0 {
 		elems = fwAccessScript(c, fwLearned())
 	}
+	// the addresses dnsmasq learned for policy_routes domains (net module): dnsmasq only adds them when
+	// it asks upstream, so a reload that emptied the sets would send cached names to the wrong WAN
+	elems += policyDomainCarry(c)
 	loaded := false
 	if elems != "" {
 		if out, err := runStdin(rules+elems, "nft", "-f", "-"); err == nil {
 			loaded = true
 		} else {
-			logf("fw: loading with the learned access sets failed, loading without: %v %s", err, strings.TrimSpace(out))
+			logf("fw: loading with the learned set addresses failed, loading without: %v %s", err, strings.TrimSpace(out))
 		}
 	}
 	if !loaded {
@@ -692,7 +695,7 @@ func fwLoad(c *Config) error {
 		}
 		if elems != "" {
 			if out, err := runStdin(elems, "nft", "-f", "-"); err != nil {
-				logf("fw: access sets: %v %s", err, strings.TrimSpace(out)) // best effort: the sets also learn from traffic
+				logf("fw: learned set addresses: %v %s", err, strings.TrimSpace(out)) // best effort: the sets also learn from traffic
 			}
 		}
 	}

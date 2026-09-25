@@ -54,6 +54,9 @@ lan: {bridge: br-lan, ports: [lan1, lan2], ipv4: 192.168.1.1/24, ipv6_ra: true}
 wan:
   - {name: wan, device: wan, proto: pppoe, username: "…", password_secret: pppoe_password, ipv6: true, ipv6_pd: true}
   - {name: wan2, device: eth2, proto: dhcp}           # proto: pppoe | dhcp | static (ipv4:, gateway:, dns:)
+policy_routes:                                        # pick the WAN for NEW connections (selectors are ANDed)
+  - {name: nas, mac: "aa:bb:cc:dd:ee:02", via: wan2}  # mac / src / dst / domains
+  - {name: video, domains: [video.example], via: wan2}  # + subdomains; dnsmasq fills nft set pr_<index>_4/_6
 dhcp:
   start: 100
   end: 249
@@ -99,6 +102,9 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
 - **WiFi**: change country / channel / width / power only when the user asks for exact values. Check with
   `mr wifi status` (`iw dev` shows channel, width, txpower); clients: `mr wifi stations`; kick: `mr wifi kick MAC`.
 - **WAN**: `mr wan status`; redial one line at a time: `rc-service mr-pppoe.<name> restart`.
+- **A website via another WAN**: `policy_routes: [{name: …, domains: [site.example], via: wan2}]` (or `domains_file:`).
+  Connections stay hardware-offloaded. Check: `mr dns query site.example`, then `nft list set inet mr pr_<index>_4`
+  lists the learned addresses. Devices using DoH / their own DNS are not covered (`dns.redirect` catches plain DNS).
 - **Services** (`services:` in router.yaml, e.g. `ssh`, `tailscale`, `stubby`): enabling adds them to the runlevel on apply.
 
 ## Status and diagnostics (read-only)

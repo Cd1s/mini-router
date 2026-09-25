@@ -85,7 +85,8 @@ Alpine 3.24 aarch64（docker arm64 + binfmt）：
 - 软件包（`out/m3/packages.txt`）：M2 的集合（busybox + OpenRC、dropbear、iproute2（minimal + ss，不带 tc）、iw、
   nftables、ppp-pppoe、dhcpcd、dnsmasq、hostapd、wireless-regdb、stubby、curl、jq、inotify-tools、busybox-extras）
   + `mtd-utils-ubi`、`kexec-tools`、`ssl_client`（busybox wget 的 https）、`igmpproxy`。不装 `alpine-base`
-  里的 alpine-conf（setup 脚本）和 busybox-suid。
+  里的 alpine-conf（setup 脚本）和 busybox-suid。dnsmasq 用 `dnsmasq-dnssec-nftset` 这个构建（按域名选 WAN 的
+  `nftset=`，net 模块）：libnftables / gmp 本来就随 nftables 装了，只多一个 nettle（约 0.65 MB 安装大小）；DNSSEC 编进去但不开。
 - `hostapd` 换成 `build/hostapd` 的 noscan 版二进制（构建时检查）；`/usr/bin/sing-box`（上面那份）；`/usr/sbin/mr`；
   `EXTRA_BINS`（默认 M2 的 `bins.tgz`：tailscaled 1.102.4 精简版、lucky 3.0、dstatus-agent，属主改为 root）。
 - 仓库 `rootfs/` 的所有文件（全部 init 脚本：mr-network、mr-firewall、mr-pppoe、mr-udhcpc、mr-wanmon、mr-hostapd、

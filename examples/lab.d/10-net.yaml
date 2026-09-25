@@ -93,6 +93,14 @@ policy_routes:
     mac: 02:98:67:90:62:47
     dst: 198.51.100.0/24
     via: iptv
+  - name: video-via-wan2        # by domain: dnsmasq puts the answers into @pr_4_4 / @pr_4_6 (nftset)
+    domains: [streaming.example.net]
+    domains_file: @REPO@/mr/testdata/policy.domains
+    via: wan2
+  - name: docs-v4-via-isp3      # by domain + source (IPv4 only); a subdomain of video.example
+    src: 192.168.1.80
+    domains: [docs.video.example]
+    via: isp3
 
 static_routes:
   - {name: lab-v4, target: 10.9.0.0/16, via: 192.168.1.50}
