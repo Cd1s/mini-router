@@ -28,6 +28,15 @@ overlayfs 的只读下层，构建写到 `mini-router-platform/owrt-upper`，原
 +CONFIG_NF_SOCKET_IPV6=m  +CONFIG_NF_TPROXY_IPV6=m
 ```
 
+**内核补丁**：`build/m3/patches/99*-*.patch` 放进 OpenWrt 的 `target/linux/mediatek/patches-6.18/`（overlay 上层），
+补丁集变了内核会重新解压、全量重编；构建后脚本核对每个补丁都已应用。
+
+- `990-spi-mt65xx-ignore-stale-interrupt.patch`：kexec 瞬间还在进行的 SPI-NAND 操作结束后留下一个待处理中断，
+  新内核的 spi-mt65xx 一注册中断就进线程处理函数，`cur_transfer` 为 NULL → 空指针 oops
+  （`mtk_spi_interrupt_thread → mtk_spi_can_dma`，0.13 s，第二次从闪存 sysupgrade 时遇到）。补丁在 probe 里
+  读一次状态寄存器清掉它，并把没有进行中传输的中断当作已处理。sysupgrade 在 kexec 前也会冻结所有进程、
+  关网口、sync。
+
 vmlinux 里唯一的变化是这些选项导出的 `udp4_lib_lookup` / `udp6_lib_lookup`（System.map 对比）；`Image`
 大小与闪存版相同。其余需求原来就有：`nft_log` + `nf_log_syslog`（kmod-nft-core / kmod-nf-log）、
 `nft_redir`、`nft_numgen`、8021q（内置）、TCP BBR（`CONFIG_TCP_CONG_BBR=m`，`tcp_bbr.ko`，sysctl 选中时内核自动加载）。

@@ -79,7 +79,7 @@ Validation (the security boundary — everything below ends up in a file, a cron
 | `/etc/conf.d/sysctl` | `rc_after="modules"` | — (boot) |
 | `/etc/localtime` | TZif v2 built from `system.timezone` (see below) | restart `syslog` (timestamps) |
 | `/etc/profile.d/tz.sh` | `export TZ=…` for login shells | — |
-| `/etc/conf.d/ntpd` | `NTPD_OPTS="-N -p … [-l]"` | restart `ntpd` |
+| `/etc/conf.d/ntpd` | `NTPD_OPTS="-N -S /usr/libexec/mr/clock-save -p … [-l]"`（`clock-save` 每小时最多一次把已同步的时间记到闪存，开机时 `mr-clock` 从它恢复——板子没有 RTC） | restart `ntpd` |
 | `/etc/conf.d/dropbear` (ssh on) | `DROPBEAR_OPTS="-p [addr:]port … -K 300 [-s -g]"` | restart `dropbear` |
 | `/etc/conf.d/tailscale` (on) | `TS_PORT=` (read by `/etc/init.d/tailscale`) | restart `tailscale` |
 | `/etc/conf.d/mr-panel` (on) | `PANEL_ADDR=` main LAN address (was a `sed` on router.yaml) | restart `mr-panel` |

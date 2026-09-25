@@ -106,7 +106,9 @@ cat /etc/router-changes.log | tail -3
 
 以后的升级：`sysupgrade -T` 校验后 `setsid /usr/libexec/mr/sysupgrade -y --sha256 … /tmp/<镜像> > /tmp/su.log 2>&1 &`。
 从闪存运行时它会 kexec 进新内核里的安装程序，路由器断网约 2 分钟；kexec 之前失败不会改动闪存，新内核卡住看门狗会
-30 秒后回到旧系统。
+30 秒后回到旧系统。设置（rootfs_data）保留；新镜像第一次启动时，`mr-preinit` 删掉 overlay 里那些新镜像自带的程序文件
+（`/bin /sbin /lib /usr /www /etc/init.d` 下、镜像里也有的路径，比如手工部署的 `mr` 或旧版脚本），让新版本生效；
+`/etc` 其余的配置、镜像里没有的文件都不动。
 
 ## 4. 回滚到原来的 OpenWrt（写回备份的卷）
 

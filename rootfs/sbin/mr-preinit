@@ -4,7 +4,8 @@
 #
 #   flash      The kernel mounts the squashfs "rootfs" UBI volume (ubiblock) read-only as / and runs
 #              /sbin/init. We mount UBIFS <ubi>:rootfs_data at /overlay (UBIFS formats an empty volume
-#              itself; tmpfs if that fails), stack overlayfs (lower = squashfs, upper =
+#              itself; tmpfs if that fails; the first boot of a new image drops the overlay's copies of
+#              programs the image ships, prune_upper), stack overlayfs (lower = squashfs, upper =
 #              /overlay/mr/upper) on /mnt, pivot_root into it (the squashfs stays at /rom) and exec
 #              busybox init (OpenRC). /overlay/.mr-factory-reset (written by factory-reset) wipes
 #              rootfs_data first.
@@ -122,6 +123,29 @@ rootfs | tmpfs | ramfs)
 	;;
 esac
 
+# prune_upper UPPER: the first boot of a new image (its MR_VERSION differs from the one recorded on
+# rootfs_data): program files it ships replace the copies left in the overlay (fixes deployed by hand,
+# files of the old image), else they would shadow the new ones forever. Only regular files and symlinks
+# under /bin /sbin /lib /usr /www /etc/init.d whose path the new squashfs (still / here) also has;
+# configuration (the rest of /etc), files the image does not ship and deletions (whiteouts) are kept.
+prune_upper() {
+	new=$(grep -m1 '^MR_VERSION=' /etc/mini-router-release 2> /dev/null)
+	[ -n "$new" ] || return 0
+	[ "$(cat /overlay/mr/image 2> /dev/null)" = "$new" ] && return 0
+	n=0
+	if [ -d "$1" ]; then
+		while IFS= read -r f; do
+			[ -n "$f" ] || continue
+			[ -e "/$f" ] || [ -L "/$f" ] || continue
+			rm -f "$1/$f" && n=$((n + 1))
+		done << EOF
+$(cd "$1" && find bin sbin lib usr www etc/init.d \( -type f -o -type l \) 2> /dev/null)
+EOF
+	fi
+	mkdir -p /overlay/mr && echo "$new" > /overlay/mr/image
+	log "new image (${new#MR_VERSION=}): $n program file(s) in the overlay replaced by the image's"
+}
+
 # ---- flash: squashfs root + UBIFS overlay ----
 data=
 vol=$(ubi_vol rootfs_data) && ubi=${vol%_*}
@@ -136,6 +160,7 @@ if [ -n "$vol" ] && mount -t ubifs -o noatime "$ubi:rootfs_data" /overlay 2>/dev
 			rm -rf /overlay/mr /overlay/.mr-factory-reset # the wipe failed: at least drop the settings
 		fi
 	fi
+	[ -z "$data" ] || prune_upper /overlay/mr/upper
 fi
 if [ -z "$data" ]; then
 	log "rootfs_data unavailable: settings live in RAM and are lost at reboot"

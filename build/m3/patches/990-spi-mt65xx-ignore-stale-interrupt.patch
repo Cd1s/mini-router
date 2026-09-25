@@ -1,0 +1,38 @@
+From: mini-router
+Subject: spi: mt65xx: ignore an interrupt left pending by the previous kernel
+
+A SPI-NAND operation still in flight when the running kernel kexecs into a new one completes after
+the handover: its interrupt is pending when the new kernel requests the IRQ, the hard handler wakes
+the thread (use_spimem is false before the first spi-mem op) and mtk_spi_interrupt_thread
+dereferences cur_transfer, which is NULL:
+
+  Unable to handle kernel read at virtual address 0000000000000010
+  pc : mtk_spi_can_dma+0x0/0x30
+  lr : mtk_spi_interrupt_thread+0x30/0x2ec
+
+Clear the status while the clocks are on in probe, and treat an interrupt without a current transfer
+as handled.
+
+--- a/drivers/spi/spi-mt65xx.c
++++ b/drivers/spi/spi-mt65xx.c
+@@ -885,6 +885,10 @@ static irqreturn_t mtk_spi_interrupt(int
+ 		return IRQ_HANDLED;
+ 	}
+ 
++	/* no transfer in progress: stale, e.g. left over from before a kexec */
++	if (!mdata->cur_transfer)
++		return IRQ_HANDLED;
++
+ 	return IRQ_WAKE_THREAD;
+ }
+ 
+@@ -1304,6 +1308,9 @@ static int mtk_spi_probe(struct platform
+ 
+ 	mdata->spi_clk_hz = clk_get_rate(mdata->spi_clk);
+ 
++	/* reading the status clears an interrupt left pending by the previous (kexec) kernel */
++	readl(mdata->base + SPI_STATUS0_REG);
++
+ 	if (mdata->dev_comp->no_need_unprepare) {
+ 		clk_disable(mdata->spi_clk);
+ 		clk_disable(mdata->spi_hclk);

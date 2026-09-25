@@ -397,6 +397,10 @@ kexec_installer() {
 	rc-service --ifstarted mr-hostapd stop > /dev/null 2>&1
 	sleep 1
 	for m in mt7915e mt76_connac_lib mt76; do rmmod "$m" 2> /dev/null; done
+	# the same for ethernet / PPE: every interface down stops their DMA
+	for n in /sys/class/net/*; do
+		[ "${n##*/}" = lo ] || ip link set "${n##*/}" down 2> /dev/null
+	done
 	# Hand the hardware watchdog to the new kernel: stop the watchdog service (magic close), then
 	# re-arm MT7986 TOPRGU directly (30 s, single-stage reset) so the kernel does not stop it at
 	# kexec; the new kernel keeps it fed until the installer opens it. A hang reboots the old flash.
@@ -408,7 +412,13 @@ kexec_installer() {
 			/usr/libexec/mr/devmem 0x1001c000 0x22000001 > /dev/null ||
 			msg "could not arm the hardware watchdog"
 	fi
+	# no flash I/O across the handover: a SPI-NAND operation that completes after it leaves an interrupt
+	# pending that crashed the new kernel's SPI driver (it is patched now, build/m3/patches). Freeze every
+	# process (not init, not this shell), flush, give the last operations time to finish. If kexec -e
+	# fails from here, the armed watchdog reboots the old system.
+	kill -STOP -1 2> /dev/null
 	sync
+	sleep 2
 	kexec -e
 	die "kexec -e returned"
 }

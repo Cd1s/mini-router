@@ -36,6 +36,15 @@ cp "$LOWER/$KDIR/$FIT" "$O/kernel.itb.flashed-build"
 # new outputs only (whiteouts in the upper layer; the lower bin/ stays as it is)
 rm -rf "$T/bin/targets"
 
+# mini-router kernel patches (build/m3/patches/99*-*.patch) on top of OpenWrt's; a changed set changes
+# the kernel's prepare stamp, so the kernel is re-extracted and rebuilt with them
+P=$T/target/linux/mediatek/patches-6.18
+REPO=$(cd "$(dirname "$0")/../.." && pwd)
+for f in "$P"/99*-*.patch; do
+	[ ! -e "$f" ] || [ -e "$REPO/build/m3/patches/${f##*/}" ] || rm -f "$f"
+done
+cp "$REPO"/build/m3/patches/99*-*.patch "$P/"
+
 cat > "$T/mr-platform-build.sh" << EOF
 set -eu
 cd /w
@@ -52,6 +61,10 @@ if ! docker run --rm -v "$T:/w" owrt-builder bash /w/mr-platform-build.sh > "$W/
 	exit 1
 fi
 tail -3 "$W/logs/kernel-build.log"
+for f in "$REPO"/build/m3/patches/99*-*.patch; do # every mini-router patch made it into the build tree
+	grep -q "^+" "$f" && (cd "$T/$KDIR/linux-$KVER" && patch -R -p1 --dry-run -s < "$f" > /dev/null) ||
+		{ echo "patch ${f##*/} is not applied in the build tree"; exit 1; }
+done
 
 cp "$T/.config" "$O/openwrt.config"
 cp "$T/$KDIR/linux-$KVER/.config" "$O/kernel.config"

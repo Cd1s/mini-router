@@ -19,6 +19,8 @@
 #   P4 the next boot after factory-reset: settings gone, factory config back
 #   P5 invalid provisioned router.yaml: factory files and the marker kept
 #   P6 no rootfs_data volume: tmpfs overlay
+#   P7 first boot of a new image: overlay copies of its programs dropped, config and other files kept;
+#      the next boot of the same image leaves the overlay alone
 set -eu
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 W=${MR_PLATFORM_DIR:-/root/build/mini-router-platform}
@@ -330,6 +332,33 @@ PROBE
 	has P6 '^ok$' writable
 	has P6 'rootfs_data unavailable' kmsg
 	echo "P6 ok"
+
+	say "P7: first boot of a new image prunes the overlay's copies of its programs"
+	fresh
+	datamount
+	u=/data/mr/upper
+	mkdir -p $u/usr/sbin $u/usr/bin $u/etc/init.d $u/etc/mini-router /data/mr/work
+	echo old > $u/usr/sbin/mr                                 # shipped: dropped
+	echo old > $u/etc/init.d/mr-panel                         # shipped: dropped
+	ln -s mr-pppoe $u/etc/init.d/mr-pppoe.wan                 # not shipped: kept
+	echo mine > $u/usr/bin/selftest-tool                      # not shipped: kept
+	cp /t/sq-tree/etc/mini-router/router.yaml $u/etc/mini-router/router.yaml # config: kept
+	echo 'MR_VERSION=older' > /data/mr/image
+	umount /data
+	boot P7
+	has P7 'program file(s) in the overlay replaced' kmsg
+	datamount
+	[ ! -e $u/usr/sbin/mr ] && [ ! -e $u/etc/init.d/mr-panel ] || fail "P7: shipped programs not dropped"
+	[ -L $u/etc/init.d/mr-pppoe.wan ] && [ -f $u/usr/bin/selftest-tool ] && [ -f $u/etc/mini-router/router.yaml ] ||
+		fail "P7: dropped more than the image's programs"
+	grep -qxF "$(cat /data/mr/image)" /t/sq-tree/etc/mini-router-release || fail "P7: image version not recorded"
+	echo old > $u/usr/sbin/mr # deployed by hand after the upgrade: survives the next boot
+	umount /data
+	boot P7b # (its kmsg window starts 1 s early and may hold P7's lines: check the files)
+	datamount
+	[ -f $u/usr/sbin/mr ] || fail "P7b: pruned again with the same image (a later fix was dropped)"
+	umount /data
+	echo "P7 ok ($(grep -o '[0-9]* program file(s)' /t/res/P7/kmsg | head -n 1))"
 
 	ubidetach -d $UBINUM
 	umount /ram/proc-real /ram/sys /ram/dev /ram/o /ram/repo /ram/t 2> /dev/null || :

@@ -252,7 +252,7 @@ func validNTPServer(s string) bool {
 }
 
 func renderNtpd(c *Config) string {
-	var args []string
+	args := []string{"-S /usr/libexec/mr/clock-save"} // saves the synced time for the next boot (no RTC)
 	for _, s := range c.System.NTP {
 		args = append(args, "-p "+s)
 	}
