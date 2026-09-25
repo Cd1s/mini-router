@@ -6,7 +6,7 @@ ones the config switches on (ntpd always, crond only while schedules exist).
 
 | | |
 |---|---|
-| Go | `mr/mod_sys.go` (module, types, validation, render), `mod_sys_time.go` (POSIX TZ parser, TZif writer, NTP, `sys.time`), `mod_sys_ssh.go` (dropbear, managed `authorized_keys`), `mod_sys_cron.go` (schedules, `mr sys run`), `mod_sys_backup.go` (backup / restore), `mod_sys_fw.go` (firmware upload, sysupgrade / factory-reset hooks), `mod_sys_api.go` (diag, service, services, logs, `mr sys`), `mod_sys_linux.go` / `mod_sys_other.go` (adjtimex) |
+| Go | `mr/mod_sys.go` (module, types, validation, render), `mod_sys_time.go` (POSIX TZ parser, TZif writer, NTP, `sys.time`), `mod_sys_ssh.go` (dropbear, managed `authorized_keys`), `mod_sys_cron.go` (schedules, `mr sys run`), `mod_sys_backup.go` (backup / restore), `mod_sys_fw.go` (firmware upload, sysupgrade / factory-reset hooks), `mod_sys_api.go` (diag, service, services, logs, `mr sys`), `mod_sys_linux.go` / `mod_sys_other.go` (adjtimex, settimeofday) |
 | UI | `rootfs/www/ui/sys.js` — 服务 (group 服务); 系统设置, 管理与 SSH, 计划任务, 备份与升级, 日志, 网络诊断 (group 系统) |
 | rootfs | `rootfs/etc/init.d/{tailscale,mr-panel,mr-zram,lucky,lucky-dns-inotify,dstatus-agent}` (tailscale and mr-panel now read their conf.d) |
 | Checks | `mr/mod_sys_test.go`, `tools/ci.d/sys.sh`, lab fragment `examples/lab.d/70-sys.yaml` |
@@ -30,6 +30,9 @@ system:
   timezone: "<+08>-8"        # POSIX TZ string (Alpine has no zoneinfo); empty = UTC
   ntp: [ntp.tencent.com, ntp1.aliyun.com]   # host names or IPs, max 8; empty = pool.ntp.org
   ntp_server: false          # also answer NTP (udp/123) — only the LAN zone gets through the firewall
+  connectivity_check:        # WAN captive-portal check + coarse clock (net.md "旅行"); empty = these two
+    - http://connectivitycheck.gstatic.com/generate_204
+    - http://cp.cloudflare.com/generate_204
   sysctl: {net.ipv4.tcp_congestion_control: bbr}   # added to / overriding 90-mini-router.conf
   zram: true              # zram swap (1/4 of RAM, zstd); also MGLRU min_ttl_ms=1000: OOM kill instead of thrashing
   history: 20             # config snapshots / change records kept (5-200)
@@ -61,6 +64,9 @@ Validation (the security boundary — everything below ends up in a file, a cron
   offsets up to 24:59:59, a DST name needs explicit rules (`Jn`, `n`, `Mm.w.d`, optional `/time`).
   Olson names (`Asia/Bangkok`) are rejected: there is no zoneinfo on the router. The web UI has presets.
 * `ntp`: IP address or DNS host name (no `keyno:` prefixes, no leading `-`).
+* `connectivity_check`: at most 4 `http://host[:port][/path][?query]` URLs, host a DNS name or a (non-loopback)
+  IPv4 address; no https (portals intercept plain HTTP, and it works with a wrong clock), user info, fragment,
+  spaces or quotes.
 * `sysctl`: key `a.b[.c…]`, value without control characters or `=`; at most 64 keys.
 * `ssh.authorized_keys`: `type base64 [comment]`, type one of ed25519 / rsa / ecdsa / sk-*, the base64
   blob must start with the same key type, no options (`command=`, `from=` …), printable comment, no
@@ -106,6 +112,34 @@ so DST zones work too. CI compares glibc reading the file with glibc interpretin
 directly at 146 instants over two years (home zone and a DST zone); musl was checked once by hand
 (Alpine 3.24 container: Bangkok, Berlin, Sydney, New York, India, January and July). crond also gets
 `TZ` from its conf.d, so schedules do not depend on the file.
+
+### Coarse time over HTTP (travelling, no NTP)
+
+The board has no RTC: after a few days switched off the clock starts from the last saved time (`mr-clock`),
+and hotels often block udp/123 — while TLS, DoT and proxy protocols such as VMess / Shadowsocks 2022 need
+the clock within about a minute. The net module's WAN connectivity check (`mr wan check`, run when a WAN
+comes up or renews; net.md "旅行") hands the `Date` header of an **online** (204) answer to
+`clockFromHTTP` (`mod_sys_time.go`):
+
+* the skew (Date minus the clock at the moment the server answered, RTT/2 corrected) is recorded in the
+  check result (`clock_skew`);
+* only while adjtimex reports the clock **not** synced, and only when the skew is above 60 s, the clock is
+  stepped once (`settimeofday`, `clock_set: true`, one syslog line), never to before the image build time
+  (`/etc/mini-router-release`, the same floor as `mr-clock`) or past 2099; the `mr-clock` reference file is
+  touched so a reboot starts from the corrected time;
+* ntpd stays in charge: once it syncs, HTTP Dates are only recorded, never applied.
+
+A portal's own answers (302 / 200 pages) are not used: behind a portal the clock is set after the login, by
+the check that then sees 204. The `Date` of a check endpoint is as trustworthy as unauthenticated NTP (the
+threat is the same: someone on the path), and it is only used while NTP has nothing better.
+
+### Time zone and clock hints in the web UI
+
+`mr status` carries `tz` (POSIX string), `tz_offset` (seconds east of UTC, now) and `clock_synced`. The overview
+compares them with the browser: a different UTC offset shows "路由器时区 … 这台设备 …" with a button that
+sets `system.timezone` to the preset for the browser's IANA zone (else a fixed-offset `<+HHMM>-H:MM`) — a
+normal config edit that still needs 保存并应用; a router clock more than 5 minutes away from the browser's
+shows a warning (with the NTP state). Both can be dismissed per browser.
 
 ### Boot order for `net.netfilter.*`
 

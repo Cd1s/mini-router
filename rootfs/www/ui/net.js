@@ -33,6 +33,54 @@ function checks(list, isOn, toggle, disabled){
 }
 async function wanRuntime(){ try { return await api("net.wan"); } catch(e){ return {wans:[]}; } }
 
+// ---------- travel: captive portal, WAN / LAN subnet conflict, NAT upstream ----------
+// (overview notices + the WAN / LAN pages; backend: mr/mod_net_travel.go)
+const CHECK_TXT = {online:"在线", portal:"需要网页登录", offline:"不通"};
+const CHECKING = {};
+async function runCheck(name){
+  CHECKING[name] = true;
+  try { const r = await api("net.check",{wan:name}); toast(name+"："+(CHECK_TXT[r.state]||r.state)+(r.error?"（"+r.error+"）":""), 5000); return r; }
+  catch(e){ toast(e.message, 4000); }
+  finally { delete CHECKING[name]; }
+}
+const checkBtn = (name, label, after)=>h("button",{class:"btn sm", disabled:!!CHECKING[name], onclick:async e=>{
+  e.target.disabled = true; e.target.textContent = "检测中…"; await runCheck(name); if (after) after(); }}, CHECKING[name] ? "检测中…" : (label||"重新检测"));
+// the login page: what the portal named, else the check URL itself (the portal intercepts it)
+const portalLink = k=>(k.portal_url||k.url) ? h("a",{class:"btn sm p", href:k.portal_url||k.url, target:"_blank", rel:"noopener noreferrer"}, "打开登录页") : null;
+function rebindHint(k){
+  let host = ""; try { host = new URL(k.portal_url||"").hostname; } catch(e){}
+  if (!host || /^[0-9.]+$/.test(host) || !(S.cfg && S.cfg.dns && S.cfg.dns.rebind_protection)) return null;
+  return h("span",{class:"mut"}, " 登录页打不开时：门户域名常解析到私网地址，会被“DNS 重绑定保护”拦下，可以在 DNS 页暂时关掉它。");
+}
+const netName = x=>x.network==="lan" ? "LAN" : "网络 "+x.network;
+const hasInbound = ()=>!!(S.cfg && S.cfg.firewall && ((S.cfg.firewall.forwards||[]).length || (S.cfg.firewall.open||[]).length));
+registerNotice(s=>(s.wan||[]).flatMap(w=>{
+  const out = [], k = w.check, x = w.conflict;
+  if (x) out.push(notice("bad", [h("b",{},"WAN "+w.name+" 与局域网网段冲突："), "上级网络分配的 ", mono(x.lease), " 和 "+netName(x)+" ", mono(x.net),
+    " 重叠，为了不把局域网一起弄断，这个地址没有启用。把 "+netName(x)+" 改到别的网段", x.suggest ? ["（例如 ", mono(x.suggest), "）"] : null, "并应用后，会自动重新获取地址。"],
+    h("a",{class:"btn sm p", href:"#lan"}, "修改网段")));
+  if (w.up && k && k.state==="portal") out.push(notice("warn", [h("b",{},"WAN "+w.name+" 需要网页登录"),
+    "（酒店 / 机场的门户认证）。在任意一台连着本路由器的设备上打开登录页完成认证即可：认证的是路由器，其它设备随之可用。", rebindHint(k)],
+    portalLink(k), checkBtn(w.name, "我已登录，重新检测")));
+  if (w.up && k && k.state==="offline") out.push(notice("warn", [h("b",{},"WAN "+w.name+" 有地址但上不了网"), "（连通性检测："+(k.error||"没有响应")+"）。"], checkBtn(w.name)));
+  const nk = "nat:"+w.name+":"+w.ip;
+  if (w.up && w.addr_class && hasInbound() && !dismissed(nk)) out.push(notice("info", ["WAN "+w.name+" 的地址 ", mono(w.ip),
+    w.addr_class==="cgnat" ? " 是运营商级 NAT（CGNAT，100.64.0.0/10）" : " 是私网地址（上级还有一层路由器）",
+    "：端口转发和从外网访问路由器的 IPv4 规则在这条线路上不起作用。"], dismissBtn(nk)));
+  return out;
+}));
+// one WAN's travel state for the WAN page status line
+function travelTags(r, redraw){
+  const k = r.check, x = r.conflict, out = [];
+  if (x) out.push(" · ", h("span",{class:"tag bad", title:"和 "+netName(x)+" "+x.net+" 重叠，没有启用"}, "地址冲突 "+x.lease));
+  if (k) out.push(" · ", h("span",{class:"tag "+(k.state==="online"?"ok":k.state==="portal"?"warn":"bad"),
+    title: k.error || (k.url ? k.url+" → HTTP "+k.code+(k.rtt_ms!=null?"，"+k.rtt_ms+" ms":"") : "")}, CHECK_TXT[k.state]||k.state),
+    k.state==="portal" ? [" ", portalLink(k)] : null);
+  if (r.addr_class) out.push(" · ", h("span",{class:"tag", title:"上级还有一层 NAT：端口转发 / IPv4 入站在这条线路上不可用"}, r.addr_class==="cgnat" ? "CGNAT" : "私网地址"));
+  if (r.up) out.push(" ", checkBtn(r.name, "检测", redraw));
+  return out;
+}
+
 // ---------- 接口状态 ----------
 registerPage("status", "interfaces", "接口状态", 30, async ()=>{
   const panel = h("div",{class:"net-ports"}), list = h("div"), when = h("span",{class:"mut",style:"font-weight:400;font-size:12px"});
@@ -88,7 +136,7 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
     const now = Date.now()/1000;
     return h("div",{class:"net-rt row"}, h("span",{class:"dot "+(r.up?"ok":"bad")}),
       r.up ? ["已连接 ", mono(r.ip), r.gateway?[" · 网关 ", mono(r.gateway)]:null, r.since?" · "+fmtDur(now-r.since):null, (r.dns||[]).length?" · DNS "+r.dns.join(", "):null] : "未连接",
-      " · 接口 ", mono(r.dev), healthTag(r));
+      " · 接口 ", mono(r.dev), healthTag(r), travelTags(r, ()=>show("wan")));
   };
   const redial = w=>{
     if (!svcOf(w) || !live[w.name]) return null;
@@ -117,6 +165,8 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
       ...field("MTU", inNum(w,"mtu"), p==="pppoe" ? "PPPoE 一般 1492" : "0 = 不修改"),
       ...field("路由跃点 (metric)", inNum(w,"metric",{min:0,max:9999}), "越小越优先，每条 WAN 各不相同；主线路 0，备用线路更大（多线路按它主备切换）"));
     if (p!=="static") rows.push(...field("使用运营商 DNS", inBool(w,"peerdns")));
+    rows.push(...field("门户 / 连通性检测", inSel(w,"portal",[["","默认（DHCP 开，PPPoE / 静态关）"],["auto","开"],["off","关"]]),
+      "上线和续租时经这条线路访问一次 HTTP 检测地址：发现需要网页登录（酒店 / 机场）就在总览提示并把网络灯变黄；NTP 不通时顺便按响应的 Date 粗校时钟"));
     rows.push(
       ...field("IPv6", inBool(w,"ipv6"), "dhcpcd 获取 IPv6（RA / DHCPv6）"),
       ...field("请求 IPv6 前缀 (PD)", inBool(w,"ipv6_pd"), "获取的前缀分配到 LAN"),
@@ -179,7 +229,17 @@ registerPage("network", "multiwan", "多线路", 15, async ()=>{
 // ---------- LAN 与网络 ----------
 registerPage("network", "lan", "LAN 与网络", 20, async ()=>{
   const c = S.cfg;
-  const ports = await portNames();
+  const [ports, rt] = await Promise.all([portNames(), wanRuntime()]);
+  // a WAN lease refused because it overlaps a LAN-side network: offer the free subnet the router found
+  const conflicts = (rt.wans||[]).filter(w=>w.conflict);
+  const conflictNote = ()=>conflicts.length ? h("div",{class:"notices"}, conflicts.map(w=>{
+    const x = w.conflict, tgt = x.network==="lan" ? c.lan : c.networks.find(n=>n.name===x.network);
+    const done = tgt && tgt.ipv4===x.suggest;
+    return notice("bad", [h("b",{},"WAN "+w.name+"："), "上级网络分配的 ", mono(x.lease), " 和 "+netName(x)+" ", mono(x.net), " 重叠，这个地址没有启用。",
+      done ? " 已改为 "+x.suggest+"：点底部“保存并应用”，应用后 WAN 会自动重新获取地址。" : " 改到别的网段并应用后，WAN 会自动重新获取地址。",
+      " 静态分配、端口转发里旧网段的地址要一起改（保存时会逐条提示）。"],
+      tgt && x.suggest && !done ? h("button",{class:"btn sm p", onclick:()=>{ tgt.ipv4 = x.suggest; touch(); draw(); }}, "改为 "+x.suggest) : null);
+  })) : null;
   const wanDevs = new Set(c.wan.filter(w=>!w.vlan).map(w=>w.device));
   const box = h("div");
   // an untagged port belongs to exactly one bridge
@@ -207,7 +267,7 @@ registerPage("network", "lan", "LAN 与网络", 20, async ()=>{
       ...field("租期", pool(inText(d,"lease",{placeholder:"12h"})))),
       h("button",{class:"btn sm d",onclick:()=>{ if(confirm("删除网络 "+n.name+"？绑定到它的 WiFi 也要改。")){ c.networks.splice(i,1); touch(); draw(); }}},"删除"));
   };
-  const draw = ()=>box.replaceChildren(
+  const draw = ()=>box.replaceChildren(h("div",{}, conflictNote()),
     card("LAN（主网络）", form(
       ...field("网桥", inText(c.lan,"bridge")),
       ...field("IPv4 地址 / 掩码", inText(c.lan,"ipv4",{placeholder:"192.168.1.1/24"}), "修改后如果浏览器失去连接，超时未确认会自动回滚"),

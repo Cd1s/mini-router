@@ -7,8 +7,9 @@ WAN="${RC_SVCNAME#mr-udhcpc.}"
 description="DHCP client ${WAN}"
 supervisor=supervise-daemon
 command=/sbin/udhcpc
-# -f foreground, -R release on stop, -S syslog; 4 discovers 3 s apart, then retry every 10 s forever
-command_args="-f -R -S -t 4 -T 3 -A 10 -i ${MR_WAN_DEV:-} -s /usr/libexec/mr/net-udhcpc"
+# -f foreground, -R release on stop, -S syslog; 4 discovers 3 s apart, then retry every 10 s forever;
+# -O 114: ask for the captive-portal API URI (RFC 8910), exported to the event script as opt114=<hex>
+command_args="-f -R -S -t 4 -T 3 -A 10 -O 114 -i ${MR_WAN_DEV:-} -s /usr/libexec/mr/net-udhcpc"
 respawn_delay=5
 respawn_max=0
 depend() {

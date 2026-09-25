@@ -42,7 +42,13 @@ type WAN struct {
 	IPv6     bool     `yaml:"ipv6"`
 	IPv6PD   bool     `yaml:"ipv6_pd"`       // request a delegated prefix and put it on the LAN
 	SrcRoute bool     `yaml:"ipv6_srcroute"` // IPv6 traffic sourced from this WAN's prefix leaves via this WAN
+	// Portal: connectivity / captive-portal check when the WAN comes up or renews (mod_net_travel.go):
+	// auto | off; empty = auto for DHCP WANs (hotels, other people's routers), off for PPPoE / static
+	Portal string `yaml:"portal,omitempty"`
 }
+
+// PortalCheck reports whether the connectivity / captive-portal check runs for this WAN on its own.
+func (w WAN) PortalCheck() bool { return w.Portal == "auto" || (w.Portal == "" && w.Proto == "dhcp") }
 
 // LinkDev is the ethernet-level netdev of the WAN: Device, or its 802.1Q subinterface.
 func (w WAN) LinkDev() string {
@@ -255,6 +261,7 @@ func init() {
 			"net.routes": func(apiReq) apiResp { return apiNetRoutes() },
 			"net.wan":    func(apiReq) apiResp { return apiNetWAN() },
 			"net.redial": apiNetRedial,
+			"net.check":  apiNetCheck,
 		},
 		Commands: map[string]func(c *Config, args []string) error{
 			"wan": wanCommand,
@@ -566,8 +573,19 @@ func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
 			if !isIPv4Literal(w.Gateway) || (sn != nil && !sn.Contains(g)) || g.Equal(ip) {
 				v.Add("%s.gateway: IPv4 inside %s, got %q", p, w.IPv4, w.Gateway)
 			}
+			// the same check the DHCP hook makes for a lease: a WAN subnet on top of a LAN-side
+			// network takes both down (two connected routes, the gateway looked up on the LAN)
+			if sn != nil {
+				ones, _ := sn.Mask.Size()
+				if n, nn, bad := lanConflict(c, ip, ones, g); bad {
+					v.Add("%s.ipv4: %s overlaps LAN-side network %s (%s)", p, w.IPv4, n.Name, nn)
+				}
+			}
 		default:
 			v.Add("%s.proto: pppoe|dhcp|static, got %q", p, w.Proto)
+		}
+		if w.Portal != "" && w.Portal != "auto" && w.Portal != "off" {
+			v.Add("%s.portal: auto|off (empty = auto for DHCP, off otherwise), got %q", p, w.Portal)
 		}
 		if w.Proto != "static" && (w.IPv4 != "" || w.Gateway != "" || len(w.DNS) > 0) {
 			v.Add("%s: ipv4/gateway/dns are only for proto static", p)

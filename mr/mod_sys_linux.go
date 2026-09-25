@@ -1,6 +1,9 @@
 package main
 
-import "syscall"
+import (
+	"syscall"
+	"time"
+)
 
 // clockSynced reports whether the kernel clock is marked synchronized (busybox ntpd clears
 // STA_UNSYNC once it disciplines the clock; adjtimex then no longer returns TIME_ERROR).
@@ -13,4 +16,10 @@ func clockSynced() (bool, bool) {
 	}
 	const timeError, staUnsync = 5, 0x0040
 	return state != timeError && tx.Status&staUnsync == 0, true
+}
+
+// setClock steps the system clock (settimeofday). Used once by clockFromHTTP while NTP is not synced.
+func setClock(t time.Time) error {
+	tv := syscall.NsecToTimeval(t.UnixNano())
+	return syscall.Settimeofday(&tv)
 }
