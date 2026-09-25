@@ -1,0 +1,6 @@
+# guard (mr/guard.go): baselines `mr validate` enforces whichever way a change arrives — the lab keeps all of them
+guard:
+  never_expose: [ssh, panel, dns]   # no firewall.open / forward to the router reaches these from the WAN
+  always_bypass: [desktop]          # proxy.bypass (or dhcp.hosts) name: never proxied
+  offload: hardware                 # firewall.offload may not drop below hardware
+  ssh_lan_only: true                # SSH listens on LAN-zone addresses only

@@ -28,6 +28,7 @@ type Config struct {
 	Proxy     Proxy      `yaml:"proxy,omitempty"`     // proxy: selective transparent proxy
 	Services  Services   `yaml:"services"`            // sys
 	Schedules []Schedule `yaml:"schedules,omitempty"` // sys
+	Guard     Guard      `yaml:"guard,omitempty"`     // baselines every config must keep (guard.go)
 
 	secrets map[string]string
 }
@@ -96,6 +97,7 @@ func (c *Config) Validate() []string {
 			m.Validate(c, v)
 		}
 	}
+	guardValidate(c, v)
 	return v.errs
 }
 

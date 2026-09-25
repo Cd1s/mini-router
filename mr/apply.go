@@ -193,8 +193,8 @@ func (p *Plan) String() string {
 	return b.String()
 }
 
-// printPlan shows what c changes in config terms (since the last apply), then the plan's actions;
-// verbose adds each generated file's diff (secret values masked).
+// printPlan shows what c changes in config terms (since the last apply), the plan's actions and its
+// risk; verbose adds what each action does and each generated file's diff (secret values masked).
 func printPlan(c *Config, p *Plan, verbose bool) {
 	if changes, ok := changesSinceApplied(c); !ok {
 		fmt.Print("changes: (no record of the applied config yet — this apply writes it)\n")
@@ -202,6 +202,7 @@ func printPlan(c *Config, p *Plan, verbose bool) {
 		fmt.Print("changes:\n  " + strings.Join(changes, "\n  ") + "\n")
 	}
 	fmt.Print("plan:\n" + p.String())
+	printRisk(planRisk(c, p, sshClientAddr()), verbose)
 	if verbose {
 		for _, f := range p.Changed {
 			if bookkeeping(f.Path) {

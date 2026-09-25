@@ -475,7 +475,7 @@ func apiValidate(r apiReq) apiResp {
 		changes = []string{}
 	}
 	return apiResp{body: map[string]any{"errors": []string{}, "plan": p.String(), "empty": p.Empty(),
-		"changes": changes, "changes_known": known}}
+		"changes": changes, "changes_known": known, "risk": classifyRisk(p, changes, findAdminPath(r.remote))}}
 }
 
 type jobState struct {

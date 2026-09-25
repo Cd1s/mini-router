@@ -416,15 +416,23 @@ async function startApply(){
     return;
   }
   const note = h("input",{type:"text",maxlength:200,placeholder:"备注（可选，记入变更历史）"});
+  const r = v.risk || {level:"medium", reasons:[], effects:[]};
+  const RL = {low:["低风险","ok","不重启服务：应用并验证后自动保留。"], medium:["中风险","warn","会重启服务，但不影响你当前的连接：应用并验证后自动保留。"],
+    high:["高风险","bad","影响你的连接或路由器的关键设置：应用后需要你手动点“保留”，否则 120 秒后自动回滚。"]}[r.level] || ["?","",""];
   const m = modal("确认应用", [
     v.changes_known ? [h("div",{style:"margin-bottom:6px"},"配置变更："), changeList(v.changes||[])] : null,
-    h("div",{style:"margin:8px 0 6px"}, v.empty?"没有文件变化。":"将执行："), h("pre",{}, v.plan||"(无)"), note,
-    h("p",{class:"mut"},"应用后有 120 秒确认时间；如果改动导致无法访问本页面，路由器会自动回滚到之前的配置。")],
-    [h("button",{class:"btn",onclick:()=>m.remove()},"取消"), h("button",{class:"btn p",onclick:()=>{ m.remove(); doApply(Object.assign({comment:note.value.trim()}, payload)); }},"应用")]);
+    h("div",{style:"margin:8px 0 6px"}, v.empty?"没有文件变化。":"将执行："), h("pre",{}, v.plan||"(无)"),
+    (r.effects||[]).length ? h("ul",{class:"mut",style:"margin:6px 0"}, r.effects.map(e=>h("li",{},e))) : null,
+    h("div",{style:"margin:8px 0"}, h("span",{class:"tag "+RL[1]}, RL[0]), " ", RL[2]),
+    (r.reasons||[]).length ? h("ul",{class:"err",style:"margin:4px 0 8px"}, r.reasons.map(e=>h("li",{},e))) : null,
+    note],
+    [h("button",{class:"btn",onclick:()=>m.remove()},"取消"), h("button",{class:"btn p",onclick:()=>{ m.remove(); doApply(Object.assign({comment:note.value.trim()}, payload), r); }},"应用")]);
 }
-async function doApply(payload){ return runJob(()=>api("apply", Object.assign({confirm:120}, payload))); }
-// runJob starts an apply job (apply, rollback) and follows it: output, then 保留 / 立即回滚.
-async function runJob(start){
+async function doApply(payload, risk){ return runJob(()=>api("apply", Object.assign({confirm:120}, payload)), risk && risk.level!=="high"); }
+// runJob starts an apply job (apply, rollback) and follows it: output, then 保留 / 立即回滚. auto: a
+// low / medium risk change is kept by the page itself once it is applied, verified and the page still
+// reaches the router (the confirm window only has to catch changes that cut the administrator off).
+async function runJob(start, auto){
   try { await start(); } catch(e){
     const msg = e.data&&e.data.pending ? "有待确认的更改（"+(VIA[e.data.pending.via]||e.data.pending.via)+"）：请先在页面顶部点“保留”或“回滚”。"
       : e.data&&e.data.errors ? e.data.errors.join("\n") : e.message;
@@ -447,6 +455,12 @@ async function runJob(start){
     }
     if (!j.confirm_pending){
       stateEl.replaceChildren(h("b",{style:"color:var(--ok)"},"已应用并保留。"));
+      foot.replaceChildren(h("button",{class:"btn p",onclick:async()=>{ m.remove(); await loadConfig(); show(S.page);} },"完成"));
+      return;
+    }
+    if (auto && !seenOk){
+      try { await api("confirm",{}); } catch(e){ auto = false; return setTimeout(poll, 500); }
+      stateEl.replaceChildren(h("b",{style:"color:var(--ok)"},"已应用并自动保留"), h("span",{class:"mut"},"（不影响你的连接；要撤销请到“变更历史”回滚）。"));
       foot.replaceChildren(h("button",{class:"btn p",onclick:async()=>{ m.remove(); await loadConfig(); show(S.page);} },"完成"));
       return;
     }

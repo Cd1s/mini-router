@@ -20,10 +20,12 @@ var version = "dev"
 const usage = `mr — mini-router control
 
   mr validate                 check router.yaml + secrets.yaml
-  mr plan [-v]                what apply would change: config changes, files, services (-v: file diffs)
-  mr apply [--confirm SECS] [-m COMMENT] [-v]
+  mr plan [-v|--explain]      what apply would change: config changes, files, services, risk
+                              (-v: what each action does, file diffs with secrets masked)
+  mr apply [--confirm SECS [--wait]] [-m COMMENT] [-v]
                               apply router.yaml (auto-rollback on failure;
-                              with --confirm, also roll back unless 'mr confirm' runs in time)
+                              with --confirm, also roll back unless 'mr confirm' runs in time;
+                              --wait: ask here, Ctrl-C / a dropped session rolls back at once)
   mr confirm                  keep the last --confirm apply
   mr rollback [SNAPSHOT]      undo the change waiting for confirmation, else restore the latest
                               (or given) snapshot at once
@@ -127,8 +129,10 @@ func dispatch(args []string, cfgPath, secPath string) error {
 		fmt.Println("ok")
 	case "plan":
 		fs := flag.NewFlagSet("plan", flag.ExitOnError)
-		verbose := fs.Bool("v", false, "also show each generated file's diff (secrets masked)")
+		verbose := fs.Bool("v", false, "also show what each action does and each generated file's diff (secrets masked)")
+		explain := fs.Bool("explain", false, "same as -v")
 		fs.Parse(args[1:])
+		*verbose = *verbose || *explain
 		if errs := c.Validate(); len(errs) > 0 {
 			return fmt.Errorf("invalid:\n  %s", strings.Join(errs, "\n  "))
 		}
@@ -146,12 +150,16 @@ func dispatch(args []string, cfgPath, secPath string) error {
 		secs := fs.Int("confirm", 0, "seconds to wait for `mr confirm`")
 		dry := fs.Bool("dry-run", false, "only show the plan")
 		comment := fs.String("m", "", "a comment for the history")
-		verbose := fs.Bool("v", false, "also show each generated file's diff (secrets masked)")
+		verbose := fs.Bool("v", false, "also show what each action does and each generated file's diff (secrets masked)")
+		wait := fs.Bool("wait", false, "with --confirm: ask here; Ctrl-C or a dropped session rolls back at once")
 		fs.Parse(args[1:])
 		if len(*comment) > 200 || strings.ContainsAny(*comment, "\n\r") {
 			return fmt.Errorf("-m: one line, at most 200 characters")
 		}
-		return Apply(c, *dry, *secs, *comment, *verbose)
+		if err := Apply(c, *dry, *secs, *comment, *verbose); err != nil || !*wait || *secs <= 0 || *dry {
+			return err
+		}
+		return waitConfirm(*secs)
 	case "render":
 		if len(args) < 2 {
 			return fmt.Errorf("render DIR")
