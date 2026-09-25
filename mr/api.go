@@ -3,8 +3,8 @@ package main
 // Web UI backend: `mr api` runs as a CGI program under busybox httpd (no resident process).
 //
 // Security: session cookie (HttpOnly, SameSite=Strict) + custom header X-MR on every request
-// (blocks cross-site form posts), PBKDF2-SHA256 password hash in secrets.yaml, login throttling,
-// first-time password can only be set from the LAN.
+// (blocks cross-site form posts), PBKDF2-SHA256 password hash in secrets.yaml, login throttling per
+// source address shared by all CGI processes (api_login.go), first-time password only from the LAN.
 
 import (
 	"crypto/pbkdf2"
@@ -252,10 +252,8 @@ func apiLogin(r apiReq, secrets map[string]string) apiResp {
 	if !ok {
 		return errResp(409, "no password set yet")
 	}
-	if !checkPassword(stored, in.Password) {
-		time.Sleep(1500 * time.Millisecond) // throttle guessing
-		logf("webui: failed login from %s", r.remote)
-		return errResp(401, "wrong password")
+	if e := checkPasswordFrom(r.remote, stored, in.Password, "wrong password"); e != nil {
+		return *e
 	}
 	return apiResp{body: map[string]any{"ok": true}, cookie: sessionCookie(newSession())}
 }
@@ -294,11 +292,13 @@ func apiSetup(r apiReq, secrets map[string]string) apiResp {
 }
 
 func apiPassword(r apiReq, secrets map[string]string) apiResp {
+	if r.method != "POST" {
+		return errResp(405, "POST required")
+	}
 	var in struct{ Old, New string }
 	json.Unmarshal(r.body, &in)
-	if !checkPassword(secrets[pwSecretKey], in.Old) {
-		time.Sleep(1500 * time.Millisecond)
-		return errResp(401, "current password is wrong")
+	if e := checkPasswordFrom(r.remote, secrets[pwSecretKey], in.Old, "current password is wrong"); e != nil {
+		return *e
 	}
 	if len(in.New) < 8 {
 		return errResp(400, "password must be at least 8 characters")

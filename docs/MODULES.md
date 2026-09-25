@@ -67,6 +67,11 @@ Cross-module helpers: `c.LANNets()`, `c.BridgeFor(network)`, `c.LANBridges()`, `
 Secrets (passwords, keys) live in `secrets.yaml`; router.yaml stores the secret **name**
 (`*_secret` fields). The UI sets secrets by name and can never read them back.
 
+Web UI password checks (login, password change) are throttled per source address (IPv6: per /64) in
+`/run/mini-router/login.json`, shared by all CGI processes under flock (`api_login.go`): every attempt counts before
+the check, the 5th failure in a row locks the source for 30 s, doubling per lock up to 1 h; a locked source gets 429
+without a password check. A correct password clears it.
+
 ## Web UI (`rootfs/www/ui/<module>.js`)
 
 Each file is wrapped in an IIFE and calls `registerPage(group, id, title, order, render)`.

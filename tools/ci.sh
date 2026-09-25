@@ -125,4 +125,26 @@ for f in tools/ci.d/*.sh; do
 	OUT=$OUT ROOT=$ROOT sh "$f"
 done
 
+# 4) web UI login throttle across processes: every request is its own CGI process (mr api)
+step "web UI login throttle: 20 wrong passwords at once, 20 CGI processes"
+mkdir -p /run/mini-router && mount -t tmpfs tmpfs /run/mini-router # private mount namespace
+printf 'correct horse\n' | "$OUT/mr-host" -s /etc/mini-router/secrets.yaml passwd > /dev/null
+body='{"password":"wrong guess"}'
+i=0
+while [ $i -lt 20 ]; do
+	i=$((i + 1))
+	printf '%s' "$body" | REQUEST_METHOD=POST QUERY_STRING=a=login REMOTE_ADDR=192.0.2.9 HTTP_X_MR=1 \
+		CONTENT_LENGTH=${#body} "$OUT/mr-host" api > "$OUT/login.$i" &
+done
+wait
+n401=$(grep -l '^Status: 401' "$OUT"/login.* | wc -l)
+n429=$(grep -l '^Status: 429' "$OUT"/login.* | wc -l)
+[ "$n401" = 5 ] && [ "$n429" = 15 ] || { echo "FAIL: $n401 x 401, $n429 x 429 (want 5 and 15)"; exit 1; }
+body='{"password":"correct horse"}'
+printf '%s' "$body" | REQUEST_METHOD=POST QUERY_STRING=a=login REMOTE_ADDR=192.0.2.8 HTTP_X_MR=1 \
+	CONTENT_LENGTH=${#body} "$OUT/mr-host" api > "$OUT/login.other"
+grep -q '^Set-Cookie: mrsid=' "$OUT/login.other" || { echo "FAIL: another address could not log in"; exit 1; }
+rm -f /etc/mini-router/secrets.yaml && umount /run/mini-router
+echo "ok: 5 checked, 15 refused (429) without a check; another address logs in"
+
 printf '\nALL CHECKS PASSED\n'
