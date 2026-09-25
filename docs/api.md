@@ -56,7 +56,8 @@ the router would send the secret there; removing such an item is allowed). A tok
 hashes, can confirm or revert only a pending change it made itself, and needs `base_rev` to send a whole
 config. **An `apply` token still controls the network** — routing, port forwards, which proxy node
 traffic uses: give it only to agents you trust, with `from` and `expires`, and keep the `guard` on.
-Signed approval for high-risk changes is Cd1s/mini-router#37.
+For AI agents, prefer `mr mcp` over SSH (`docs/mcp.md`): the same limits, no port, intent-level tools, and
+high-risk changes only with the owner's FIDO-key signature.
 
 Authentication: only `Authorization: Bearer mrt_…` (no cookie, so no CSRF; no `X-MR` header needed).
 A bad token counts against its source address in the login throttle (5 failures → 30 s lock, doubling);
@@ -154,8 +155,8 @@ drift from the decoder: types, nesting, `additionalProperties: false` (unknown k
 for value sets (`schemaEnums` in `schema.go`, checked by a test: every configured value is listed and
 a value outside the set fails validation), `*_secret` fields described as secret names. `required`
 lists the keys always present in the effective config (`GET config`, `mr export`); a router.yaml may
-leave them out — the defaults fill them in. For MCP tool input schemas (Cd1s/mini-router#37) and
-editor completion (`# yaml-language-server: $schema=…` with the output saved as a file).
+leave them out — the defaults fill them in. For MCP (`mr mcp`: the `explain` tool returns the schema of a
+path, and the tools' input schemas come from the same generator — `docs/mcp.md`) and editor completion (`# yaml-language-server: $schema=…` with the output saved as a file).
 
 ## 怎么用
 

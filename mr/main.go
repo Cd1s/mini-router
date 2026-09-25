@@ -41,6 +41,9 @@ const usage = `mr — mini-router control
   mr schema [PATH]            JSON Schema of router.yaml, from the Go types
   mr token list | create NAME [-scope read|operate|apply] [-from CIDR,..] [-expires DATE] [-allow A,..] | revoke NAME
                               API tokens (Authorization: Bearer) for scripts and agents
+  mr mcp [--scope=read|operate|apply] [--agent=NAME]
+                              MCP server for AI agents on stdin / stdout (one SSH session;
+                              services.ssh.agents keys run it); mr mcp plans | show ID
   mr render DIR               write all generated files under DIR (for review/tests)
   mr fw                       (re)load the firewall for the current set of netdevs
   mr routes                   re-install per-WAN routes/rules for WANs that are up, then reload the firewall
@@ -132,6 +135,8 @@ func dispatch(args []string, cfgPath, secPath string) error {
 		return schemaCommand(args[1:])
 	case "token":
 		return tokenCommand(args[1:], cfgPath, secPath)
+	case "mcp":
+		return mcpCommand(args[1:], cfgPath, secPath)
 	}
 
 	c, err := loadConfig(cfgPath, secPath)

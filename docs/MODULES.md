@@ -60,7 +60,9 @@ Register exactly one `Module` in `init()`:
 **Guard and risk.** `guard:` (core, `guard.go`) holds the owner's baselines — `never_expose` (ssh, panel, dns: no
 `firewall.open` or forward to the router reaches their ports from the WAN), `always_bypass` (devices never proxied),
 `offload` (minimum flow offload), `ssh_lan_only`; `Config.Validate` checks it after every module, so no path (web UI,
-CLI, restore, token, agent) can apply a config that breaks it. Every plan gets a risk level (`risk.go`): low (no
+CLI, restore, token, agent) can apply a config that breaks it. `approvers` (the owner's FIDO keys) and
+`max_risk_without_touch` (low | medium, default medium) gate AI agents' plans (`mr mcp`, `docs/mcp.md`): above that risk
+a plan needs an approver's `ssh-keygen -Y sign` with the key touched. Every plan gets a risk level (`risk.go`): low (no
 service restarts), medium (restarts, none on the administrator's path), high (the administrator's own path — the
 netdev / bridge port / tailscale / SSH their session uses, found with `ip route get` + the bridge fdb — LAN addresses,
 WANs, the router's inbound rules, SSH / web UI / tailscale settings, the guard). The web UI keeps low and medium

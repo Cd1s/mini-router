@@ -32,17 +32,17 @@ import (
 const (
 	RunDir      = "/run/mini-router"
 	SessionDir  = RunDir + "/sessions"
-	JobFile     = RunDir + "/job.json"
-	JobLog      = RunDir + "/job.log"
 	sessionTTL  = 12 * time.Hour
 	pwSecretKey = "webui_password"
 	pbkdfIter   = 120000
 )
 
-// the apply job's input (variables so tests can point them elsewhere)
+// the apply job's input and state (variables so tests can point them elsewhere)
 var (
 	CandidateYAML = RunDir + "/candidate.yaml"
 	CandidateSec  = RunDir + "/candidate-secrets.yaml"
+	JobFile       = RunDir + "/job.json"
+	JobLog        = RunDir + "/job.log"
 )
 
 type apiReq struct {
