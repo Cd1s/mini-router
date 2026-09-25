@@ -52,15 +52,15 @@ func proxySpec(label string, keys string, tls int, utls, reality, transport bool
 
 // proxyTypes: every node type ("" = shadowsocks, for configs written before types existed).
 var proxyTypes = map[string]*proxyTypeSpec{
-	"shadowsocks": proxySpec("Shadowsocks", "server port method password_secret tcp_only", 0, false, false, false),
-	"vless":       proxySpec("VLESS", "server port uuid_secret flow packet_encoding tcp_only", 1, true, true, true),
-	"vmess":       proxySpec("VMess", "server port uuid_secret security alter_id packet_encoding tcp_only", 1, true, false, true),
-	"trojan":      proxySpec("Trojan", "server port password_secret tcp_only", 1, true, true, true),
+	"shadowsocks": proxySpec("Shadowsocks", "server port method password_secret tcp_only tfo", 0, false, false, false),
+	"vless":       proxySpec("VLESS", "server port uuid_secret flow packet_encoding tcp_only tfo", 1, true, true, true),
+	"vmess":       proxySpec("VMess", "server port uuid_secret security alter_id packet_encoding tcp_only tfo", 1, true, false, true),
+	"trojan":      proxySpec("Trojan", "server port password_secret tcp_only tfo", 1, true, true, true),
 	"hysteria2":   proxySpec("Hysteria2", "server port password_secret up_mbps down_mbps obfs obfs_password_secret hop_ports tcp_only", 2, false, false, false),
 	"tuic":        proxySpec("TUIC", "server port uuid_secret password_secret congestion_control udp_relay_mode tcp_only", 2, false, false, false),
-	"anytls":      proxySpec("AnyTLS", "server port password_secret", 2, true, true, false),
-	"socks":       proxySpec("SOCKS5", "server port username password_secret tcp_only", 0, false, false, false),
-	"http":        proxySpec("HTTP", "server port username password_secret", 1, true, false, false),
+	"anytls":      proxySpec("AnyTLS", "server port password_secret tfo", 2, true, true, false),
+	"socks":       proxySpec("SOCKS5", "server port username password_secret tcp_only tfo", 0, false, false, false),
+	"http":        proxySpec("HTTP", "server port username password_secret tfo", 1, true, false, false),
 	"custom":      proxySpec("custom", "json_secret", 0, false, false, false),
 }
 
@@ -559,6 +559,9 @@ func proxyNodeOutbound(c *Config, n *ProxyNode) (o proxyObj, endpoint bool, err 
 	}
 	if n.TCPOnly {
 		o["network"] = "tcp"
+	}
+	if n.TFO {
+		o["tcp_fast_open"] = true
 	}
 	return o, false, nil
 }

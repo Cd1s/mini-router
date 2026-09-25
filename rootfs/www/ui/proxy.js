@@ -28,15 +28,15 @@ const TYPES = [["","Shadowsocks"],["vless","VLESS"],["vmess","VMess"],["trojan",
   ["anytls","AnyTLS"],["socks","SOCKS5"],["http","HTTP / HTTPS"],["custom","自定义 JSON"]];
 const K_TLS = " tls sni alpn insecure", K_TR = " transport path host service_name early_data", K_RE = " reality_public_key reality_short_id";
 const KEYS = {
-  "": "server port method password_secret tcp_only",
-  vless: "server port uuid_secret flow packet_encoding tcp_only fingerprint"+K_TLS+K_RE+K_TR,
-  vmess: "server port uuid_secret security alter_id packet_encoding tcp_only fingerprint"+K_TLS+K_TR,
-  trojan: "server port password_secret tcp_only fingerprint"+K_TLS+K_RE+K_TR,
+  "": "server port method password_secret tcp_only tfo",
+  vless: "server port uuid_secret flow packet_encoding tcp_only tfo fingerprint"+K_TLS+K_RE+K_TR,
+  vmess: "server port uuid_secret security alter_id packet_encoding tcp_only tfo fingerprint"+K_TLS+K_TR,
+  trojan: "server port password_secret tcp_only tfo fingerprint"+K_TLS+K_RE+K_TR,
   hysteria2: "server port password_secret up_mbps down_mbps obfs obfs_password_secret hop_ports tcp_only"+K_TLS,
   tuic: "server port uuid_secret password_secret congestion_control udp_relay_mode tcp_only"+K_TLS,
-  anytls: "server port password_secret fingerprint"+K_TLS+K_RE,
-  socks: "server port username password_secret tcp_only",
-  http: "server port username password_secret fingerprint"+K_TLS,
+  anytls: "server port password_secret tfo fingerprint"+K_TLS+K_RE,
+  socks: "server port username password_secret tcp_only tfo",
+  http: "server port username password_secret tfo fingerprint"+K_TLS,
   custom: "json_secret",
 };
 const TLS_ALWAYS = new Set(["hysteria2","tuic","anytls"]);   // QUIC / TLS-only protocols
@@ -132,6 +132,7 @@ function summary(n){
   if (n.flow) parts.push("vision");
   if (n.insecure) parts.push("insecure");
   if (n.tcp_only) parts.push("仅 TCP");
+  if (n.tfo) parts.push("TFO");
   return parts.filter(Boolean).join(" · ");
 }
 // switching the node type keeps name, server, port and the credentials the new type also uses
@@ -271,6 +272,7 @@ registerPage("proxy", "proxy-nodes", "代理节点", 10, async ()=>{
       if (has(n,"packet_encoding") || has(n,"tcp_only")) sec("UDP");
       if (has(n,"packet_encoding")) F("UDP 封装", optSel(n,"packet_encoding",[["", t==="vless" ? "默认（xudp）" : "默认（不封装）"],["xudp","xudp"],["packetaddr","packetaddr"],["none","不封装"]]));
       if (has(n,"tcp_only")) F("仅 TCP", optBool(n,"tcp_only", ()=>drawNodes()), "服务器不支持 UDP 转发时打开（QUIC 会回落到 TCP）");
+      if (has(n,"tfo")){ sec("连接"); F("TCP Fast Open", optBool(n,"tfo", ()=>drawNodes()), "省掉建连的一个往返；服务器也要开启（自建节点），否则无效"); }
     }
     editorBox.replaceChildren(card("编辑节点 · "+(n.name||""), form(...rows), h("button",{class:"btn sm",onclick:()=>{ editing=null; drawNodes(); drawEditor(); }},"关闭")));
   };

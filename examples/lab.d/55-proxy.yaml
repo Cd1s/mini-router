@@ -11,7 +11,7 @@ proxy:
   enabled: true
   nodes:
     - {name: sg1, server: sg1.example.net, port: 8388, method: 2022-blake3-aes-128-gcm, password_secret: proxy_sg1, tcp_only: true}
-    - {name: jp1, server: 203.0.113.7, port: 8389, method: aes-128-gcm, password_secret: proxy_jp1}
+    - {name: jp1, server: 203.0.113.7, port: 8389, method: aes-128-gcm, password_secret: proxy_jp1, tfo: true}
     - {name: us-trojan, type: custom, json_secret: proxy_us_trojan}
     - {name: hk-reality, type: vless, server: 203.0.113.20, port: 8443, uuid_secret: proxy_hk-reality_uuid, flow: xtls-rprx-vision,
        tls: true, sni: www.example.com, fingerprint: chrome, reality_public_key: LHrjuwEq6GjVwsi-cALKBZ7shC7yUshr_0MQBbg5qQA,

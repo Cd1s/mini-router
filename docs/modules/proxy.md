@@ -113,6 +113,7 @@ proxy:
       method: aes-128-gcm
       password_secret: proxy_jp1
       tcp_only: true                         # 服务器不支持 UDP 转发时打开（QUIC 会回落到 TCP）；除 anytls / http 外所有类型都有
+      tfo: true                              # TCP Fast Open：建连省一个往返；服务器也要开（自建节点）；hysteria2 / tuic（QUIC）没有
     - name: hk-reality                       # VLESS + REALITY + Vision（Xray 常见搭配）
       type: vless
       server: 203.0.113.20
@@ -183,15 +184,15 @@ proxy_airport_sub: "https://sub.example.net/api/v1/client/subscribe?token=..."
 
 | type | 必填 | 可选 | TLS |
 |---|---|---|---|
-| `shadowsocks`（默认，可不写） | server port method password_secret | tcp_only | — |
-| `vless` | server port uuid_secret | flow（xtls-rprx-vision）、packet_encoding、传输层、tcp_only | 可选 `tls: true`；uTLS、REALITY |
-| `vmess` | server port uuid_secret | security（auto / aes-128-gcm / chacha20-poly1305 / none / zero）、alter_id、packet_encoding、传输层、tcp_only | 可选；uTLS |
-| `trojan` | server port password_secret | 传输层、tcp_only | 可选（几乎总是开）；uTLS、REALITY |
+| `shadowsocks`（默认，可不写） | server port method password_secret | tcp_only、tfo | — |
+| `vless` | server port uuid_secret | flow（xtls-rprx-vision）、packet_encoding、传输层、tcp_only、tfo | 可选 `tls: true`；uTLS、REALITY |
+| `vmess` | server port uuid_secret | security（auto / aes-128-gcm / chacha20-poly1305 / none / zero）、alter_id、packet_encoding、传输层、tcp_only、tfo | 可选；uTLS |
+| `trojan` | server port password_secret | 传输层、tcp_only、tfo | 可选（几乎总是开）；uTLS、REALITY |
 | `hysteria2` | server port password_secret | up_mbps / down_mbps（不填 = BBR）、obfs: salamander + obfs_password_secret、hop_ports、tcp_only | 总是开（QUIC，无 uTLS） |
 | `tuic` | server port uuid_secret password_secret | congestion_control（cubic / new_reno / bbr）、udp_relay_mode（native / quic）、tcp_only | 总是开（QUIC，无 uTLS） |
-| `anytls` | server port password_secret | — | 总是开；uTLS、REALITY |
-| `socks` | server port | username、password_secret、tcp_only | —（SOCKS5 本身不加密） |
-| `http` | server port | username、password_secret | 可选（HTTPS 代理）；uTLS |
+| `anytls` | server port password_secret | tfo | 总是开；uTLS、REALITY |
+| `socks` | server port | username、password_secret、tcp_only、tfo | —（SOCKS5 本身不加密） |
+| `http` | server port | username、password_secret、tfo | 可选（HTTPS 代理）；uTLS |
 | `custom` | json_secret | — | JSON 里自己写 |
 
 - TLS 键：`tls`（开关）、`sni`（默认 = server）、`alpn`、`insecure`（跳过证书验证，不安全）、`fingerprint`（uTLS：chrome /
