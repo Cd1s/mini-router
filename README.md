@@ -96,7 +96,13 @@ checks every service and rolls back on its own. The web UI, the CLI and AI agent
 
 ### 1. 任意架构的 Alpine Linux
 
-适合 x86 小主机、虚拟机、树莓派、各种 ARM 板。先装好 Alpine（至少两个网口，或一个网口 + 无线网卡），然后：
+适合 x86 小主机、虚拟机、树莓派、各种 ARM 板。
+
+> **目前需要两个网口**：一个接外网（WAN），一个接内网（LAN）；或者一个网口 + 一块无线网卡（无线做 LAN）。
+> 只有一个网口的设备请等**旁路由模式**（[#24](https://github.com/Cd1s/mini-router/issues/24)，开发中）——那时一个口就够，
+> 挂在现有路由器旁边只负责代理等功能。
+
+先装好 Alpine，然后：
 
 ```sh
 wget -O install.sh https://github.com/Cd1s/mini-router/releases/latest/download/install.sh
