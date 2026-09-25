@@ -51,7 +51,6 @@ wan:
     username: "lab@isp3"
     password_secret: pppoe_password
     metric: 60
-    portal: auto                # connectivity / captive-portal check on PPPoE too (default: DHCP only)
   - name: iptv                  # DHCP on VLAN 20 (IPTV / travel: plain DHCP upstream)
     device: wan
     vlan: 20
@@ -59,7 +58,6 @@ wan:
     metric: 80
     peerdns: true
     ipv6: true
-    portal: off                 # IPTV network: no connectivity check (default for DHCP: auto)
   - name: office                # static address on VLAN 30
     device: wan
     vlan: 30

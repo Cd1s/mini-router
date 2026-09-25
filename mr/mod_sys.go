@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 )
 
 type System struct {
@@ -29,9 +28,6 @@ type System struct {
 	LEDs *bool `yaml:"leds,omitempty"`
 	// History: config snapshots / revisions kept (default 20)
 	History int `yaml:"history,omitempty"`
-	// ConnCheck: plain-HTTP URLs that answer 204, for the WAN connectivity / captive-portal check
-	// (mod_net_travel.go); empty = connectivitycheck.gstatic.com and cp.cloudflare.com
-	ConnCheck []string `yaml:"connectivity_check,omitempty"`
 }
 
 type Services struct {
@@ -272,12 +268,6 @@ func init() {
 				}
 			}
 			st["tailscale"] = ts
-			// the web UI compares these with the browser (time zone / clock hints, e.g. when travelling)
-			_, off := time.Now().In(sysLocation(c)).Zone()
-			st["tz"], st["tz_offset"] = sysTZ(c), off
-			if s, ok := clockSynced(); ok {
-				st["clock_synced"] = s
-			}
 		},
 		API: map[string]func(r apiReq) apiResp{
 			"diag":              apiDiag,
@@ -324,14 +314,6 @@ func sysValidate(c *Config, v *Validator) {
 	for _, n := range s.NTP {
 		if !validNTPServer(n) {
 			v.Add("system.ntp: invalid server %q (host name or IP address)", n)
-		}
-	}
-	if len(s.ConnCheck) > 4 {
-		v.Add("system.connectivity_check: at most 4 URLs")
-	}
-	for _, u := range s.ConnCheck {
-		if !validCheckURL(u) {
-			v.Add("system.connectivity_check: %q: http://host[:port]/path with a host name or IPv4 address (plain HTTP, answers 204)", u)
 		}
 	}
 	if len(s.Sysctl) > 64 {

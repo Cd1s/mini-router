@@ -109,9 +109,6 @@ Use only helpers from `ui/core.js`: `h`, `api`, `S` (state: `S.cfg` = editable c
 `touch()` after edits, widgets `inText/inNum/inBool/inSel/inList/inProto/inSecret`, `field/form/card`,
 `etable/tableCard/roTable`, `tabs`, `lineChart`, `COLORS`, `modal`, `toast`, `confirmBtn`, `addCSS`,
 `fmtBytes/fmtRate/fmtDur`. Live pages may set `S.timer = setInterval(...)` (cleared on navigation).
-Hints on the overview: `registerNotice(status => Node | [Node] | null)` is called on every overview refresh with the
-`mr status` JSON; build them with `notice(level: warn|bad|info, text, ...buttons)`, `dismissBtn(key)` / `dismissed(key)`
-(per browser).
 Config edits only change `S.cfg`; the shared "保存并应用" bar runs validate → plan → apply → confirm, with the
 `rev` the page loaded as `base_rev` (409: router.yaml was changed meanwhile by another browser, SSH or an agent).
 The router.yaml it installs is the live file with only the changed values edited (`yamledit.go`): comments, key

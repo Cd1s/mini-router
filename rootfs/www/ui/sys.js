@@ -141,50 +141,6 @@ const TZS = [
   ["MST7","凤凰城"],["PST8PDT,M3.2.0,M11.1.0","洛杉矶 / 温哥华"],["HST10","夏威夷"],
   ["AEST-10AEDT,M10.1.0,M4.1.0/3","悉尼 / 墨尔本"],["AEST-10","布里斯班"],["NZST-12NZDT,M9.5.0,M4.1.0/3","奥克兰"],
 ];
-// browser zone (IANA name from Intl) → one of the presets above
-const TZ_IANA = {};
-for (const [tz, names] of [
-  ["<+07>-7","Asia/Bangkok Asia/Jakarta Asia/Ho_Chi_Minh Asia/Saigon Asia/Phnom_Penh Asia/Vientiane"],
-  ["CST-8","Asia/Shanghai Asia/Chongqing Asia/Harbin Asia/Urumqi Asia/Taipei Asia/Macau PRC"], ["HKT-8","Asia/Hong_Kong"],
-  ["<+08>-8","Asia/Singapore Asia/Kuala_Lumpur Asia/Manila"], ["JST-9","Asia/Tokyo"], ["KST-9","Asia/Seoul"],
-  ["IST-5:30","Asia/Kolkata Asia/Calcutta"], ["<+04>-4","Asia/Dubai Asia/Muscat"], ["MSK-3","Europe/Moscow"],
-  ["EET-2EEST,M3.5.0/3,M10.5.0/4","Europe/Athens Europe/Helsinki Europe/Kiev Europe/Kyiv Europe/Bucharest Europe/Sofia Europe/Riga Europe/Tallinn Europe/Vilnius"],
-  ["CET-1CEST,M3.5.0,M10.5.0/3","Europe/Berlin Europe/Paris Europe/Rome Europe/Madrid Europe/Amsterdam Europe/Brussels Europe/Vienna Europe/Zurich Europe/Prague Europe/Stockholm Europe/Oslo Europe/Copenhagen Europe/Warsaw Europe/Budapest"],
-  ["GMT0BST,M3.5.0/1,M10.5.0","Europe/London"], ["UTC0","UTC Etc/UTC Etc/GMT"],
-  ["EST5EDT,M3.2.0,M11.1.0","America/New_York America/Toronto America/Detroit"], ["CST6CDT,M3.2.0,M11.1.0","America/Chicago America/Winnipeg"],
-  ["MST7MDT,M3.2.0,M11.1.0","America/Denver America/Edmonton"], ["MST7","America/Phoenix"], ["PST8PDT,M3.2.0,M11.1.0","America/Los_Angeles America/Vancouver"],
-  ["HST10","Pacific/Honolulu"], ["AEST-10AEDT,M10.1.0,M4.1.0/3","Australia/Sydney Australia/Melbourne Australia/Canberra Australia/Hobart"],
-  ["AEST-10","Australia/Brisbane"], ["NZST-12NZDT,M9.5.0,M4.1.0/3","Pacific/Auckland"],
-]) for (const n of names.split(" ")) TZ_IANA[n] = tz;
-const fmtOff = s=>{ const a=Math.abs(s), hh=Math.floor(a/3600), mm=Math.floor(a%3600/60); return "UTC"+(s<0?"−":"+")+hh+(mm?":"+String(mm).padStart(2,"0"):""); };
-// a POSIX TZ for the browser's zone: the preset for its IANA name, else its current fixed offset (no DST)
-function posixFor(iana, off){
-  if (TZ_IANA[iana]) return TZ_IANA[iana];
-  if (!off) return "UTC0";
-  const a=Math.abs(off), hh=Math.floor(a/3600), mm=Math.floor(a%3600/60), m2=mm?String(mm).padStart(2,"0"):"";
-  return "<"+(off<0?"-":"+")+String(hh).padStart(2,"0")+m2+">"+(off>0?"-":"")+hh+(mm?":"+m2:"");
-}
-const fmtSkew = s=>{ const a=Math.abs(s); return (s<0?"慢 ":"快 ")+(a>=86400 ? (a/86400).toFixed(1)+" 天" : a>=3600 ? (a/3600).toFixed(1)+" 小时" : Math.round(a/60)+" 分钟"); };
-// overview: router zone ≠ this browser's zone (travelling), router clock far from this device's
-registerNotice(s=>{
-  if (s.tz_offset==null) return null;
-  const out = [];
-  let iana = ""; try { iana = Intl.DateTimeFormat().resolvedOptions().timeZone||""; } catch(e){}
-  const off = -new Date().getTimezoneOffset()*60, key = "tz:"+s.tz+"|"+off;
-  if (off!==s.tz_offset && !dismissed(key)){
-    const sug = posixFor(iana, off), label = (TZS.find(z=>z[0]===sug)||[])[1] || sug;
-    const set = S.cfg && S.cfg.system && S.cfg.system.timezone===sug;
-    out.push(notice("info", ["路由器时区是 ", h("b",{},fmtOff(s.tz_offset)), "（", mono(s.tz), "），这台设备是 ", h("b",{},fmtOff(off)), iana?"（"+iana+"）":"",
-      "。日志时间、计划任务和按时间段的上网规则都按路由器时区执行。", set ? "已改为 "+label+"，点底部“保存并应用”生效。" : ""],
-      set ? null : h("button",{class:"btn sm p", onclick:()=>{ C().system.timezone = sug; touch(); toast("时区改为 "+label+"：点底部“保存并应用”生效", 4000); }}, "改为 "+label),
-      dismissBtn(key)));
-  }
-  const skew = Math.round((s.time||0) - Date.now()/1000), ck = "clock:"+Math.round(skew/3600);
-  if (s.time && Math.abs(skew)>300 && !dismissed(ck)) out.push(notice("warn", [h("b",{},"路由器时钟比这台设备"+fmtSkew(skew)), s.clock_synced===false ?
-    "，NTP 还没有同步（上级网络可能挡住了 UDP 123）。WAN 上线时路由器会按 HTTP 响应的 Date 粗校一次；需要网页登录的网络要登录后才能校准。" : "。",
-    "时间不对会让 TLS、DoT 和部分代理协议（VMess、Shadowsocks 2022）连不上。"], h("a",{class:"btn sm", href:"#system"}, "系统设置"), dismissBtn(ck)));
-  return out;
-});
 function tzPicker(sys){
   const box = h("div");
   let custom = !!sys.timezone && !TZS.some(z=>z[0]===sys.timezone);
@@ -232,8 +188,6 @@ registerPage("system", "system", "系统设置", 10, async ()=>{
         try { await api("service",{name:"ntpd",op:"restart"}); toast("已重启 ntpd，几秒后同步"); } catch(e){ toast(e.message,4000); } }},"立即同步"))),
       ...field("时区", tzPicker(s), "POSIX TZ 格式（Alpine 不带时区数据库）；写入 /etc/localtime，日志、计划任务都按此时区"),
       ...field("NTP 服务器", inList(s,"ntp",{placeholder:"ntp.tencent.com, ntp1.aliyun.com"}), "域名或 IP，逗号分隔；为空时用 pool.ntp.org"),
-      ...field("连通性检测地址", inList(s,"connectivity_check",{placeholder:"默认 connectivitycheck.gstatic.com、cp.cloudflare.com"}),
-        "返回 204 的 http:// 地址，最多 4 个。WAN 的门户检测用它判断“在线 / 需要网页登录 / 不通”；NTP 没同步时按它响应的 Date 粗校时钟（误差超过 60 秒才校）"),
       ...field("为局域网提供 NTP", inBool(s,"ntp_server"), "ntpd -l：只有 LAN 区域（含 Tailscale）能访问，访客网络和 WAN 被防火墙挡住。想让设备自动用它，在 DHCP 选项里把 NTP 服务器设为路由器地址。"))),
     card("内核参数 (sysctl)", [h("div",{class:"mut",style:"padding:10px 16px 0"},"覆盖或追加 /etc/sysctl.d/90-mini-router.conf 的值（默认 nf_conntrack_max=100000 等）。"), st.el], st.add, true),
     card("重启", h("div",{class:"row"}, h("span",{class:"mut",style:"flex:1"},"重启路由器，全家断网约 1 分钟。"),

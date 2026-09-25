@@ -7,9 +7,6 @@ system:
   timezone: "CET-1CEST,M3.5.0,M10.5.0/3"   # a DST zone (home uses "<+08>-8"): /etc/localtime must carry the rule
   ntp: [ntp.tencent.com, ntp1.aliyun.com, 162.159.200.1, "2001:db8::123"]
   ntp_server: true                          # busybox ntpd -l; only the LAN zone gets through the firewall
-  connectivity_check:                       # WAN captive-portal check + coarse clock (default: gstatic, cloudflare)
-    - http://connectivitycheck.gstatic.com/generate_204
-    - http://cp.cloudflare.com/generate_204
   sysctl:
     net.ipv4.tcp_congestion_control: bbr
     net.ipv4.tcp_fin_timeout: "30"
