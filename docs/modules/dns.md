@@ -35,6 +35,10 @@ records), `mr/mod_dns_query.go` (tiny DNS client, statistics, post-apply read-ba
   needs router.yaml to load, like every `mr` module command). The view hides `mr`'s own statistics
   probes (`*.bind` CHAOS queries from 127.0.0.1).
 - DNS redirect (`dns.redirect`, nft DNAT of LAN port 53 to the router) — unchanged.
+- **nftset lines from the net module** (`policy_routes[].domains`, `Module.Dnsmasq`): dnsmasq writes the addresses
+  its upstream answers for those names into nft sets that pick the WAN (docs/modules/net.md, "按域名"). This needs
+  a dnsmasq built with nftset: the image ships Alpine's `dnsmasq-dnssec-nftset` (DNSSEC is compiled in but off);
+  plain `dnsmasq` refuses such a config (`dnsmasq --test` in the init script), so the apply rolls back.
 
 Not included on purpose: adblock lists, DHCPv6-only (no SLAAC) mode (Android cannot use it),
 DHCPv6 lease release, MX records.

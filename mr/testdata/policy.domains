@@ -1,0 +1,4 @@
+# policy_routes lab list: one domain per line (a domain covers its subdomains), # comments
+video.example
+*.cdn.example.net
+claude.ai         # also proxied (lab proxy rule "ai"): the proxy's dnsmasq leaves it out (fake-ip answers)

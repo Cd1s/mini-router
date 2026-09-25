@@ -94,6 +94,8 @@ if [ -n "$(ls /sys/class/ieee80211 2> /dev/null)" ]; then
 fi
 # shellcheck disable=SC2086
 apk add -q $PKGS || die "apk add failed (check /etc/apk/repositories: main + community)"
+# dnsmasq with nftables sets (policy_routes domains) replaces the plain build; Alpine < 3.20 has none
+apk add -q dnsmasq-dnssec-nftset 2> /dev/null || echo "install: dnsmasq-dnssec-nftset not available: policy_routes by domain will not work" >&2
 
 # ---------------------------------------------------------------- mr + rootfs
 say "2/5 下载 mini-router / fetching mini-router ($VERSION)"

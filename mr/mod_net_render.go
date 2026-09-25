@@ -31,6 +31,11 @@ const (
 const wanmonConf = GenDir + "/wanmon.conf"
 
 func netRender(c *Config, out *Out) error {
+	// policy_routes domains_file: an unreadable file or a bad line stops the render (the nft and
+	// dnsmasq renderers skip what they cannot read)
+	if _, err := policyDomains(c, true); err != nil {
+		return err
+	}
 	for _, w := range c.WAN {
 		switch w.Proto {
 		case "pppoe":
@@ -304,8 +309,8 @@ func cidrStr(n *net.IPNet) string {
 	return n.String()
 }
 
-// policyRules: nft rules (mark hook) for one policy route; one per address family it covers.
-func policyRules(c *Config, p Policy) []string {
+// policyRules: nft rules (mark hook) for policy route i; one per address family it covers.
+func policyRules(c *Config, i int, p Policy) []string {
 	_, mark := c.WANTable(p.Via)
 	head := "iifname " + nftIfnames(c.LANBridges())
 	if p.MAC != "" {
@@ -318,15 +323,8 @@ func policyRules(c *Config, p Policy) []string {
 	if p.Dst != "" {
 		dst, _ = parseIPOrCIDR(p.Dst)
 	}
-	fams := []int{4, 6} // MAC only: both families
-	switch {
-	case src != nil:
-		fams = []int{family(src)}
-	case dst != nil:
-		fams = []int{family(dst)}
-	}
 	var out []string
-	for _, fam := range fams {
+	for _, fam := range policyFams(p) { // src / dst decide the family; otherwise both
 		s := head
 		kw := "ip"
 		if fam == 6 {
@@ -338,12 +336,20 @@ func policyRules(c *Config, p Policy) []string {
 		switch {
 		case dst != nil:
 			s += fmt.Sprintf(" %s daddr %s", kw, cidrStr(dst))
+		case p.byDomain(): // the destination is a learned address (below)
 		case fam == 4:
 			s += " ip daddr != " + lanNets4(c)
 		default:
 			s += " ip6 daddr != @lan6"
 		}
-		s += fmt.Sprintf(" ct state new ct mark set %s meta mark set %s comment %q", mark, mark, p.Name)
+		if p.byDomain() {
+			// addresses dnsmasq learned for the domains; a new connection restarts the address's timer
+			set := policySet(i, fam)
+			s += fmt.Sprintf(" %s daddr @%s ct state new update @%s { %s daddr }", kw, set, set, kw)
+		} else {
+			s += " ct state new"
+		}
+		s += fmt.Sprintf(" ct mark set %s meta mark set %s comment %q", mark, mark, p.Name)
 		out = append(out, s)
 	}
 	return out
@@ -393,6 +399,8 @@ func balanceRule(c *Config, members []lbMember) string {
 
 func netNft(c *Config, hook string, n *Nft) {
 	switch hook {
+	case "defs":
+		policyDomainDefs(c, n)
 	case "mark":
 		// connmark: remember which WAN an inbound connection used; LAN-side packets of that connection
 		// (replies, port-forward traffic) get the mark back and leave through the same WAN.
@@ -407,8 +415,8 @@ func netNft(c *Config, hook string, n *Nft) {
 		for _, br := range c.LANBridges() {
 			n.W("iifname %q ct mark != 0x0 meta mark set ct mark return", br)
 		}
-		for _, p := range c.Policy {
-			for _, r := range policyRules(c, p) {
+		for i, p := range c.Policy {
+			for _, r := range policyRules(c, i, p) {
 				n.W("%s", r)
 			}
 		}

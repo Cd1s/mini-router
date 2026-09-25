@@ -5,6 +5,11 @@
 #  2. functional test in two network namespaces with the real tools: busybox udhcpc + the mr hook
 #     against a dnsmasq DHCP server, a static WAN via `mr routes`, and the busybox sh health checker
 #     taking a WAN down and up again (routes, rules, balance map in the loaded nft ruleset, DNS).
+#  3. policy route by domain, end to end in three network namespaces: the rendered nftset= lines in a
+#     real dnsmasq (unprivileged, like the router's) fill the rendered nft sets from an upstream's answers,
+#     a LAN client's connection to such an address leaves through the policy's WAN (others through the
+#     default WAN), the learned addresses survive a firewall reload, a new connection restarts an
+#     address's timer, and a changed domain list starts with empty sets.
 set -eu
 : "${OUT:?}" "${ROOT:?}"
 step() { printf '\n== net: %s\n' "$*"; }
@@ -42,10 +47,13 @@ T=$OUT/net-func
 rm -rf "$T" && mkdir -p "$T/bin"
 mkdir -p /run/mini-router && mount -t tmpfs tmpfs /run/mini-router
 S=mrnet$$s C=mrnet$$c
+DS=mrdom$$s DC=mrdom$$c DL=mrdom$$l # policy route by domain (3.)
 cleanup() {
 	[ -f "$T/dnsmasq.pid" ] && kill "$(cat "$T/dnsmasq.pid")" 2> /dev/null
-	ip netns del "$S" 2> /dev/null
-	ip netns del "$C" 2> /dev/null
+	for n in "$S" "$C" "$DS" "$DC" "$DL"; do
+		for p in $(ip netns pids "$n" 2> /dev/null); do kill "$p" 2> /dev/null; done
+		ip netns del "$n" 2> /dev/null
+	done
 	umount /run/mini-router 2> /dev/null
 	return 0
 }
@@ -210,3 +218,116 @@ a=$(ip -n "$C" -4 -o addr show dev wan2)
 has "static address changed" "$a" "inet 10.98.0.3/24"
 hasnt "static address changed" "$a" "10.98.0.2/"
 echo "net: functional test ok"
+
+step "functional: policy route by domain (dnsmasq nftset -> nft set -> WAN mark), three network namespaces"
+# $DS = "internet" (upstream DNS + a server that echoes the source address it sees, reachable through both
+# uplinks), $DC = the router (the rendered network.sh, ruleset and nftset= lines), $DL = a LAN client
+D=$OUT/net-dom
+rm -rf "$D" && mkdir -p "$D/bin"
+find /run/mini-router -mindepth 1 -delete # WAN state of the test above
+cat > "$D/router.yaml" << 'YAML'
+system: {hostname: domtest}
+lan: {bridge: br-lan, ports: [lan2], ipv4: 192.168.1.6/24}
+wan:
+  - {name: wan, device: wan, proto: static, ipv4: 10.97.0.2/24, gateway: 10.97.0.1, metric: 10}
+  - {name: wan2, device: wan2, proto: static, ipv4: 10.96.0.2/24, gateway: 10.96.0.1, metric: 20}
+policy_routes:
+  - {name: video, domains: [video.example], via: wan2}
+firewall: {offload: software}
+dhcp: {start: 100, end: 200, lease: 12h, domain: lan}
+dns: {upstream: manual, servers: [10.97.0.1]}
+YAML
+"$MRH" -c "$D/router.yaml" -s "$T/secrets.yaml" validate
+"$MRH" -c "$D/router.yaml" -s "$T/secrets.yaml" render "$D/r" > /dev/null
+cp "$D/router.yaml" /etc/mini-router/router.yaml
+printf '#!/bin/sh\nexec %s -c %s -s %s "$@"\n' "$MRH" "$D/router.yaml" "$T/secrets.yaml" > "$D/bin/mr"
+chmod 755 "$D/bin/mr"
+export MR_BIN="$D/bin/mr" PATH="$D/bin:$PATH"
+inD() { ip netns exec "$DC" "$@"; }
+for n in "$DS" "$DC" "$DL"; do ip netns add "$n"; done
+ip link add wan netns "$DC" type veth peer name up1 netns "$DS"
+ip link add wan2 netns "$DC" type veth peer name up2 netns "$DS"
+ip link add lan2 netns "$DC" type veth peer name eth0 netns "$DL"
+ip -n "$DS" addr add 10.97.0.1/24 dev up1
+ip -n "$DS" addr add 10.96.0.1/24 dev up2
+for a in 192.0.2.80 192.0.2.81 192.0.2.82; do ip -n "$DS" addr add "$a/32" dev lo; done
+for d in lo up1 up2; do ip -n "$DS" link set "$d" up; done
+ip -n "$DC" link set lo up
+ip -n "$DL" link set lo up
+ip -n "$DL" link set eth0 up
+ip -n "$DL" addr add 192.168.1.50/24 dev eth0
+ip -n "$DL" route add default via 192.168.1.6
+inD sysctl -qw net.ipv4.ip_forward=1
+ip netns exec "$DS" dnsmasq --conf-file=/dev/null --no-resolv --no-hosts --listen-address=10.97.0.1 --bind-interfaces --local-ttl=300 \
+	--address=/video.example/192.0.2.80 --address=/video.example/2001:db8:80::1 --address=/other.example/192.0.2.81 \
+	--pid-file="$D/upstream.pid" --user=root --group=root
+cat > "$D/echo.py" << 'PY'
+import socket, sys
+if sys.argv[1] == "serve":  # tell every client the address it came from
+    s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("0.0.0.0", 8080)); s.listen(16)
+    while True:
+        c, a = s.accept(); c.sendall((a[0] + "\n").encode()); c.close()
+try:
+    print(socket.create_connection((sys.argv[1], 8080), timeout=2).recv(100).decode().strip())
+except OSError as e:
+    print("ERR " + type(e).__name__)
+PY
+setsid -f ip netns exec "$DS" python3 "$D/echo.py" serve > /dev/null 2>&1 < /dev/null
+seen() { ip netns exec "$DL" python3 "$D/echo.py" "$1"; } # the source address the server saw
+
+# the router: network.sh as generated, then `mr routes` (static WAN routes, tables, firewall via fwLoad)
+sed '/^# --- tail/,$d' "$D/r/etc/mini-router/gen/network.sh" > "$D/net.sh"
+inD sh "$D/net.sh" 2> "$D/net.sh.err" || { cat "$D/net.sh.err"; fail "network.sh (domain test)"; }
+inD mr routes
+nft=$(inD nft list table inet mr)
+has "domain sets" "$nft" "set pr_0_4"
+has "domain sets" "$nft" "set pr_0_6"
+has "domain rule" "$nft" "ip daddr @pr_0_4 ct state new update @pr_0_4 { ip daddr } ct mark set 0x0*201"
+has "domain rule" "$nft" "ip6 daddr @pr_0_6 ct state new update @pr_0_6 { ip6 daddr } ct mark set 0x0*201"
+# the router's dnsmasq with exactly the rendered nftset= lines, unprivileged like on the router (it must
+# keep CAP_NET_ADMIN for the sets by itself)
+grep '^nftset=' "$D/r/etc/dnsmasq.conf" > "$D/nftset.conf" || fail "dnsmasq.conf has no nftset= line"
+: > "$D/dnsmasq.log" && chmod 666 "$D/dnsmasq.log"
+inD dnsmasq --conf-file="$D/nftset.conf" --no-resolv --no-hosts --server=10.97.0.1 --listen-address=127.0.0.1 --bind-interfaces \
+	--pid-file="$D/router-dns.pid" --user=nobody --group=nogroup --log-facility="$D/dnsmasq.log"
+i=0
+until [ "$(seen 192.0.2.81)" = 10.97.0.2 ]; do
+	i=$((i + 1))
+	[ "$i" -le 30 ] || fail "LAN client never reached the server via the default WAN: $(seen 192.0.2.81)"
+	sleep 0.2
+done
+[ "$(seen 192.0.2.80)" = 10.97.0.2 ] || fail "before any DNS answer, 192.0.2.80 must use the default WAN: $(seen 192.0.2.80)"
+for q in "video.example A" "video.example AAAA" "other.example A"; do
+	# shellcheck disable=SC2086 # name and type
+	inD mr dns query $q > /dev/null || fail "router dnsmasq: query $q: $(cat "$D/dnsmasq.log")"
+done
+s4=$(inD nft list set inet mr pr_0_4)
+has "dnsmasq filled the IPv4 set" "$s4" "192.0.2.80"
+hasnt "other names stay out" "$s4" "192.0.2.81"
+has "dnsmasq filled the IPv6 set" "$(inD nft list set inet mr pr_0_6)" "2001:db8:80::1"
+[ "$(seen 192.0.2.80)" = 10.96.0.2 ] || fail "connection to video.example did not leave via wan2: $(seen 192.0.2.80)"
+[ "$(seen 192.0.2.81)" = 10.97.0.2 ] || fail "connection to other.example did not use the default WAN: $(seen 192.0.2.81)"
+echo "ok: video.example -> wan2 (10.96.0.2), other.example -> wan (10.97.0.2)"
+
+# a firewall reload replaces the table: the learned addresses must come back in the same load
+inD mr fw
+has "reload keeps learned addresses" "$(inD nft list set inet mr pr_0_4)" "192.0.2.80"
+[ "$(seen 192.0.2.80)" = 10.96.0.2 ] || fail "after a reload video.example left via: $(seen 192.0.2.80)"
+echo "ok: learned addresses carried over a firewall reload"
+
+# a new connection to a learned address restarts its timer (with the set's timeout)
+inD nft add element inet mr pr_0_4 '{ 192.0.2.82 timeout 100s }'
+[ "$(seen 192.0.2.82)" = 10.96.0.2 ] || fail "learned 192.0.2.82 did not leave via wan2: $(seen 192.0.2.82)"
+exp=$(inD nft -j list set inet mr pr_0_4 | python3 -c 'import json, sys
+for s in json.load(sys.stdin)["nftables"]:
+    for e in s.get("set", {}).get("elem", []):
+        if isinstance(e, dict) and e["elem"].get("val") == "192.0.2.82": print(e["elem"].get("expires", 0))')
+[ "${exp:-0}" -gt 3600 ] || fail "a new connection did not restart the address's timer (expires ${exp:-none})"
+echo "ok: a new connection restarts the address's timer (expires in ${exp}s)"
+
+# another domain list: the old addresses are not carried over (a removed domain must not stay on the WAN)
+sed 's/domains: \[video.example\]/domains: [video.example, extra.example]/' "$D/router.yaml" > "$D/router-b.yaml"
+inD "$MRH" -c "$D/router-b.yaml" -s "$T/secrets.yaml" fw
+hasnt "changed list starts empty" "$(inD nft list set inet mr pr_0_4)" "192.0.2.80"
+[ "$(seen 192.0.2.80)" = 10.97.0.2 ] || fail "changed list: 192.0.2.80 still left via: $(seen 192.0.2.80)"
+echo "net: domain policy test ok"

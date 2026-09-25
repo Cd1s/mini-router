@@ -11,7 +11,7 @@ KVER=6.18.52
 REPO=$W/repo
 PKGS="alpine-baselayout alpine-release apk-tools busybox busybox-openrc busybox-mdev-openrc busybox-extras
 	openrc musl-utils ca-certificates-bundle
-	iproute2-minimal iproute2-ss iw nftables ppp-daemon ppp-pppoe dhcpcd dhcpcd-openrc dnsmasq dnsmasq-openrc hostapd
+	iproute2-minimal iproute2-ss iw nftables ppp-daemon ppp-pppoe dhcpcd dhcpcd-openrc dnsmasq-dnssec-nftset dnsmasq-openrc hostapd
 	wireless-regdb igmpproxy dropbear dropbear-openrc stubby stubby-openrc curl inotify-tools jq
 	mtd-utils-ubi kexec-tools ssl_client"
 

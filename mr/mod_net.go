@@ -79,18 +79,25 @@ type Mcast struct {
 }
 
 // Policy steers NEW outbound connections from LAN-side networks to one WAN. Selectors are ANDed;
-// at least one of MAC / Src / Dst is required. Src/Dst decide the family (IPv4 or IPv6); a MAC-only
-// rule covers both. Table/Mark are optional: the first policy via a WAN may pin that WAN's routing
-// table and fwmark (the home config keeps table 102 / 0x102 for wan2); otherwise 200+i / 0x200+i.
+// at least one of MAC / Src / Dst / Domains is required. Src/Dst decide the family (IPv4 or IPv6);
+// a rule without them covers both. Domains: dnsmasq puts the addresses its upstream answers for
+// these names (and their subdomains) into nft sets, the rule matches the destination against them
+// (mod_net_domains.go). Table/Mark are optional: the first policy via a WAN may pin that WAN's
+// routing table and fwmark (the home config keeps table 102 / 0x102 for wan2); otherwise 200+i / 0x200+i.
 type Policy struct {
-	Name  string `yaml:"name"`
-	MAC   string `yaml:"mac,omitempty"`
-	Src   string `yaml:"src,omitempty"` // source IP or CIDR (LAN side)
-	Dst   string `yaml:"dst,omitempty"` // destination IP or CIDR
-	Via   string `yaml:"via"`           // WAN name
-	Table int    `yaml:"table,omitempty"`
-	Mark  string `yaml:"mark,omitempty"` // e.g. 0x102
+	Name        string   `yaml:"name"`
+	MAC         string   `yaml:"mac,omitempty"`
+	Src         string   `yaml:"src,omitempty"`          // source IP or CIDR (LAN side)
+	Dst         string   `yaml:"dst,omitempty"`          // destination IP or CIDR
+	Domains     []string `yaml:"domains,omitempty"`      // destination by DNS name: example.com = it and every subdomain
+	DomainsFile string   `yaml:"domains_file,omitempty"` // more domains, one per line (# comments)
+	Via         string   `yaml:"via"`                    // WAN name
+	Table       int      `yaml:"table,omitempty"`
+	Mark        string   `yaml:"mark,omitempty"` // e.g. 0x102
 }
+
+// byDomain reports whether the policy selects destinations by DNS name.
+func (p Policy) byDomain() bool { return len(p.Domains) > 0 || p.DomainsFile != "" }
 
 // MultiWAN: health-checked failover and optional per-connection load balancing.
 //
@@ -190,6 +197,8 @@ func init() {
 		Render:   netRender,
 		NetSh:    netSh,
 		Nft:      netNft,
+		// policy_routes domains: dnsmasq fills the nft sets the policy rules match (mod_net_domains.go)
+		Dnsmasq: policyDnsmasq,
 		FlowDevs: func(c *Config) []string {
 			devs := append([]string{}, c.LAN.Ports...)
 			for _, n := range c.Networks {
@@ -592,8 +601,16 @@ func netValidatePolicy(c *Config, v *Validator) {
 		if !reLabel.MatchString(pr.Name) {
 			v.Add("%s.name: invalid %q", p, pr.Name)
 		}
-		if pr.MAC == "" && pr.Src == "" && pr.Dst == "" {
-			v.Add("%s: need at least one of mac, src, dst", p)
+		if pr.MAC == "" && pr.Src == "" && pr.Dst == "" && !pr.byDomain() {
+			v.Add("%s: need at least one of mac, src, dst, domains", p)
+		}
+		for _, d := range pr.Domains {
+			if _, ok := proxyNormDomain(d); !ok {
+				v.Add("%s.domains: invalid domain %q", p, d)
+			}
+		}
+		if pr.DomainsFile != "" && !rePath.MatchString(pr.DomainsFile) {
+			v.Add("%s.domains_file: absolute path required, got %q", p, pr.DomainsFile)
 		}
 		if pr.MAC != "" && !reMAC.MatchString(pr.MAC) {
 			v.Add("%s.mac: invalid %q", p, pr.MAC)
@@ -629,6 +646,15 @@ func netValidatePolicy(c *Config, v *Validator) {
 		if t, m := c.WANTable(pr.Via); pr.Table != 0 && m != "" && (pr.Table != t || markValue(pr.Mark) != markValue(m)) {
 			v.Add("%s: wan %s already uses table %d / mark %s (leave table and mark empty)", p, pr.Via, t, m)
 		}
+	}
+	n := 0
+	for _, pr := range c.Policy {
+		if pr.byDomain() {
+			n++
+		}
+	}
+	if n > policyDomainMax {
+		v.Add("policy_routes: at most %d routes with domains (put more domains into one route), got %d", policyDomainMax, n)
 	}
 }
 
