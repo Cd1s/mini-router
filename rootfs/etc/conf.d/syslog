@@ -1,0 +1,3 @@
+# mini-router: busybox syslogd keeps /var/log/messages in RAM (tmpfs). 1 MB + one rotated file
+# instead of 200 KB, so a day of logs survives; -t strips the priority from the kernel's messages.
+SYSLOGD_OPTS="-t -s 1024 -b 1"

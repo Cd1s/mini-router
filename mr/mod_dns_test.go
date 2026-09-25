@@ -51,6 +51,7 @@ domain-needed
 localise-queries
 expand-hosts
 dhcp-authoritative
+quiet-ra
 local=/lan/
 domain=lan
 stop-dns-rebind

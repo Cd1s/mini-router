@@ -224,6 +224,8 @@ func renderDnsmasq(c *Config) string {
 	}
 	b.WriteString("bind-dynamic\nlisten-address=127.0.0.1\n")
 	b.WriteString("domain-needed\nlocalise-queries\nexpand-hosts\ndhcp-authoritative\n")
+	// router advertisements are logged once per RA on every LAN (~95% of the RAM log): keep them out
+	b.WriteString("quiet-ra\n")
 	w("local=/%s/\ndomain=%s", c.DHCP.Domain, c.DHCP.Domain)
 	if c.DNS.Rebind {
 		b.WriteString("stop-dns-rebind\nrebind-localhost-ok\n")
