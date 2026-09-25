@@ -81,7 +81,7 @@ func monCTFiles(ct, uptime string) map[string]string {
 		"/proc/net/nf_conntrack":                    ct,
 		"/proc/uptime":                              uptime,
 		"/proc/sys/net/netfilter/nf_conntrack_acct": "1\n",
-		"/tmp/dhcp.leases": "1790291888 02:e3:50:10:6a:63 192.168.1.233 laptop 01:02:e3:50:10:6a\n" +
+		"/tmp/dhcp.leases": "1790291888 02:e3:50:10:6a:63 192.168.1.233 laptop 01:02:e3:50:10:6a:63\n" +
 			"1790290795 02:c8:61:52:f4:45 192.168.1.170 TrebleDroid *\n" +
 			"1790289177 02:13:2c:f7:cb:f2 192.168.1.167 * *\n",
 		GenDir + "/nftables.nft": "table inet mr {\n\tflowtable ft {\n\t\thook ingress priority filter\n\t\tdevices = { \"lan2\", \"wan\" }\n\t\tflags offload\n\t}\n}\n",

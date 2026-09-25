@@ -43,7 +43,7 @@ func TestRender(t *testing.T) {
 		"/etc/modprobe.d/mt7915e.conf":   {"options mt7915e wed_enable=1"},
 		"/etc/hostapd/hostapd-phy0.conf": {"hw_mode=g", "channel=0", "chanlist=1-11", "[HT40+]", "noscan=1"},
 		"/etc/dhcpcd.conf":               {"interface pppoe-wan2", "ia_pd 2 br-lan/0/64/1"},
-		GenDir + "/network.sh":           {"ip link set wan address 02:55:a3:1c:8d:ed", "ip -4 rule add fwmark 0x102 lookup 102 pref 5300", "ip -6 rule add fwmark 0x200 lookup 200 pref 5300", "p=$(mr_phy 2);", "iw phy \"$p\" interface add phy1-ap0 type __ap"},
+		GenDir + "/network.sh":           {"ip link set wan address a4:a9:30:6e:2b:89", "ip -4 rule add fwmark 0x102 lookup 102 pref 5300", "ip -6 rule add fwmark 0x200 lookup 200 pref 5300", "p=$(mr_phy 2);", "iw phy \"$p\" interface add phy1-ap0 type __ap"},
 		GenDir + "/wifi-post.sh":         {"iw dev phy1-ap0 set txpower fixed 3000"},
 	}
 	for path, subs := range want {

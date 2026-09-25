@@ -101,7 +101,7 @@ firewall:
   ipv6_allow:                # IPv6 inbound pinholes to LAN-side hosts (no NAT on IPv6)
     - name: nas-https
       iid: "::211:32ff:fe12:3456"   # interface identifier = low 64 bits of the address, or …
-      # mac: "02:f7:18:f3:ad:b7"   # … derive the EUI-64 identifier from the MAC (exactly one of iid/mac)
+      # mac: "00:11:32:12:34:56"   # … derive the EUI-64 identifier from the MAC (exactly one of iid/mac)
       proto: [tcp]
       port: "443,8443"
       src_ip: ["2001:db8:100::/48"] # optional, IPv6 only

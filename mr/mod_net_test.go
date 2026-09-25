@@ -58,7 +58,7 @@ func TestNetHomeConfig(t *testing.T) {
 		"ip -4 rule add fwmark 0x200 lookup 200 pref 5300",
 		"ip -4 rule add fwmark 0x102 lookup 102 pref 5300",
 		"ip -6 rule add fwmark 0x102 lookup 102 pref 5300",
-		"ip link set wan address 02:55:a3:1c:8d:ed",
+		"ip link set wan address a4:a9:30:6e:2b:89",
 		"echo e > $f")
 	if n := strings.Count(sh, "ip link set wan up\n"); n != 1 {
 		t.Errorf("network.sh: wan brought up %d times", n)
@@ -182,7 +182,7 @@ func TestNetValidation(t *testing.T) {
 			c.Networks = []Network{{Name: "iot", IPv4: "192.168.30.1/24", Ports: []string{"wan.20"}}}
 			c.WAN[1] = WAN{Name: "wan2", Device: "wan", VLAN: 20, Proto: "dhcp", Metric: 40}
 		}, "wan[1].device: wan.20 is an untagged port of iot"},
-		{"mac-conflict", func(c *Config) { c.WAN[1].MAC = "02:00:00:00:00:01" }, "wan[1].mac: wan already gets MAC 02:55:a3:1c:8d:ed from wan wan"},
+		{"mac-conflict", func(c *Config) { c.WAN[1].MAC = "02:00:00:00:00:01" }, "wan[1].mac: wan already gets MAC a4:a9:30:6e:2b:89 from wan wan"},
 		{"trunk-on-wan-wire", func(c *Config) {
 			c.Networks = []Network{{Name: "iot", IPv4: "192.168.30.1/24", VLAN: 10, Trunk: []string{"wan"}}}
 		}, "wan[0].device: wan carries VLAN 10 of network iot"},

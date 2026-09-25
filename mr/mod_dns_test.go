@@ -356,7 +356,7 @@ func TestDHCPValidation(t *testing.T) {
 }
 
 func TestParseLeases(t *testing.T) {
-	data := `1790291888 02:e3:50:10:6a:63 192.168.1.233 laptop 01:02:e3:50:10:6a
+	data := `1790291888 02:e3:50:10:6a:63 192.168.1.233 laptop 01:02:e3:50:10:6a:63
 0 02:c3:06:d6:7f:8a 192.168.1.66 desktop *
 1790289177 02:13:2c:f7:cb:f2 192.168.20.167 * *
 garbage line
@@ -367,7 +367,7 @@ duid 00:01:00:01:2c:5f:aa:bb:cc:dd:ee:ff
 	if len(v4) != 3 || len(v6) != 1 {
 		t.Fatalf("got %d v4 / %d v6", len(v4), len(v6))
 	}
-	if v4[0].clientID != "01:02:e3:50:10:6a" || v4[1].Expires != 0 || v4[1].clientID != "" || v6[0].IP != "2001:db8::1000" || v6[0].IAID != "12345" {
+	if v4[0].clientID != "01:02:e3:50:10:6a:63" || v4[1].Expires != 0 || v4[1].clientID != "" || v6[0].IP != "2001:db8::1000" || v6[0].IAID != "12345" {
 		t.Fatalf("%+v %+v", v4, v6)
 	}
 	c := testConfig(t)

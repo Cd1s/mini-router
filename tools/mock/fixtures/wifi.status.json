@@ -10,7 +10,7 @@
   "band": "2g",
   "network": "lan",
   "state": "ENABLED",
-  "bssid": "02:f3:84:0b:8b:26"
+  "bssid": "a6:a9:30:6e:2b:88"
  },
  {
   "ifname": "phy0-ap0-1",
@@ -23,7 +23,7 @@
   "band": "2g",
   "network": "iot",
   "state": "ENABLED",
-  "bssid": "02:de:9a:07:0e:8c"
+  "bssid": "a6:a9:30:6e:2b:89"
  },
  {
   "ifname": "phy1-ap0",
@@ -36,7 +36,7 @@
   "band": "5g",
   "network": "lan",
   "state": "ENABLED",
-  "bssid": "02:d9:3b:a0:8c:8f"
+  "bssid": "aa:a9:30:6e:2b:8c"
  },
  {
   "ifname": "phy1-ap0-1",
@@ -49,6 +49,6 @@
   "band": "5g",
   "network": "guest",
   "state": "ENABLED",
-  "bssid": "02:a2:6e:81:ee:08"
+  "bssid": "aa:a9:30:6e:2b:8d"
  }
 ]

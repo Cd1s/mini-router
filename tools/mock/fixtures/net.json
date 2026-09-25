@@ -161,7 +161,7 @@
      "valid_life_time": 4294967295
     }
    ],
-   "address": "02:55:a3:1c:8d:ed",
+   "address": "a4:a9:30:6e:2b:89",
    "broadcast": "ff:ff:ff:ff:ff:ff",
    "flags": [
     "BROADCAST",
@@ -615,7 +615,7 @@
    "txqlen": 1000
   },
   {
-   "address": "02:55:a3:1c:8d:ed",
+   "address": "a4:a9:30:6e:2b:89",
    "broadcast": "ff:ff:ff:ff:ff:ff",
    "flags": [
     "BROADCAST",

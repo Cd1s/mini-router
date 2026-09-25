@@ -163,7 +163,7 @@
     "ipv6": true,
     "ipv6_pd": true,
     "ipv6_srcroute": false,
-    "mac": "02:55:a3:1c:8d:ed",
+    "mac": "a4:a9:30:6e:2b:89",
     "metric": 0,
     "mtu": 1492,
     "name": "wan",

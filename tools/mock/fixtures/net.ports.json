@@ -19,7 +19,7 @@
    "role": "WAN wan, WAN wan2",
    "speed": 1000,
    "duplex": "full",
-   "mac": "02:55:a3:1c:8d:ed"
+   "mac": "a4:a9:30:6e:2b:89"
   },
   {
    "name": "lan2",

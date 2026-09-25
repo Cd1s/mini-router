@@ -86,7 +86,7 @@ wan:
   - name: wan                 # PPPoE 时接口名 pppoe-<name>，所以最多 9 个字符
     device: wan               # 物理口
     vlan: 0                   # 可选：运营商要求的 VLAN（PPPoE / DHCP / 静态都可用），接口 wan.<vlan>
-    mac: 02:55:a3:1c:8d:ed    # 可选：克隆 MAC（作用于物理口，所以同一个口上的几条 WAN 只能用同一个 MAC）
+    mac: a4:a9:30:6e:2b:89    # 可选：克隆 MAC（作用于物理口，所以同一个口上的几条 WAN 只能用同一个 MAC）
     proto: pppoe              # pppoe | dhcp | static
     username: "user@example-isp"
     password_secret: pppoe_password   # secrets.yaml 里的键名
