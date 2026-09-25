@@ -580,6 +580,19 @@ func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
 			}
 		}
 	}
+	// a DHCP / static WAN has the device's MTU as its IP MTU: it must not be raised for a PPPoE
+	// session's baby jumbo frames (RFC 4638, wanLinkMTUs) on the same device
+	need := wanLinkMTUs(c)
+	for i, w := range c.WAN {
+		want := w.MTU
+		if want == 0 {
+			want = 1500
+		}
+		if w.Proto != "pppoe" && need[w.LinkDev()] > want {
+			v.Add("wan[%d].mtu: %s also carries PPPoE with mtu above 1492, which needs link MTU %d — this WAN would get it too (put one of them on a VLAN, or give the PPPoE mtu 1492)",
+				i, w.LinkDev(), need[w.LinkDev()])
+		}
+	}
 	// every WAN needs its own table and mark
 	tables, marks := map[int]string{}, map[uint64]string{}
 	for _, w := range c.WAN {
