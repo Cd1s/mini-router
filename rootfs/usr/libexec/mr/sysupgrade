@@ -364,6 +364,12 @@ kexec_installer() {
 	copy_bin /bin/busybox "$S" || die "staging busybox failed"
 	cp /lib/ld-musl-aarch64.so.1 "$S/lib/" && ln -sf ld-musl-aarch64.so.1 "$S/lib/libc.musl-aarch64.so.1"
 	ln -s busybox "$S/bin/sh"
+	# every applet as a link: /sbin/mr-preinit runs first and needs mount / awk / cat before the
+	# installer could run `busybox --install` (without them it took the flash path, ended in a bare
+	# `busybox init` and sat there forever — the kernel kept feeding the watchdog)
+	for a in $(/bin/busybox --list); do
+		[ -e "$S/bin/$a" ] || ln -s busybox "$S/bin/$a"
+	done
 	for t in ubiupdatevol ubirsvol ubirmvol ubimkvol ubiblock; do
 		copy_bin "$(command -v "$t")" "$S" || die "staging $t failed"
 	done
@@ -375,6 +381,11 @@ kexec_installer() {
 	rm -rf "$S"
 	unlzma -c "$WORK/kernel.lzma" > "$WORK/Image" || die "cannot unpack the kernel"
 	rm -f "$WORK/kernel.lzma"
+	if [ -n "${MR_SYSUPGRADE_STAGE_ONLY:-}" ]; then # test: build the installer initramfs, stop here
+		msg "stage only: installer initramfs at $WORK/initrd.cpio, kernel at $WORK/Image"
+		openrc default > /dev/null 2>&1 # bring back the services stopped to free RAM
+		exit 0
+	fi
 	msg "loading the new kernel with the installer ($(fsize "$WORK/initrd.cpio") bytes)"
 	kexec -l "$WORK/Image" --dtb="$WORK/fdt" --initrd="$WORK/initrd.cpio" --command-line="$KEXEC_CMDLINE" ||
 		die "kexec load failed (nothing was changed)"

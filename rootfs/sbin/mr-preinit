@@ -17,6 +17,9 @@
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 umask 022
+# a minimal initramfs (the sysupgrade installer) may ship busybox without applet links: this script
+# needs mount / awk / cat before anything else
+command -v awk > /dev/null 2>&1 || { [ -x /bin/busybox ] && /bin/busybox --install -s /bin; }
 
 run_init() {
 	cd / || :
