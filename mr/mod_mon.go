@@ -155,14 +155,33 @@ func monCmd(c *Config, args []string) error {
 
 type monIface struct {
 	Name  string `json:"name"`
-	Role  string `json:"role,omitempty"` // wan | wan-dev | lan | port | wifi | vpn
-	State string `json:"state"`          // operstate: up, down, unknown (ppp/tun report unknown while up)
-	RX    uint64 `json:"rx"`             // bytes
+	Role  string `json:"role,omitempty"`     // wan | wan-dev | lan | port | wifi | vpn
+	State string `json:"state"`              // up | down | … (operstate; ppp/tun "unknown" resolved by IFF_UP|IFF_RUNNING)
+	Raw   string `json:"oper_raw,omitempty"` // the kernel's operstate when State was derived from the flags
+	RX    uint64 `json:"rx"`                 // bytes
 	TX    uint64 `json:"tx"`
 	RXP   uint64 `json:"rxp"` // packets
 	TXP   uint64 `json:"txp"`
 	Err   uint64 `json:"err"`  // rx + tx errors
 	Drop  uint64 `json:"drop"` // rx + tx drops
+}
+
+// monDisk: a filesystem the monitor shows (config storage on flash, /tmp in RAM).
+type monDisk struct {
+	Name    string `json:"name"` // config | tmp
+	Path    string `json:"path"`
+	TotalKB int64  `json:"total_kb"`
+	AvailKB int64  `json:"avail_kb"`
+}
+
+func monDisks() []monDisk {
+	out := []monDisk{}
+	for _, d := range []monDisk{{Name: "config", Path: "/etc/mini-router"}, {Name: "tmp", Path: "/tmp"}} {
+		if d.TotalKB, d.AvailKB = dfKB(d.Path); d.TotalKB > 0 {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 type monTemp struct {
@@ -187,6 +206,7 @@ func monNow(c *Config) map[string]any {
 		"ct":     atoi(strings.TrimSpace(readFile(monPath("/proc/sys/net/netfilter/nf_conntrack_count")))),
 		"ct_max": atoi(strings.TrimSpace(readFile(monPath("/proc/sys/net/netfilter/nf_conntrack_max")))),
 		"temps":  monTemps(),
+		"disks":  monDisks(),
 		"ifaces": monIfaces(c),
 	}
 	if f := strings.Fields(readFile(monPath("/proc/loadavg"))); len(f) >= 4 {
@@ -281,8 +301,12 @@ func monIfaces(c *Config) []monIface {
 		}
 		n := func(i int) uint64 { v, _ := strconv.ParseUint(f[i], 10, 64); return v }
 		sys := monPath("/sys/class/net/" + name)
-		it := monIface{Name: name, Role: roles[name], State: strings.TrimSpace(readFile(sys + "/operstate")),
+		raw := strings.TrimSpace(readFile(sys + "/operstate"))
+		it := monIface{Name: name, Role: roles[name], State: effOper(raw, readFile(sys+"/flags")),
 			RX: n(0), RXP: n(1), TX: n(8), TXP: n(9), Err: n(2) + n(10), Drop: n(3) + n(11)}
+		if raw != it.State {
+			it.Raw = raw
+		}
 		if it.Role == "" {
 			switch {
 			case monExists(sys + "/phy80211"):

@@ -55,8 +55,8 @@ checks every service and rolls back on its own. The web UI, the CLI and AI agent
 |---|---|
 | <img src="docs/assets/shot-mobile.png" alt="手机端" width="440"> | <img src="docs/assets/shot-proxy.png" alt="代理节点" width="440"> |
 
-<p align="center"><img src="docs/assets/shot-devices-dark.png" alt="每设备流量（深色主题）" width="920"><br>
-<sub>每设备实时流量（深色主题）。截图均为演示数据。</sub></p>
+<p align="center"><img src="docs/assets/shot-monitor.png" alt="实时监控（深色主题）" width="920"><br>
+<sub>实时监控：CPU / 内存 / 存储占用、每核 CPU 构成、接口流量（深色主题）。截图均为演示数据。</sub></p>
 
 ## 功能 / Features
 
@@ -67,7 +67,7 @@ checks every service and rolls back on its own. The web UI, the CLI and AI agent
 | DNS / DHCP | dnsmasq：DHCP 静态分配与选项、IPv6 RA / DHCPv6、本地记录（A/AAAA/CNAME/SRV…）、DNS 分流、DoT（stubby）、统计与临时查询日志 |
 | 防火墙 fw | nftables：区域、端口转发（来源限制 / 线路选择 / NAT 回流）、IPv6 入站（按接口标识，前缀变化也有效）、通信规则（含时间段）、设备上网管控、硬件 / 软件流量卸载 |
 | 代理 proxy | sing-box 选择性透明代理：fake-ip + nftables tproxy，只有命中规则的域名 / IP 进代理；全协议节点、节点组（自动测速 / 手选）、分享链接与订阅、例外设备 |
-| 监控 mon | 实时流量 / CPU / 内存图、24 小时历史、每设备流量、连接表、进程与内核日志 |
+| 监控 mon | 占用仪表（CPU / 内存 / 连接数 / 温度 / 存储）、每核 CPU 构成、内存构成、实时流量图、24 小时历史、每设备流量、连接表、进程与内核日志 |
 | 系统 sys | 时区 / NTP、SSH 与密钥、计划任务、备份恢复、固件升级、服务管理、日志、诊断（ping / traceroute / nslookup） |
 
 刻意**不做**的：WireGuard 服务端、SQM、UPnP、广告过滤这类“有了更像 OpenWrt”的功能——每个功能都要对得起它占的内存和闪存。

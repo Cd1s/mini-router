@@ -59,6 +59,21 @@ header .meta{color:var(--mut);font-size:12px}
 .stat .v{font-size:20px;font-weight:600;margin-top:2px}
 .stat .s{color:var(--mut);font-size:12px}
 .bar{height:6px;background:var(--line);border-radius:3px;margin-top:6px;overflow:hidden}
+.grid.gauges{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+.gauge{display:flex;align-items:center;gap:14px;padding:14px 16px;margin:0}
+.gauge-r{position:relative;width:76px;height:76px;flex:none}
+.gauge-r svg{width:100%;height:100%;display:block}
+.gauge-p{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;font-variant-numeric:tabular-nums}
+.gauge-fg{stroke:var(--acc)}.gauge-fg.ok{stroke:var(--ok)}.gauge-fg.warn{stroke:var(--warn)}.gauge-fg.bad{stroke:var(--bad)}
+.gauge-t{min-width:0;flex:1}
+.gauge-t .l{color:var(--mut);font-size:12px}
+.gauge-t .v{font-size:18px;font-weight:600;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.gauge-t .s{color:var(--mut);font-size:12px;overflow:hidden;text-overflow:ellipsis}
+.spark{display:block;width:100%;height:26px;margin-top:6px}
+.lc{display:flex;gap:6px}
+.lc-axis{position:relative;flex:none;width:60px;font-size:10px;color:var(--mut);font-variant-numeric:tabular-nums}
+.lc-axis span{position:absolute;right:0;transform:translateY(-50%);white-space:nowrap}
+.lc-svg{flex:1;min-width:0;width:100%;display:block}
 .bar i{display:block;height:100%;background:var(--acc)}
 table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
@@ -129,6 +144,10 @@ pre{background:var(--code);border:1px solid var(--line);border-radius:6px;paddin
   .form{grid-template-columns:1fr}
   .form label.l{text-align:left;margin-bottom:-6px}
   .form .hint{grid-column:1}
+  .grid.gauges{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+  .gauge{flex-direction:column;align-items:flex-start;gap:8px;padding:12px}
+  .gauge-r{width:64px;height:64px}
+  .gauge-t .v{font-size:16px}
 }
 </style>
 </head>

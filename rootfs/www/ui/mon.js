@@ -5,7 +5,7 @@
 addCSS(`
 .mon-kpi{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));margin-bottom:14px}
 .mon-kpi .card{margin:0}
-.mon-axis{display:flex;justify-content:space-between;font-size:11px;color:var(--mut);padding-left:34px}
+.mon-axis{display:flex;justify-content:space-between;font-size:11px;color:var(--mut);padding-left:66px}
 .mon-tbl th,.mon-tbl td{padding:5px 8px;font-size:12px;white-space:nowrap}
 .mon-tbl td.w{white-space:normal;word-break:break-all;min-width:180px}
 .mon-tbl .n{text-align:right;font-variant-numeric:tabular-nums}
@@ -20,13 +20,25 @@ addCSS(`
 .mon-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .mon-note{padding:8px 12px;border-radius:6px;background:rgba(201,138,11,.08);border:1px solid rgba(201,138,11,.35);color:var(--warn);margin-bottom:12px;font-size:12px}
 .mon-hint{color:var(--mut);font-size:12px;padding:8px 16px}
-.mon-grid2{display:grid;gap:0 14px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.mon-grid2{display:grid;gap:0 14px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));align-items:start}
 .mon-log{max-height:70vh;overflow:auto;background:var(--code);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:12px}
 .mon-log div{white-space:pre-wrap;word-break:break-all}
 .mon-log .l0,.mon-log .l1,.mon-log .l2,.mon-log .l3{color:var(--bad)}
 .mon-log .l4{color:var(--warn)}
 .mon-log .l7{color:var(--mut)}
 .mon-lbl{font-weight:400;font-size:12px;display:inline-flex;gap:4px;align-items:center;white-space:nowrap}
+.mon-stack{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--line)}
+.mon-stack i{display:block;height:100%}
+.mon-legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--mut);margin-top:10px}
+.mon-legend b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
+.mon-sw{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px;border:1px solid var(--line)}
+.mon-core{display:grid;grid-template-columns:40px 1fr 42px;gap:10px;align-items:center;margin:6px 0;font-size:12px}
+.mon-core .mon-stack{height:10px}
+.mon-core .n{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.mon-lbl2{font-size:12px;color:var(--mut);margin-bottom:6px}
+.mon-lbl2 b{color:var(--fg)}
+.mon-dn{color:${COLORS[0]}}.mon-up{color:${COLORS[1]}}
+.mon-wan .spark{height:22px;margin-top:4px}
 @media (max-width:820px){.mon-grid2{grid-template-columns:1fr}}
 `);
 
@@ -103,21 +115,30 @@ function cpuPct(a, b){
 // ---------- 实时监控 ----------
 const RT = {sel:"", all:false};
 const N = 150; // realtime points kept per series (5 min at 2 s)
+// CPU time split colours (stacked bars + legend)
+const CPUPART = [["usr","用户",COLORS[0]], ["sys","系统",COLORS[4]], ["irq","硬中断",COLORS[3]], ["sirq","软中断",COLORS[5]], ["io","iowait",COLORS[2]]];
+const stack = parts => h("div",{class:"mon-stack"}, parts.filter(x=>x[0]>0.05).map(([v,c,t])=>h("i",{style:`width:${Math.min(100,v).toFixed(2)}%;background:${c}`, title:t||""})));
+const legend = items => h("div",{class:"mon-legend"}, items.map(([c,l,v])=>h("span",{}, h("span",{class:"mon-sw",style:"background:"+c}), l+" ", h("b",{},v))));
+const DISK = {config:"配置存储", tmp:"/tmp（内存盘）"};
 
 async function pageRealtime(){
   const here = start();
-  const kpi = h("div",{class:"mon-kpi"}), trafTitle = h("span"), trafChart = h("div"), ifTbl = h("div"), cpuChart = h("div"), cpuTbl = h("div");
+  const kpi = h("div",{class:"grid gauges"}), memBox = h("div"), cpuBars = h("div"), cpuChart = h("div");
+  const trafTitle = h("span"), trafChart = h("div"), ifTbl = h("div");
   const root = h("div",{}, kpi,
+    h("div",{class:"mon-grid2",style:"margin-top:14px"}, card("内存", memBox), card("CPU（每核）", [cpuBars, h("div",{style:"margin-top:12px"}, cpuChart)])),
     card(h("span",{},"接口流量 · ", trafTitle), [trafChart, h("div",{style:"margin-top:10px"}, ifTbl),
       h("div",{class:"mut",style:"font-size:12px;margin-top:8px"},"点击接口切换曲线。已被硬件/软件加速的连接不经过 pppoe-* 等虚拟接口的计数，外网实际流量以「WAN 物理口」为准。")],
-      chk("显示空闲接口", RT.all, v=>{ RT.all=v; draw(); })),
-    card("CPU 使用率（每核）", [cpuChart, h("div",{style:"margin-top:10px"}, cpuTbl)]));
-  const hist = {}, cpuH = [];
+      chk("显示空闲接口", RT.all, v=>{ RT.all=v; draw(); })));
+  const hist = {}, cpuH = [], kh = {rx:[], tx:[], cpu:[], mem:[], ct:[], temp:[]};
   let prev = null, cur = null;
-  const push = (a, v)=>{ a.push(v); if (a.length>N) a.shift(); };
+  const push = (a, v)=>{ if (v==null) return; a.push(v); if (a.length>N) a.shift(); };
 
   const sample = async ()=>{
     const j = await api("mon.now");
+    const m = j.mem||{}, temps = (j.temps||[]).filter(x=>x.mc);
+    j.memUsed = (m.total||0)-(m.avail||0);
+    j.tmax = temps.length ? Math.max(...temps.map(x=>x.mc))/1000 : null;
     if (prev && j.up > prev.up){
       const dt = j.up - prev.up, t = j.t/1000;
       const pi = Object.fromEntries((prev.ifaces||[]).map(x=>[x.name,x]));
@@ -128,10 +149,15 @@ async function pageRealtime(){
       }
       (j.cpus||[]).forEach((c,i)=>{ const u = cpuPct(prev.cpus&&prev.cpus[i], c); if (u){ j["c"+i] = u; push(cpuH[i] ||= [], [t, u.busy]); } });
       j.total = cpuPct(prev.cpu, j.cpu);
+      const w = wanOf(j.ifaces||[]);
+      push(kh.rx, w.reduce((s,x)=>s+(x.rr||0),0)*8); push(kh.tx, w.reduce((s,x)=>s+(x.tr||0),0)*8);
+      push(kh.cpu, j.total && j.total.busy);
     }
+    push(kh.mem, m.total ? j.memUsed*100/m.total : null); push(kh.ct, j.ct); push(kh.temp, j.tmax);
     prev = j; cur = j;
     draw();
   };
+  const wanOf = ifs => ifs.some(x=>x.role==="wan-dev") ? ifs.filter(x=>x.role==="wan-dev") : ifs.filter(x=>x.role==="wan");
 
   const draw = ()=>{
     const j = cur; if (!j) return;
@@ -140,19 +166,44 @@ async function pageRealtime(){
       const pick = ifs.find(x=>x.role==="wan-dev") || ifs.find(x=>x.role==="wan") || ifs.find(x=>x.role==="lan") || ifs[0];
       RT.sel = pick ? pick.name : "";
     }
-    // KPI tiles
-    const wanIfs = ifs.some(x=>x.role==="wan-dev") ? ifs.filter(x=>x.role==="wan-dev") : ifs.filter(x=>x.role==="wan");
-    const known = wanIfs.some(x=>x.rr!==undefined);
-    const wr = wanIfs.reduce((s,x)=>s+(x.rr||0),0), wt = wanIfs.reduce((s,x)=>s+(x.tr||0),0);
-    const m = j.mem||{}, used = (m.total||0)-(m.avail||0);
-    const temps = (j.temps||[]).filter(x=>x.mc);
-    const tmax = temps.length ? Math.max(...temps.map(x=>x.mc))/1000 : null;
-    put(kpi, 
-      stat("WAN 实时", known ? "↓ "+bps(wr) : "…", known ? "↑ "+bps(wt)+" · "+wanIfs.map(x=>x.name).join(" + ") : "正在采样…"),
-      stat("CPU", j.total ? j.total.busy.toFixed(0)+" %" : "…", (j.cpus||[]).length+" 核 · 负载 "+(j.load||[]).map(v=>v.toFixed(2)).join(" / "), j.total ? j.total.busy : 0),
-      stat("内存", fmtBytes(used*1024)+" / "+fmtBytes((m.total||0)*1024), "可用 "+fmtBytes((m.avail||0)*1024)+(m.swap_total ? " · zram 已用 "+fmtBytes((m.swap_total-m.swap_free)*1024) : ""), pct(used, m.total)),
-      stat("连接数", String(j.ct??"-"), "上限 "+(j.ct_max??"-")+" · 进程 "+(j.procs??"-"), pct(j.ct, j.ct_max)),
-      stat("温度", tmax!==null ? tmax.toFixed(1)+" °C" : "-", temps.map(x=>x.type).join(", ")||"无温度传感器"));
+    // gauges
+    const wan = wanOf(ifs), known = wan.some(x=>x.rr!==undefined);
+    const m = j.mem||{}, tot = j.total, cores = (j.cpus||[]).length;
+    const wanCard = h("div",{class:"card gauge mon-wan"}, h("div",{class:"gauge-t"},
+      h("div",{class:"l"}, "WAN 实时 · ", wan.map(x=>x.name).join(" + ")||"-"),
+      h("div",{class:"v"}, h("span",{class:"mon-dn"},"↓ "), known ? fmtRate(kh.rx[kh.rx.length-1]||0) : "…"),
+      h("div",{class:"s"}, h("span",{class:"mon-up"},"↑ "), known ? fmtRate(kh.tx[kh.tx.length-1]||0) : "正在采样…"),
+      spark(kh.rx, COLORS[0]), spark(kh.tx, COLORS[1])));
+    put(kpi, wanCard,
+      gauge({label:"CPU", pct:tot ? tot.busy : null, value:tot ? tot.busy.toFixed(1)+" %" : "…",
+        sub:cores+" 核 · 负载 "+(j.load||[]).map(v=>v.toFixed(2)).join(" / "), extra:spark(kh.cpu, null, 100)}),
+      gauge({label:"内存", pct:m.total ? j.memUsed*100/m.total : null, value:fmtBytes(j.memUsed*1024),
+        sub:"共 "+fmtBytes((m.total||0)*1024)+" · 可用 "+fmtBytes((m.avail||0)*1024), extra:spark(kh.mem, COLORS[4], 100)}),
+      gauge({label:"连接数", pct:j.ct_max ? j.ct*100/j.ct_max : null, value:String(j.ct??"-"),
+        sub:"上限 "+(j.ct_max??"-")+" · 进程 "+(j.procs??"-"), extra:spark(kh.ct, COLORS[5])}),
+      gauge({label:"温度", pct:j.tmax, center:j.tmax==null ? "-" : j.tmax.toFixed(0)+"°", lv:level(j.tmax, 75, 90),
+        value:j.tmax==null ? "-" : j.tmax.toFixed(1)+" °C", sub:(j.temps||[]).map(x=>x.type).join(", ")||"无温度传感器", extra:spark(kh.temp, COLORS[3])}),
+      (j.disks||[]).map(d=>{ const used = d.total_kb-d.avail_kb;
+        return gauge({label:DISK[d.name]||d.path, pct:used*100/d.total_kb, value:fmtBytes(used*1024),
+          sub:"共 "+fmtBytes(d.total_kb*1024)+" · 剩余 "+fmtBytes(d.avail_kb*1024)}); }));
+    // memory composition: programs / cache / free (of MemTotal), plus zram swap
+    if (m.total){
+      const cache = (m.buffers||0)+(m.cached||0), prog = Math.max(0, m.total-(m.free||0)-cache), P = v=>v*100/m.total;
+      const swapUsed = (m.swap_total||0)-(m.swap_free||0);
+      put(memBox, stack([[P(prog),COLORS[0],"程序"], [P(cache),COLORS[5],"缓存"]]),
+        legend([[COLORS[0],"程序",fmtBytes(prog*1024)+" · "+P(prog).toFixed(0)+"%"], [COLORS[5],"缓存（可回收）",fmtBytes(cache*1024)],
+          ["var(--line)","空闲",fmtBytes((m.free||0)*1024)], ["transparent","可用",fmtBytes((m.avail||0)*1024)]]),
+        m.swap_total ? h("div",{style:"margin-top:14px"}, h("div",{class:"mon-lbl2"}, "zram 压缩交换 ", h("b",{}, fmtBytes(swapUsed*1024)+" / "+fmtBytes(m.swap_total*1024))),
+          stack([[swapUsed*100/m.swap_total, COLORS[4], "zram"]])) : null,
+        h("div",{class:"mon-hint",style:"padding:10px 0 0"}, "“可用”= 程序需要时能拿到的内存（空闲 + 大部分缓存）。缓存是文件读写的加速，内存紧张时内核会自动释放。"));
+    }
+    // CPU per core: stacked split + history
+    const coreRow = (name, u) => h("div",{class:"mon-core"}, h("b",{},name),
+      u ? stack(CPUPART.map(([k,l,c])=>[u[k],c,l])) : h("div",{class:"mon-stack"}), h("span",{class:"n"}, u ? u.busy.toFixed(0)+"%" : "…"));
+    put(cpuBars, (j.cpus||[]).map((_,i)=>coreRow("CPU"+i, j["c"+i])), tot ? coreRow("合计", tot) : null,
+      legend(CPUPART.map(([k,l,c])=>[c, l, tot ? tot[k].toFixed(1)+"%" : "…"])));
+    put(cpuChart, cpuH.length ? chart(cpuH.map((a,i)=>({label:"CPU"+i, color:COLORS[i%COLORS.length], points:a})),
+      {height:130, max:100, fmt:v=>v.toFixed(0)+"%"}) : h("div",{class:"mut"},"正在采样…"));
     // traffic chart of the selected interface
     const it = ifs.find(x=>x.name===RT.sel), hs = hist[RT.sel]||[];
     put(trafTitle, h("b",{}, RT.sel||"-"), it && it.role ? h("span",{class:"mut"}," （"+ROLE[it.role]+"）") : null);
@@ -165,17 +216,11 @@ async function pageRealtime(){
         x.rr!==undefined ? bps(x.rr) : "…", x.tr!==undefined ? bps(x.tr) : "…",
         fmtBytes(x.rx), fmtBytes(x.tx), (x.err||0)+" / "+(x.drop||0)]}));
     put(ifTbl, tbl(["接口","类型","状态",["↓ 接收速率","n"],["↑ 发送速率","n"],["↓ 累计","n"],["↑ 累计","n"],["错误 / 丢弃","n"]], rows));
-    // CPU
-    put(cpuChart, cpuH.length ? chart(cpuH.map((a,i)=>({label:"CPU"+i, color:COLORS[i%COLORS.length], points:a})),
-      {height:150, max:100, fmt:v=>v.toFixed(0)+"%"}) : h("div",{class:"mut"},"正在采样…"));
-    const f = v => v===undefined ? "…" : v.toFixed(1)+"%";
-    put(cpuTbl, tbl(["核心",["使用率","n"],["用户","n"],["系统","n"],["硬中断","n"],["软中断","n"],["iowait","n"]],
-      [...(j.cpus||[]).map((_,i)=>{ const u = j["c"+i]||{}; return [h("b",{},"CPU"+i), f(u.busy), f(u.usr), f(u.sys), f(u.irq), f(u.sirq), f(u.io)]; }),
-       j.total ? [h("b",{},"合计"), f(j.total.busy), f(j.total.usr), f(j.total.sys), f(j.total.irq), f(j.total.sirq), f(j.total.io)] : null].filter(Boolean)));
   };
 
   await sample();
   live(root, sample, 2000, here);
+  setTimeout(()=>{ if (here() && root.isConnected) sample().catch(()=>{}); }, 700); // rates right away, not after 2 s
   return root;
 }
 
