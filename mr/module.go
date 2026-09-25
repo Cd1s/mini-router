@@ -15,7 +15,7 @@ import (
 type Module struct {
 	Name string
 	// Prio orders modules wherever order matters (network.sh fragments, nft hook emission,
-	// render output): lower runs first. net=10 wifi=20 dns=30 fw=40 mon=50 proxy=55 sys=70.
+	// render output): lower runs first. net=10 wifi=20 dns=30 fw=40 mon=50 proxy=55 sys=70 api=80.
 	Prio int
 
 	// Defaults fills in zero values after loading (runs before Validate).

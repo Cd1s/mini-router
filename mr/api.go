@@ -52,12 +52,15 @@ type apiReq struct {
 	cookie string
 	remote string
 	header string
+	auth   string // Authorization header: an API token (api_token.go)
+	via    string // origin of a change made by this request ("" = web UI; api:<token>)
 }
 
 type apiResp struct {
 	status int
 	body   any
 	cookie string
+	authed bool // answered to an API token: carries X-MR-Pending like a session
 }
 
 func runAPI() error {
@@ -66,6 +69,7 @@ func runAPI() error {
 		cookie: os.Getenv("HTTP_COOKIE"),
 		remote: os.Getenv("REMOTE_ADDR"),
 		header: os.Getenv("HTTP_X_MR"),
+		auth:   os.Getenv("HTTP_AUTHORIZATION"),
 	}
 	for _, kv := range strings.Split(os.Getenv("QUERY_STRING"), "&") {
 		if strings.HasPrefix(kv, "a=") {
@@ -81,7 +85,7 @@ func runAPI() error {
 		fmt.Printf("Set-Cookie: %s\r\n", resp.cookie)
 	}
 	// every page shows a change waiting for confirmation, whoever made it (web UI, SSH, an agent)
-	if v := pendingView(); v != nil && validSession(r.cookie) {
+	if v := pendingView(); v != nil && (resp.authed || validSession(r.cookie)) {
 		if b, err := json.Marshal(v); err == nil {
 			fmt.Printf("X-MR-Pending: %s\r\n", b)
 		}
@@ -98,6 +102,9 @@ func errResp(code int, msg string, a ...any) apiResp {
 }
 
 func handleAPI(r apiReq) apiResp {
+	if r.auth != "" { // API token: the header alone authenticates (no cookie, so no CSRF)
+		return handleToken(r)
+	}
 	if r.header != "1" {
 		return errResp(403, "missing X-MR header")
 	}
@@ -116,6 +123,11 @@ func handleAPI(r apiReq) apiResp {
 	if !validSession(r.cookie) {
 		return errResp(401, "not logged in")
 	}
+	return apiAction(r, secrets)
+}
+
+// apiAction runs an action for an authenticated client (a session, or a token that may use it).
+func apiAction(r apiReq, secrets map[string]string) apiResp {
 	switch r.action {
 	case "logout":
 		if tok := sessionToken(r.cookie); tok != "" {
@@ -412,14 +424,16 @@ func apiGetConfig(secrets map[string]string) apiResp {
 	for _, k := range secretKeys(c) {
 		_, present[k] = secrets[k]
 	}
-	return apiResp{body: map[string]any{"config": m, "secrets_set": present}}
+	return apiResp{body: map[string]any{"config": m, "secrets_set": present, "rev": configRev()}}
 }
 
 type configSubmit struct {
 	Config  json.RawMessage   `json:"config"`
 	Secrets map[string]string `json:"secrets"` // only keys being changed; empty value = keep
 	Confirm int               `json:"confirm"`
-	Comment string            `json:"comment"` // for the history
+	Comment string            `json:"comment"`  // for the history
+	Patch   []patchOp         `json:"patch"`    // instead of config: edits to the live router.yaml (api_plan.go)
+	BaseRev string            `json:"base_rev"` // the rev the client read: 409 if router.yaml changed since
 }
 
 // candidate builds the would-be config + secrets without touching the live files.
@@ -428,7 +442,14 @@ func candidate(r apiReq) (*Config, []byte, map[string]string, int, error) {
 	if err := json.Unmarshal(r.body, &in); err != nil {
 		return nil, nil, nil, 0, err
 	}
-	c, y, err := configFromJSON(in.Config)
+	var c *Config
+	var y []byte
+	var err error
+	if len(in.Patch) > 0 {
+		y, c, err = patchedConfig(in.Patch) // y: the live text, only the patched values edited
+	} else {
+		c, y, err = configFromJSON(in.Config)
+	}
 	if err != nil {
 		return nil, nil, nil, 0, err
 	}
@@ -441,6 +462,7 @@ func candidate(r apiReq) (*Config, []byte, map[string]string, int, error) {
 			sec[k] = v
 		}
 	}
+	pruneTokenSecrets(c, sec)
 	c.secrets = sec
 	c.defaults()
 	return c, y, sec, in.Confirm, nil
@@ -459,6 +481,11 @@ func regexpSecretKey(k string) bool {
 }
 
 func apiValidate(r apiReq) apiResp {
+	if in, err := parseSubmit(r.body); err == nil {
+		if e := staleBase(in.BaseRev); e != nil {
+			return *e
+		}
+	}
 	c, _, _, _, err := candidate(r)
 	if err != nil {
 		return apiResp{body: map[string]any{"errors": []string{err.Error()}}}
@@ -499,6 +526,11 @@ func apiApply(r apiReq) apiResp {
 	if err := pendingBlocks(); err != nil {
 		return apiResp{status: 409, body: map[string]any{"error": err.Error(), "pending": pendingView()}}
 	}
+	var in configSubmit
+	json.Unmarshal(r.body, &in)
+	if e := staleBase(in.BaseRev); e != nil {
+		return *e
+	}
 	c, y, sec, confirmSecs, err := candidate(r)
 	if err != nil {
 		return errResp(400, "%v", err)
@@ -509,19 +541,24 @@ func apiApply(r apiReq) apiResp {
 	if confirmSecs <= 0 {
 		confirmSecs = 120
 	}
-	var in configSubmit
-	json.Unmarshal(r.body, &in)
 	if len(in.Comment) > 200 || strings.ContainsAny(in.Comment, "\r\n") {
 		return errResp(400, "comment: one line, at most 200 characters")
 	}
 	os.MkdirAll(RunDir, 0700)
-	if err := writeAtomic(CandidateYAML, uiConfigYAML(y, c), 0600); err != nil {
+	if len(in.Patch) == 0 {
+		y = uiConfigYAML(y, c) // a patch's text is already the live file with only its edits
+	}
+	via := r.via
+	if via == "" {
+		via = "web UI"
+	}
+	if err := writeAtomic(CandidateYAML, y, 0600); err != nil {
 		return errResp(500, "%v", err)
 	}
 	if err := writeSecrets(CandidateSec, sec); err != nil {
 		return errResp(500, "%v", err)
 	}
-	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: "web UI", From: r.remote, Comment: in.Comment})
+	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: via, From: r.remote, Comment: in.Comment})
 	self, _ := os.Executable()
 	startDetached(self, "apply-job", strconv.Itoa(confirmSecs))
 	return apiResp{body: map[string]any{"ok": true, "confirm": confirmSecs}}
@@ -669,7 +706,11 @@ func apiRollback(r apiReq) apiResp {
 	if in.Rev > 0 {
 		comment = fmt.Sprintf("back to before #%d", in.Rev)
 	}
-	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: 120, Via: "rollback", From: r.remote, Comment: comment})
+	via := "rollback"
+	if r.via != "" {
+		via = r.via // an API token (the comment says what it is): it may confirm its own rollback
+	}
+	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: 120, Via: via, From: r.remote, Comment: comment})
 	self, _ := os.Executable()
 	startDetached(self, "apply-job", "120")
 	return apiResp{body: map[string]any{"ok": true, "confirm": 120}}

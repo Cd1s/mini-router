@@ -18,6 +18,7 @@ file, applies with snapshot + verify + auto-rollback, and serves the web UI API 
 | mon   | 50 | `mr/mod_mon*.go` | `ui/mon.js` | — | realtime graphs, per-device traffic, connections, system load |
 | proxy | 55 | `mr/mod_proxy*.go` | `ui/proxy.js` | `proxy` | selective transparent proxy: sing-box, fake-ip DNS, tproxy, bypass devices |
 | sys   | 70 | `mr/mod_sys*.go` | `ui/sys.js` | `system`, `services`, `schedules` | hostname/time/NTP/sysctl, SSH, add-on services, backup/restore, schedules, logs, diagnostics |
+| api   | 80 | `mr/api_token.go`, `mr/api_plan.go`, `mr/cfgpath.go`, `mr/schema.go` | card in `ui/sys.js` (管理与 SSH) | `api` | API tokens for scripts / agents, `plan` / patches / `base_rev`, config paths (`mr get/set/add/del/export`), JSON Schema (`mr schema`); `docs/api.md` |
 | platform | — | — | — | — | kernel/kmods, sing-box build, image (build/**), preinit, sysupgrade/factory-reset, docs/flash.md |
 | core  | —  | `config.go`, `module.go`, `render.go`, `apply.go`, `api.go`, `status.go`, `main.go` | `ui/core.js`, `index.html` | — | loading, apply/rollback, auth, registry, layout (changes need the integrator) |
 
@@ -46,7 +47,10 @@ Register exactly one `Module` in `init()`:
   when a generated file changes (`"-"` = none). `RestartOrder` — relative restart order.
 - `Verify(c, restarted)` — post-apply checks (failure rolls the apply back).
 - `Status(c, st)` — add keys to status JSON. `API` — web UI actions `"<module>.<verb>"`; mutating
-  actions must require `r.method == "POST"`; never return secrets; validate every input.
+  actions must require `r.method == "POST"`; never return secrets; validate every input. API tokens
+  reach an action only when it is listed in `tokenActions` (`api_token.go`) with the scope it needs —
+  `read` (no side effects, nothing sensitive), `operate` (runtime actions, no config change), `apply`;
+  list a new action there deliberately, or not at all (logs, secrets, firmware stay session-only).
 - `Commands` — `mr <name> ...` subcommands (for hooks/daemons).
 - `Secrets(c)` — names of every secret this module's config references (so the UI can show 已设置).
 
@@ -76,6 +80,15 @@ apply, `mr sys restore`: `pendingBlocks`; the marker is claimed with O_EXCL, so 
 both run); `mr confirm` keeps the change, `mr rollback` (no argument) undoes it. Every API answer to a logged-in
 client carries `X-MR-Pending: {"state","via","left"}`, and the web UI shows a banner with 保留 / 回滚 on every page.
 
+API clients (`docs/api.md`): `Authorization: Bearer mrt_…` tokens from `api.tokens` (hash in secrets.yaml,
+scopes read / operate / apply, `allow`, `from`, `expires`; bad tokens count in the login throttle) reach the
+actions of `apiAction` that `tokenActions` lists; their changes are recorded as `via: api:<name>` and may not
+touch `api`, `services.ssh`, `system.sysctl` or new `*_file` paths. `GET config` returns `rev` (hash of
+router.yaml); `plan` / `validate` / `apply` take a whole `config` or a `patch` (`[{op: set|add|del, path, value}]`,
+paths as `mr get/set` take them: `firewall.forwards[nas].enabled`) and answer 409 when `base_rev` is stale — the
+web UI sends it too. Patches and `mr set/add/del` edit router.yaml as written (no defaults) in its text
+(`editYAML` → `mergeYAML`).
+
 Cross-module helpers: `c.LANNets()`, `c.BridgeFor(network)`, `c.LANBridges()`, `c.WANIfnames()`,
 `c.WANTable(name)`, `c.WANByName(name)`, `c.Secret(key)`.
 
@@ -85,7 +98,8 @@ Secrets (passwords, keys) live in `secrets.yaml`; router.yaml stores the secret 
 Web UI password checks (login, password change) are throttled per source address (IPv6: per /64) in
 `/run/mini-router/login.json`, shared by all CGI processes under flock (`api_login.go`): every attempt counts before
 the check, the 5th failure in a row locks the source for 30 s, doubling per lock up to 1 h; a locked source gets 429
-without a password check. A correct password clears it.
+without a password check. A correct password clears it. Bad API tokens count the same way (a valid token never
+clears a source; a locked source is refused even with a valid token).
 
 ## Web UI (`rootfs/www/ui/<module>.js`)
 
@@ -98,7 +112,8 @@ Use only helpers from `ui/core.js`: `h`, `api`, `S` (state: `S.cfg` = editable c
 Hints on the overview: `registerNotice(status => Node | [Node] | null)` is called on every overview refresh with the
 `mr status` JSON; build them with `notice(level: warn|bad|info, text, ...buttons)`, `dismissBtn(key)` / `dismissed(key)`
 (per browser).
-Config edits only change `S.cfg`; the shared "保存并应用" bar runs validate → plan → apply → confirm.
+Config edits only change `S.cfg`; the shared "保存并应用" bar runs validate → plan → apply → confirm, with the
+`rev` the page loaded as `base_rev` (409: router.yaml was changed meanwhile by another browser, SSH or an agent).
 The router.yaml it installs is the live file with only the changed values edited (`yamledit.go`): comments, key
 order, quoting and layout stay; if an edit cannot be made in place, or the result would not decode to exactly the
 submitted config, the canonical encoding is written instead (comments lost, logged).

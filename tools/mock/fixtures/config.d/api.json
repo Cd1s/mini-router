@@ -1,0 +1,11 @@
+{
+ "config": {
+  "api": {
+   "tokens": [
+    {"name": "homeassistant", "scope": "read", "allow": ["status", "mon.*", "wifi.stations"], "from": ["192.168.50.0/24"]},
+    {"name": "agent", "scope": "apply"}
+   ]
+  }
+ },
+ "secrets_set": {"api_token_homeassistant": true, "api_token_agent": true}
+}
