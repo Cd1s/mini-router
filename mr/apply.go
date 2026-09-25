@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -22,7 +23,6 @@ const (
 	ConfigPath  = "/etc/mini-router/router.yaml"
 	SecretsPath = "/etc/mini-router/secrets.yaml"
 	GenDir      = "/etc/mini-router/gen"
-	keepHistory = 20
 )
 
 // variables so tests can point them elsewhere
@@ -89,6 +89,7 @@ func plan(c *Config) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	files = append(files, appliedFiles(c)...)
 	p := &Plan{}
 	svc := map[string]bool{}
 	for _, f := range files {
@@ -166,7 +167,12 @@ func (p *Plan) Empty() bool {
 
 func (p *Plan) String() string {
 	var b strings.Builder
+	record := false
 	for _, f := range p.Changed {
+		if bookkeeping(f.Path) {
+			record = true
+			continue
+		}
 		fmt.Fprintf(&b, "  write   %s\n", f.Path)
 	}
 	if p.Firewall {
@@ -181,11 +187,38 @@ func (p *Plan) String() string {
 	for _, s := range p.Disable {
 		fmt.Fprintf(&b, "  disable %s\n", s)
 	}
+	if b.Len() == 0 && record {
+		b.WriteString("  (no generated file changes: only the record of the applied config)\n")
+	}
 	return b.String()
 }
 
+// printPlan shows what c changes in config terms (since the last apply), then the plan's actions;
+// verbose adds each generated file's diff (secret values masked).
+func printPlan(c *Config, p *Plan, verbose bool) {
+	if changes, ok := changesSinceApplied(c); !ok {
+		fmt.Print("changes: (no record of the applied config yet — this apply writes it)\n")
+	} else if len(changes) > 0 {
+		fmt.Print("changes:\n  " + strings.Join(changes, "\n  ") + "\n")
+	}
+	fmt.Print("plan:\n" + p.String())
+	if verbose {
+		for _, f := range p.Changed {
+			if bookkeeping(f.Path) {
+				continue
+			}
+			cur, _ := os.ReadFile(f.Path)
+			fmt.Print(fileDiff(f.Path, string(cur), f.Data, c.secrets))
+		}
+		if p.Firewall {
+			cur, _ := os.ReadFile(GenDir + "/nftables.nft")
+			fmt.Print(fileDiff(GenDir+"/nftables.nft", string(cur), renderNft(c, netdevExists), c.secrets))
+		}
+	}
+}
+
 // snapshot saves every file the plan will touch (plus router.yaml) so a failed apply can be undone.
-func snapshot(paths []string) (string, error) {
+func snapshot(paths []string, keep int) (string, error) {
 	os.MkdirAll(HistoryDir, 0700)
 	name := filepath.Join(HistoryDir, time.Now().Format("20060102-150405")+".tar.gz")
 	f, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
@@ -213,11 +246,12 @@ func snapshot(paths []string) (string, error) {
 	tw.Write(list)
 	tw.Close()
 	gz.Close()
-	pruneHistory()
+	pruneHistory(keep)
 	return name, nil
 }
 
-func pruneHistory() {
+// pruneHistory keeps the newest keep snapshots (and their revision records).
+func pruneHistory(keep int) {
 	ents, _ := os.ReadDir(HistoryDir)
 	var names []string
 	for _, e := range ents {
@@ -226,8 +260,9 @@ func pruneHistory() {
 		}
 	}
 	sort.Strings(names)
-	for len(names) > keepHistory {
+	for len(names) > keep {
 		os.Remove(filepath.Join(HistoryDir, names[0]))
+		os.Remove(filepath.Join(HistoryDir, revFile(names[0])))
 		names = names[1:]
 	}
 }
@@ -327,14 +362,14 @@ func restartAll(svcs []string) []string {
 }
 
 // Apply: validate → plan → snapshot → write → enable/disable → restart → firewall → verify; undo on failure.
-func Apply(c *Config, dryRun bool, confirmSecs int) error {
-	return applyWith(c, dryRun, confirmSecs, nil, "mr apply")
+func Apply(c *Config, dryRun bool, confirmSecs int, comment string, verbose bool) error {
+	return applyWith(c, dryRun, confirmSecs, nil, applyOpts{Via: "mr apply", Comment: comment}, verbose)
 }
 
 // ApplyCandidate applies a config written by the web UI. The live router.yaml/secrets.yaml are
 // snapshotted first and replaced only after the snapshot exists, so a failed or unconfirmed apply
-// restores the previous config files too. via names the origin in the pending marker.
-func ApplyCandidate(candYAML, candSecrets string, confirmSecs int, via string) error {
+// restores the previous config files too. o records the origin (pending marker, revision).
+func ApplyCandidate(candYAML, candSecrets string, confirmSecs int, o applyOpts) error {
 	c, err := loadConfig(candYAML, candSecrets)
 	if err != nil {
 		return err
@@ -353,10 +388,10 @@ func ApplyCandidate(candYAML, candSecrets string, confirmSecs int, via string) e
 		}
 		return writeAtomic(SecretsPath, s, 0600)
 	}
-	return applyWith(c, false, confirmSecs, install, via)
+	return applyWith(c, false, confirmSecs, install, o, false)
 }
 
-func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, via string) error {
+func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o applyOpts, verbose bool) error {
 	if !dryRun {
 		if err := pendingBlocks(); err != nil {
 			return err
@@ -373,7 +408,8 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, vi
 		fmt.Println("nothing to do")
 		return nil
 	}
-	fmt.Print("plan:\n" + p.String())
+	changes, _ := changesSinceApplied(c)
+	printPlan(c, p, verbose)
 	if dryRun {
 		return nil
 	}
@@ -382,17 +418,18 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, vi
 		paths = append(paths, f.Path)
 	}
 	paths = append(paths, ConfigPath, SecretsPath, GenDir+"/nftables.nft")
-	snap, err := snapshot(paths)
+	snap, err := snapshot(paths, historyKeep(c))
 	if err != nil {
 		return fmt.Errorf("snapshot: %w", err)
 	}
 	// on disk before the first new file: if the router goes down from here until the change is
 	// accepted, the next boot rolls it back. Claimed atomically: of two applies started at once, one
 	// is refused here.
-	if err := claimPending(pendingApply{Snapshot: snap, State: stateApplying, Via: via}); err != nil {
+	if err := claimPending(pendingApply{Snapshot: snap, State: stateApplying, Via: o.Via}); err != nil {
 		os.Remove(snap)
 		return err
 	}
+	newRevision(snap, o, changes)
 	if install != nil {
 		if err := install(); err != nil {
 			return rollback(snap, fmt.Errorf("install candidate: %w", err))
@@ -427,10 +464,12 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, vi
 	appendChangeLog(fmt.Sprintf("mr apply: %s", summary(p)))
 	fmt.Printf("applied (snapshot %s)\n", filepath.Base(snap))
 	if confirmSecs > 0 {
-		armConfirm(snap, confirmSecs, via)
+		armConfirm(snap, confirmSecs, o.Via)
+		setResult(snap, "pending")
 		fmt.Printf("run `mr confirm` within %ds or this change is rolled back\n", confirmSecs)
 	} else {
 		clearPending(snap)
+		setResult(snap, "applied")
 	}
 	return nil
 }
@@ -450,6 +489,7 @@ func rollback(snap string, cause error) error {
 		fwLoad(c)
 	}
 	clearPending(snap)
+	setResult(snap, "rolled back: "+firstLine(cause.Error()))
 	appendChangeLog("mr apply: failed and rolled back — " + firstLine(cause.Error()))
 	return fmt.Errorf("%v\nrolled back to %s", cause, filepath.Base(snap))
 }
@@ -696,6 +736,9 @@ func confirm() (bool, error) {
 		return false, errors.New("the change is being rolled back")
 	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
+	if err == nil {
+		setResult(p.Snapshot, "confirmed")
+	}
 	return true, nil
 }
 
@@ -703,11 +746,17 @@ func confirm() (bool, error) {
 func rollbackCommand(args []string, cfgPath, secPath string) error {
 	fl := flag.NewFlagSet("rollback", flag.ContinueOnError)
 	boot := fl.Bool("boot", false, "at boot, before any service starts: roll back a change that was never accepted")
+	secs := fl.Int("confirm", 120, "rollback N: seconds to wait for `mr confirm` (0: keep at once)")
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
 	if *boot {
 		return rollbackAtBoot(cfgPath, secPath)
+	}
+	if fl.NArg() > 0 {
+		if n, err := strconv.Atoi(strings.TrimPrefix(fl.Arg(0), "#")); err == nil {
+			return rollbackToRev(n, *secs) // the config from before change N, as a new change
+		}
 	}
 	p, err := readPending()
 	if err == nil && p.State == stateApplying {
@@ -747,6 +796,9 @@ func rollbackCommand(args []string, cfgPath, secPath string) error {
 		fwLoad(c)
 	}
 	clearPending("") // an explicit rollback settles a pending change
+	if reverting {
+		setResult(p.Snapshot, "rolled back: reverted")
+	}
 	appendChangeLog("mr rollback: " + filepath.Base(snap))
 	fmt.Println("restored", filepath.Base(snap))
 	return nil
@@ -781,6 +833,7 @@ func rollbackAtBoot(cfgPath, secPath string) error {
 		linkRunlevel(c)
 	}
 	clearPending("")
+	setResult(snap, "rolled back at boot: the router restarted before it was confirmed")
 	appendChangeLogAt(at, fmt.Sprintf("boot: %s (%s) rolled back to %s — the router restarted before it was confirmed", what, p.Via, filepath.Base(snap)))
 	fmt.Printf("%s (%s) rolled back to %s\n", what, p.Via, filepath.Base(snap))
 	return nil

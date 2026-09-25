@@ -30,15 +30,19 @@ import (
 )
 
 const (
-	RunDir        = "/run/mini-router"
-	SessionDir    = RunDir + "/sessions"
-	JobFile       = RunDir + "/job.json"
-	JobLog        = RunDir + "/job.log"
+	RunDir      = "/run/mini-router"
+	SessionDir  = RunDir + "/sessions"
+	JobFile     = RunDir + "/job.json"
+	JobLog      = RunDir + "/job.log"
+	sessionTTL  = 12 * time.Hour
+	pwSecretKey = "webui_password"
+	pbkdfIter   = 120000
+)
+
+// the apply job's input (variables so tests can point them elsewhere)
+var (
 	CandidateYAML = RunDir + "/candidate.yaml"
 	CandidateSec  = RunDir + "/candidate-secrets.yaml"
-	sessionTTL    = 12 * time.Hour
-	pwSecretKey   = "webui_password"
-	pbkdfIter     = 120000
 )
 
 type apiReq struct {
@@ -154,6 +158,8 @@ func handleAPI(r apiReq) apiResp {
 		return apiResp{body: map[string]any{"ok": true}}
 	case "history":
 		return apiHistory()
+	case "history.diff":
+		return apiHistoryDiff(r)
 	case "rollback":
 		return apiRollback(r)
 	case "logs":
@@ -413,6 +419,7 @@ type configSubmit struct {
 	Config  json.RawMessage   `json:"config"`
 	Secrets map[string]string `json:"secrets"` // only keys being changed; empty value = keep
 	Confirm int               `json:"confirm"`
+	Comment string            `json:"comment"` // for the history
 }
 
 // candidate builds the would-be config + secrets without touching the live files.
@@ -463,7 +470,12 @@ func apiValidate(r apiReq) apiResp {
 	if err != nil {
 		return apiResp{body: map[string]any{"errors": []string{err.Error()}}}
 	}
-	return apiResp{body: map[string]any{"errors": []string{}, "plan": p.String(), "empty": p.Empty()}}
+	changes, known := changesSinceApplied(c)
+	if changes == nil {
+		changes = []string{}
+	}
+	return apiResp{body: map[string]any{"errors": []string{}, "plan": p.String(), "empty": p.Empty(),
+		"changes": changes, "changes_known": known}}
 }
 
 type jobState struct {
@@ -472,7 +484,9 @@ type jobState struct {
 	Ended   int64  `json:"ended,omitempty"`
 	Output  string `json:"output"`
 	Confirm int    `json:"confirm"`
-	Via     string `json:"via,omitempty"` // origin recorded in the pending marker (web UI | restore)
+	Via     string `json:"via,omitempty"` // origin recorded in the pending marker (web UI | restore | rollback)
+	From    string `json:"from,omitempty"`
+	Comment string `json:"comment,omitempty"`
 }
 
 func apiApply(r apiReq) apiResp {
@@ -495,6 +509,11 @@ func apiApply(r apiReq) apiResp {
 	if confirmSecs <= 0 {
 		confirmSecs = 120
 	}
+	var in configSubmit
+	json.Unmarshal(r.body, &in)
+	if len(in.Comment) > 200 || strings.ContainsAny(in.Comment, "\r\n") {
+		return errResp(400, "comment: one line, at most 200 characters")
+	}
 	os.MkdirAll(RunDir, 0700)
 	if err := writeAtomic(CandidateYAML, uiConfigYAML(y, c), 0600); err != nil {
 		return errResp(500, "%v", err)
@@ -502,7 +521,7 @@ func apiApply(r apiReq) apiResp {
 	if err := writeSecrets(CandidateSec, sec); err != nil {
 		return errResp(500, "%v", err)
 	}
-	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: "web UI"})
+	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: "web UI", From: r.remote, Comment: in.Comment})
 	self, _ := os.Executable()
 	startDetached(self, "apply-job", strconv.Itoa(confirmSecs))
 	return apiResp{body: map[string]any{"ok": true, "confirm": confirmSecs}}
@@ -512,11 +531,12 @@ func apiApply(r apiReq) apiResp {
 func runApplyJob(confirmSecs int) error {
 	logFile, _ := os.OpenFile(JobLog, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 	os.Stdout, os.Stderr = logFile, logFile
-	via := readJob().Via
-	if via == "" {
-		via = "web UI"
+	j0 := readJob()
+	o := applyOpts{Via: j0.Via, From: j0.From, Comment: j0.Comment}
+	if o.Via == "" {
+		o.Via = "web UI"
 	}
-	err := ApplyCandidate(CandidateYAML, CandidateSec, confirmSecs, via)
+	err := ApplyCandidate(CandidateYAML, CandidateSec, confirmSecs, o)
 	logFile.Close()
 	out, _ := os.ReadFile(JobLog)
 	j := readJob()
@@ -565,31 +585,94 @@ func pendingView() map[string]any {
 	return map[string]any{"state": p.State, "via": p.Via, "left": p.left()}
 }
 
+// apiHistory: the revisions, newest first, and snapshots older than revisions (no record).
 func apiHistory() apiResp {
+	rs := readRevisions()
+	known := map[string]bool{}
+	for _, r := range rs {
+		known[r.Snapshot] = true
+	}
+	for i, j := 0, len(rs)-1; i < j; i, j = i+1, j-1 {
+		rs[i], rs[j] = rs[j], rs[i]
+	}
 	ents, _ := os.ReadDir(HistoryDir)
-	var names []string
+	var older []string
 	for _, e := range ents {
-		if strings.HasSuffix(e.Name(), ".tar.gz") {
-			names = append(names, e.Name())
+		if strings.HasSuffix(e.Name(), ".tar.gz") && !known[e.Name()] && !strings.HasSuffix(e.Name(), "-restore-lists.tar.gz") {
+			older = append(older, e.Name())
 		}
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(names)))
-	return apiResp{body: map[string]any{"snapshots": names}}
+	sort.Sort(sort.Reverse(sort.StringSlice(older)))
+	if rs == nil {
+		rs = []revision{}
+	}
+	return apiResp{body: map[string]any{"revisions": rs, "snapshots": older}}
 }
 
+type historyRef struct {
+	Rev      int    `json:"rev"`
+	Snapshot string `json:"snapshot"`
+}
+
+// snap resolves a revision number or a snapshot file name to the snapshot's path.
+func (h historyRef) snap() (string, error) {
+	if h.Rev > 0 {
+		return revSnapshot(h.Rev)
+	}
+	name := filepath.Base(h.Snapshot)
+	if !strings.HasSuffix(name, ".tar.gz") {
+		return "", errors.New("bad snapshot")
+	}
+	return filepath.Join(HistoryDir, name), nil
+}
+
+// apiHistoryDiff: what changed from the config before a revision to the live one.
+func apiHistoryDiff(r apiReq) apiResp {
+	var in historyRef
+	json.Unmarshal(r.body, &in)
+	snap, err := in.snap()
+	if err != nil {
+		return errResp(400, "%v", err)
+	}
+	ch, err := snapshotChanges(snap)
+	if err != nil {
+		return errResp(404, "%v", err)
+	}
+	if ch == nil {
+		ch = []string{}
+	}
+	return apiResp{body: map[string]any{"changes": ch}}
+}
+
+// apiRollback puts the config from before a revision back as a new change: the standard apply job
+// (verify, confirm countdown, automatic rollback) with the snapshot's router.yaml and secrets.
 func apiRollback(r apiReq) apiResp {
 	if r.method != "POST" {
 		return errResp(405, "POST required")
 	}
-	var in struct{ Snapshot string }
-	json.Unmarshal(r.body, &in)
-	name := filepath.Base(in.Snapshot)
-	if !strings.HasSuffix(name, ".tar.gz") {
-		return errResp(400, "bad snapshot")
+	if j := readJob(); j.State == "running" {
+		return errResp(409, "another apply is running")
 	}
+	if err := pendingBlocks(); err != nil {
+		return apiResp{status: 409, body: map[string]any{"error": err.Error(), "pending": pendingView()}}
+	}
+	var in historyRef
+	json.Unmarshal(r.body, &in)
+	snap, err := in.snap()
+	if err != nil {
+		return errResp(400, "%v", err)
+	}
+	if err := stageSnapshot(snap); err != nil {
+		return errResp(404, "%v", err)
+	}
+	comment := "back to before " + filepath.Base(snap)
+	if in.Rev > 0 {
+		comment = fmt.Sprintf("back to before #%d", in.Rev)
+	}
+	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: 120, Via: "rollback", From: r.remote, Comment: comment})
 	self, _ := os.Executable()
-	startDetached(self, "rollback", name)
-	return apiResp{body: map[string]any{"ok": true}}
+	startDetached(self, "apply-job", "120")
+	return apiResp{body: map[string]any{"ok": true, "confirm": 120}}
 }
 
 func apiLogs() apiResp {

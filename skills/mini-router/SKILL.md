@@ -32,7 +32,10 @@ No python/jq there: edit YAML with care, or edit a copy on your side and send it
    confirmation (yours, the web UI's or another agent's) every new apply is refused: `mr confirm` or `mr rollback` first.
 4. **Verify by reading back**: the live state, not the exit code (`mr status`, `nft list ruleset | grep …`,
    `mr wifi status`, a real connection test).
-5. History: `mr history` (snapshots), `mr rollback [SNAPSHOT]`; every apply is logged in `/etc/router-changes.log`
+5. History: `mr plan` starts with the config-level diff (`~ path: old → new`, `+`/`- list[name]`; `-v` adds the
+   generated files' diffs, secrets masked); `mr apply -m "why"` records a comment. `mr history` lists every change
+   (#N, time, origin, comment, result, what changed); `mr rollback N` applies the config from before change #N as a new
+   change (with `--confirm`, default 120 s). Every apply is also logged in `/etc/router-changes.log`
    — append a line for manual actions: `echo "$(date '+%F %T') <what>" >> /etc/router-changes.log`.
 
 Warn the user before anything that can cut connectivity (LAN address, WAN, WiFi they are on, reboot, upgrade),

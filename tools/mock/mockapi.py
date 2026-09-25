@@ -131,11 +131,14 @@ class H(http.server.SimpleHTTPRequestHandler):
             return self.send_json(live_mon_now())
         if a == "validate":
             p, empty = plan_for(body.get("config", {}))
-            return self.send_json({"errors": [], "plan": p, "empty": empty})
-        if a == "apply":
+            changes = ["~ %s: (changed)" % k for k in sorted(set(STATE["cfg"]["config"]) | set(body.get("config", {})))
+                       if STATE["cfg"]["config"].get(k) != body.get("config", {}).get(k)]
+            return self.send_json({"errors": [], "plan": p, "empty": empty, "changes": changes, "changes_known": True})
+        if a in ("apply", "rollback"):
             if STATE["pending"]:
                 return self.send_json({"error": "a change (web UI) is waiting for confirmation", "pending": pending_view()}, 409)
-            STATE["cfg"]["config"] = body.get("config", {})
+            if a == "apply":
+                STATE["cfg"]["config"] = body.get("config", {})
             now = int(time.time())
             STATE["job"] = {"state": "ok", "started": now, "ended": now, "output": "plan:\n  (mock)\napplied (snapshot mock.tar.gz)\n", "confirm": body.get("confirm", 120)}
             STATE["pending"] = True

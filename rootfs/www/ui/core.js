@@ -371,11 +371,34 @@ registerPage("status", "overview", "总览", 10, async ()=>{
   return wrap;
 });
 
-registerPage("system", "history", "备份与回滚", 30, async ()=>{
+// history: every change (who, when, comment, result, what changed); roll back to before any of them
+// through the normal apply (verify + confirm countdown), or compare that config with the live one.
+const RESULT = {applying:["应用中",""], applied:["已应用","ok"], pending:["待确认","warn"], confirmed:["已保留","ok"]};
+function resultTag(r){
+  const m = RESULT[r] || [r.startsWith("rolled back") ? "已回滚"+(r.includes("at boot")?"（开机）":"") : r, "bad"];
+  return h("span",{class:"tag "+m[1], title:r}, m[0]);
+}
+function changeList(lines){ return h("pre",{class:"chg"}, lines.length ? lines.join("\n") : "（配置内容没有变化）"); }
+registerPage("system", "history", "变更历史", 30, async ()=>{
   const j = await api("history");
-  return card("配置快照（每次应用前自动保存）", roTable(["快照","操作"], (j.snapshots||[]).map(s=>[h("span",{class:"mono"},s),
-    h("button",{class:"btn sm d",onclick:async()=>{ if(!confirm("回滚到 "+s+"？当前配置会被替换。")) return;
-      await api("rollback",{snapshot:s}); toast("正在回滚…",4000); setTimeout(async()=>{ await loadConfig(); show("history"); }, 5000); }},"回滚到此")])), null, true);
+  const rows = (j.revisions||[]).map(r=>{
+    const more = h("div",{style:"display:none"}, changeList(r.changes||[]));
+    const n = (r.changes||[]).length;
+    return [h("b",{},"#"+r.rev), new Date(r.time*1000).toLocaleString(),
+      (VIA[r.via]||r.via)+(r.from?" · "+r.from:""), r.comment||"", resultTag(r.result),
+      h("div",{}, h("a",{href:"#",onclick:e=>{ e.preventDefault(); more.style.display = more.style.display ? "" : "none"; }}, n+" 项"), more),
+      h("span",{class:"row"},
+        h("button",{class:"btn sm",onclick:async()=>{ const d = await api("history.diff",{rev:r.rev});
+          const m = modal("#"+r.rev+" 之前的配置 → 现在", [h("p",{class:"mut"},"回滚到 #"+r.rev+" 之前会撤销这些："), changeList(d.changes||[])], [h("button",{class:"btn p",onclick:()=>m.remove()},"关闭")]); }},"对比现在"),
+        h("button",{class:"btn sm d",onclick:async()=>{
+          if (!confirm("把配置恢复到 #"+r.rev+" 之前？会像普通更改一样应用，并需要在倒计时内确认。")) return;
+          await runJob(()=>api("rollback",{rev:r.rev})); }},"回滚到此前"))];
+  });
+  const older = (j.snapshots||[]).map(s=>[h("span",{class:"mono"},s),
+    h("button",{class:"btn sm d",onclick:async()=>{ if(!confirm("把配置恢复到快照 "+s+"？")) return; await runJob(()=>api("rollback",{snapshot:s})); }},"回滚到此")]);
+  return h("div",{},
+    card("变更（每次应用都有记录；回滚本身也是一次新的更改）", rows.length ? roTable(["#","时间","来源","备注","结果","变更","操作"], rows) : h("div",{class:"mut"},"还没有记录。"), null, true),
+    older.length ? card("更早的快照（没有记录）", roTable(["快照","操作"], older), null, true) : null);
 });
 
 // ---------- apply flow ----------
@@ -392,12 +415,17 @@ async function startApply(){
     const m = modal("配置有误，未应用", h("ul",{class:"err"}, v.errors.map(x=>h("li",{},x))), [h("button",{class:"btn p",onclick:()=>m.remove()},"返回修改")]);
     return;
   }
-  const m = modal("确认应用", [h("div",{style:"margin-bottom:8px"}, v.empty?"没有文件变化（可能只改了域名列表以外的等价内容）。":"将执行以下变更："), h("pre",{}, v.plan||"(无)"),
+  const note = h("input",{type:"text",maxlength:200,placeholder:"备注（可选，记入变更历史）"});
+  const m = modal("确认应用", [
+    v.changes_known ? [h("div",{style:"margin-bottom:6px"},"配置变更："), changeList(v.changes||[])] : null,
+    h("div",{style:"margin:8px 0 6px"}, v.empty?"没有文件变化。":"将执行："), h("pre",{}, v.plan||"(无)"), note,
     h("p",{class:"mut"},"应用后有 120 秒确认时间；如果改动导致无法访问本页面，路由器会自动回滚到之前的配置。")],
-    [h("button",{class:"btn",onclick:()=>m.remove()},"取消"), h("button",{class:"btn p",onclick:()=>{ m.remove(); doApply(payload); }},"应用")]);
+    [h("button",{class:"btn",onclick:()=>m.remove()},"取消"), h("button",{class:"btn p",onclick:()=>{ m.remove(); doApply(Object.assign({comment:note.value.trim()}, payload)); }},"应用")]);
 }
-async function doApply(payload){
-  try { await api("apply", Object.assign({confirm:120}, payload)); } catch(e){
+async function doApply(payload){ return runJob(()=>api("apply", Object.assign({confirm:120}, payload))); }
+// runJob starts an apply job (apply, rollback) and follows it: output, then 保留 / 立即回滚.
+async function runJob(start){
+  try { await start(); } catch(e){
     const msg = e.data&&e.data.pending ? "有待确认的更改（"+(VIA[e.data.pending.via]||e.data.pending.via)+"）：请先在页面顶部点“保留”或“回滚”。"
       : e.data&&e.data.errors ? e.data.errors.join("\n") : e.message;
     return modal("应用失败", h("pre",{}, msg), [h("button",{class:"btn p",onclick:ev=>ev.target.closest(".modal").remove()},"关闭")]);

@@ -32,6 +32,7 @@ system:
   ntp_server: false          # also answer NTP (udp/123) — only the LAN zone gets through the firewall
   sysctl: {net.ipv4.tcp_congestion_control: bbr}   # added to / overriding 90-mini-router.conf
   zram: true              # zram swap (1/4 of RAM, zstd); also MGLRU min_ttl_ms=1000: OOM kill instead of thrashing
+  history: 20             # config snapshots / change records kept (5-200)
 
 services:
   tailscale: {enabled: true, port: 41641}   # tailscaled --port; the same UDP port is opened on the WANs
@@ -152,7 +153,7 @@ load; output and exit code go to `/run/mini-router/fw-run.{log,rc}`.
    directories) rejects the whole archive.
 2. Secrets: the backup's are laid over the current ones; `webui_password` always stays the current one.
 3. List files that differ are saved first as `<time>-restore-lists.tar.gz` in the snapshot history (the
-   core snapshot format, so 备份与回滚 can also roll back to it), then written.
+   core snapshot format, so 变更历史 can also roll back to it), then written.
 4. The candidate config is validated and rendered; on any error the list files go back and nothing else
    has changed.
 5. The candidate is written where the web UI's apply writes it and the core `apply-job` runs:
@@ -217,7 +218,7 @@ mr sys keys                                              # authorized_keys: mana
   - 固件升级：选镜像 → 浏览器算 SHA-256 → 分块上传（有进度条）→ 确认后刷写，路由器自动重启。
     镜像被平台脚本拒绝时显示原因。当前构建没有升级脚本时显示“当前构建不支持”。
   - 恢复出厂设置：确认两次（第二次要输入 RESET）。
-  - 每次应用前的自动快照仍在“备份与回滚”页面。
+  - 每次应用都记在“变更历史”页面（来源、备注、结果、改了什么），可以对比或回滚到任意一次之前。
 - **日志**：按级别（错误及以上、警告及以上……）、服务（下拉里有每个服务的行数）、关键字过滤，
   可选 300–5000 行、自动刷新。时间是路由器时区。
 - **网络诊断**：Ping / Ping6 / Traceroute / Traceroute6 / nslookup，有几个常用目标的快捷按钮。

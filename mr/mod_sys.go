@@ -27,6 +27,8 @@ type System struct {
 	Watchdog *bool `yaml:"watchdog,omitempty"`
 	// LEDs: front-panel status / network LEDs (default on; false = all off, e.g. at night)
 	LEDs *bool `yaml:"leds,omitempty"`
+	// History: config snapshots / revisions kept (default 20)
+	History int `yaml:"history,omitempty"`
 }
 
 type Services struct {
@@ -296,6 +298,9 @@ var (
 
 func sysValidate(c *Config, v *Validator) {
 	s := c.System
+	if s.History != 0 && (s.History < 5 || s.History > 200) {
+		v.Add("system.history: 5-200 snapshots, got %d", s.History)
+	}
 	if !reHostnameSys.MatchString(s.Hostname) {
 		v.Add("system.hostname: letters, digits, '-', got %q", s.Hostname)
 	}
