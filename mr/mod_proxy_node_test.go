@@ -183,6 +183,9 @@ func TestProxyNodeValidation(t *testing.T) {
 		{"tuic", func(n *ProxyNode) { n.UDPRelayMode = "x" }, "udp_relay_mode: native or quic"},
 		{"tuic", func(n *ProxyNode) { n.Password = "" }, "password_secret: secret name"},
 		{"anytls", func(n *ProxyNode) { n.TCPOnly = true }, "tcp_only: not used by AnyTLS nodes"},
+		{"hy2", func(n *ProxyNode) { n.TFO = true }, "tfo: not used by Hysteria2 nodes"},
+		{"tuic", func(n *ProxyNode) { n.TFO = true }, "tfo: not used by TUIC nodes"},
+		{"wg", func(n *ProxyNode) { n.TFO = true }, "tfo: not used by custom nodes"},
 		{"socks", func(n *ProxyNode) { n.TLS = true }, "tls: not used by SOCKS5 nodes"},
 		{"socks", func(n *ProxyNode) { n.Username = "a b" }, "username: printable ASCII"},
 		{"https", func(n *ProxyNode) { n.TCPOnly = true }, "tcp_only: not used by HTTP nodes"},
@@ -270,5 +273,31 @@ func TestProxySecretName(t *testing.T) {
 	}
 	if again := proxySecretName("A.Very-Long.Node_Name-That-Goes-On-And-On", "password", taken); again == long || len(again) > 40 {
 		t.Errorf("long collision: %s", again)
+	}
+}
+
+// tfo: TCP Fast Open on the dial to the server (TCP protocols only; the server must enable it too).
+func TestProxyNodeTFO(t *testing.T) {
+	c := proxyNodesTestConfig(t)
+	for i := range c.Proxy.Nodes {
+		if n := &c.Proxy.Nodes[i]; n.Name == "sg1" || n.Name == "vl-reality" {
+			n.TFO = true
+		}
+	}
+	if errs := c.Validate(); len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	js := renderMap(t, c)[proxyGenJSON]
+	var sb struct {
+		Outbounds []map[string]any `json:"outbounds"`
+	}
+	if err := json.Unmarshal([]byte(js), &sb); err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range sb.Outbounds {
+		want := o["tag"] == "sg1" || o["tag"] == "vl-reality"
+		if got, _ := o["tcp_fast_open"].(bool); got != want {
+			t.Errorf("%v: tcp_fast_open %v", o["tag"], o["tcp_fast_open"])
+		}
 	}
 }

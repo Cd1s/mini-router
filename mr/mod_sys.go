@@ -84,6 +84,18 @@ func renderSysctl(c *Config) string {
 		"net.core.netdev_max_backlog":          "2000",
 		"net.netfilter.nf_conntrack_max":       conntrackMax,
 		"kernel.panic":                         "3",
+		// hardening at no cost: kernel pointers hidden even from root, the kernel log for root only
+		// (mr reads it as root), constant blinding in BPF JIT (nothing here uses BPF)
+		"kernel.kptr_restrict":    "2",
+		"kernel.dmesg_restrict":   "1",
+		"net.core.bpf_jit_harden": "2",
+		// the proxy is the one bulk path through the CPU: room for QUIC receive / send buffers
+		// (quic-go asks for 7.5 MB: hysteria2, tuic), less data parked in TCP send buffers (lower
+		// latency through the proxy), no slow start again after an idle keep-alive connection
+		"net.core.rmem_max":                  "7500000",
+		"net.core.wmem_max":                  "7500000",
+		"net.ipv4.tcp_notsent_lowat":         "131072",
+		"net.ipv4.tcp_slow_start_after_idle": "0",
 	}
 	for k, v := range c.System.Sysctl {
 		base[k] = v

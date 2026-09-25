@@ -31,7 +31,7 @@ system:
   ntp: [ntp.tencent.com, ntp1.aliyun.com]   # host names or IPs, max 8; empty = pool.ntp.org
   ntp_server: false          # also answer NTP (udp/123) — only the LAN zone gets through the firewall
   sysctl: {net.ipv4.tcp_congestion_control: bbr}   # added to / overriding 90-mini-router.conf
-  zram: true
+  zram: true              # zram swap (1/4 of RAM, zstd); also MGLRU min_ttl_ms=1000: OOM kill instead of thrashing
 
 services:
   tailscale: {enabled: true, port: 41641}   # tailscaled --port; the same UDP port is opened on the WANs
@@ -74,7 +74,7 @@ Validation (the security boundary — everything below ends up in a file, a cron
 | File | Content | On change |
 |---|---|---|
 | `/etc/hostname` | hostname | `hostname` |
-| `/etc/sysctl.d/90-mini-router.conf` | forwarding, syncookies, fq_codel, `nf_conntrack_max=100000`, no ICMP redirects (`send_redirects=0` for `all` and `default`), … + `system.sysctl` | sysctl reload |
+| `/etc/sysctl.d/90-mini-router.conf` | forwarding, syncookies, fq_codel, `nf_conntrack_max=100000`, no ICMP redirects (`send_redirects=0` for `all` and `default`), hardening (`kptr_restrict=2`, `dmesg_restrict=1`, `bpf_jit_harden=2`), proxy path (`rmem_max` / `wmem_max` 7500000 for QUIC, `tcp_notsent_lowat=131072`, `tcp_slow_start_after_idle=0`), … + `system.sysctl` | sysctl reload |
 | `/etc/modules-load.d/mr-sys.conf` | `nf_conntrack` | — (boot) |
 | `/etc/conf.d/sysctl` | `rc_after="modules"` | — (boot) |
 | `/etc/localtime` | TZif v2 built from `system.timezone` (see below) | restart `syslog` (timestamps) |

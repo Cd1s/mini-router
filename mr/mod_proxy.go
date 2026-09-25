@@ -88,6 +88,7 @@ type ProxyNode struct {
 	ServiceName string `yaml:"service_name,omitempty"` // grpc
 	EarlyData   int    `yaml:"early_data,omitempty"`   // ws 0-RTT bytes (share links: path ?ed=2048)
 	TCPOnly     bool   `yaml:"tcp_only,omitempty"`     // server has no UDP relay
+	TFO         bool   `yaml:"tfo,omitempty"`          // TCP Fast Open to the server (it must enable it too: own servers)
 	// custom: secrets.yaml key whose value is a sing-box outbound JSON object (any protocol the
 	// sing-box build supports; type wireguard becomes an endpoint); mr only sets its tag.
 	JSON string `yaml:"json_secret,omitempty"`
