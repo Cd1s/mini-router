@@ -4,12 +4,17 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -17,10 +22,20 @@ const (
 	ConfigPath  = "/etc/mini-router/router.yaml"
 	SecretsPath = "/etc/mini-router/secrets.yaml"
 	GenDir      = "/etc/mini-router/gen"
-	HistoryDir  = "/etc/mini-router/history"
-	ConfirmFile = "/run/mini-router/confirm-pending"
-	ChangeLog   = "/etc/router-changes.log"
 	keepHistory = 20
+)
+
+// variables so tests can point them elsewhere
+var (
+	HistoryDir = "/etc/mini-router/history"
+	// ConfirmFile marks a change that is not accepted yet: an apply in progress or waiting for `mr confirm`.
+	// It is on persistent storage, so a power cut, watchdog reset or crash cannot turn the change into the
+	// accepted config: the next boot restores the snapshot it names before any service starts.
+	ConfirmFile = "/etc/mini-router/confirm-pending"
+	ChangeLog   = "/etc/router-changes.log"
+	clockRef    = "/etc/mini-router/state/clock" // mr-clock / clock-save: mtime = last known time
+	initDir     = "/etc/init.d"
+	runlevelDir = "/etc/runlevels/default"
 )
 
 // serviceFor maps a generated path to the OpenRC service that must be restarted when it changes.
@@ -99,7 +114,7 @@ func plan(c *Config) (*Plan, error) {
 		want[s] = true
 	}
 	have := map[string]bool{}
-	if ents, err := os.ReadDir("/etc/runlevels/default"); err == nil {
+	if ents, err := os.ReadDir(runlevelDir); err == nil {
 		for _, e := range ents {
 			have[e.Name()] = true
 		}
@@ -132,7 +147,7 @@ func managedServices(c *Config) []string {
 		}
 	}
 	// per-instance services (mr-pppoe.<wan>, mr-udhcpc.<wan>, ...) exist only as init.d entries
-	if ents, err := os.ReadDir("/etc/init.d"); err == nil {
+	if ents, err := os.ReadDir(initDir); err == nil {
 		for _, e := range ents {
 			for _, p := range prefixes {
 				if strings.HasPrefix(e.Name(), p) {
@@ -301,7 +316,7 @@ func restartAll(svcs []string) []string {
 			}
 			continue
 		}
-		if _, err := os.Stat("/etc/init.d/" + s); err != nil {
+		if _, err := os.Stat(filepath.Join(initDir, s)); err != nil {
 			continue
 		}
 		if out, err := run("rc-service", s, "restart"); err != nil {
@@ -313,13 +328,13 @@ func restartAll(svcs []string) []string {
 
 // Apply: validate → plan → snapshot → write → enable/disable → restart → firewall → verify; undo on failure.
 func Apply(c *Config, dryRun bool, confirmSecs int) error {
-	return applyWith(c, dryRun, confirmSecs, nil)
+	return applyWith(c, dryRun, confirmSecs, nil, "mr apply")
 }
 
 // ApplyCandidate applies a config written by the web UI. The live router.yaml/secrets.yaml are
 // snapshotted first and replaced only after the snapshot exists, so a failed or unconfirmed apply
-// restores the previous config files too.
-func ApplyCandidate(candYAML, candSecrets string, confirmSecs int) error {
+// restores the previous config files too. via names the origin in the pending marker.
+func ApplyCandidate(candYAML, candSecrets string, confirmSecs int, via string) error {
 	c, err := loadConfig(candYAML, candSecrets)
 	if err != nil {
 		return err
@@ -338,10 +353,10 @@ func ApplyCandidate(candYAML, candSecrets string, confirmSecs int) error {
 		}
 		return writeAtomic(SecretsPath, s, 0600)
 	}
-	return applyWith(c, false, confirmSecs, install)
+	return applyWith(c, false, confirmSecs, install, via)
 }
 
-func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error) error {
+func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, via string) error {
 	if errs := c.Validate(); len(errs) > 0 {
 		return fmt.Errorf("router.yaml invalid:\n  %s", strings.Join(errs, "\n  "))
 	}
@@ -365,6 +380,11 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error) er
 	snap, err := snapshot(paths)
 	if err != nil {
 		return fmt.Errorf("snapshot: %w", err)
+	}
+	// on disk before the first new file: if the router goes down from here until the change is
+	// accepted, the next boot rolls it back
+	if err := setPending(pendingApply{Snapshot: snap, State: stateApplying, Via: via}); err != nil {
+		return fmt.Errorf("pending marker: %w", err)
 	}
 	if install != nil {
 		if err := install(); err != nil {
@@ -400,12 +420,16 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error) er
 	appendChangeLog(fmt.Sprintf("mr apply: %s", summary(p)))
 	fmt.Printf("applied (snapshot %s)\n", filepath.Base(snap))
 	if confirmSecs > 0 {
-		armConfirm(snap, confirmSecs)
+		armConfirm(snap, confirmSecs, via)
 		fmt.Printf("run `mr confirm` within %ds or this change is rolled back\n", confirmSecs)
+	} else {
+		clearPending(snap)
 	}
 	return nil
 }
 
+// rollback restores snap after a failed or unconfirmed apply. The pending marker goes only when the
+// old files are back, so a crash in the middle of it rolls back again at boot.
 func rollback(snap string, cause error) error {
 	logf("apply failed, rolling back to %s: %v", filepath.Base(snap), cause)
 	svcs, err := restore(snap)
@@ -418,6 +442,7 @@ func rollback(snap string, cause error) error {
 		refreshRoutes(c)
 		fwLoad(c)
 	}
+	clearPending(snap)
 	appendChangeLog("mr apply: failed and rolled back — " + firstLine(cause.Error()))
 	return fmt.Errorf("%v\nrolled back to %s", cause, filepath.Base(snap))
 }
@@ -430,7 +455,7 @@ func reconcileRunlevel(c *Config) {
 		want[s] = true
 	}
 	have := map[string]bool{}
-	if ents, err := os.ReadDir("/etc/runlevels/default"); err == nil {
+	if ents, err := os.ReadDir(runlevelDir); err == nil {
 		for _, e := range ents {
 			have[e.Name()] = true
 		}
@@ -442,7 +467,7 @@ func reconcileRunlevel(c *Config) {
 		}
 	}
 	for _, s := range enabledServices(c) {
-		if _, err := os.Stat("/etc/init.d/" + s); err != nil {
+		if _, err := os.Stat(filepath.Join(initDir, s)); err != nil {
 			continue
 		}
 		if !have[s] {
@@ -476,42 +501,244 @@ func summary(p *Plan) string {
 
 func firstLine(s string) string { return strings.SplitN(s, "\n", 2)[0] }
 
-func appendChangeLog(line string) {
+func appendChangeLog(line string) { appendChangeLogAt(time.Now(), line) }
+
+func appendChangeLogAt(t time.Time, line string) {
 	f, err := os.OpenFile(ChangeLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s %s\n", time.Now().Format("2006-01-02 15:04:05"), line)
+	fmt.Fprintf(f, "%s %s\n", t.Format("2006-01-02 15:04:05"), line)
 }
 
 // ---- confirm / auto-rollback ----
 
-func armConfirm(snap string, secs int) {
-	os.MkdirAll(filepath.Dir(ConfirmFile), 0755)
-	os.WriteFile(ConfirmFile, []byte(snap), 0600)
+// pendingApply is the content of ConfirmFile.
+type pendingApply struct {
+	Snapshot string `json:"snapshot"`           // history snapshot taken before the change
+	State    string `json:"state"`              // stateApplying | statePending | stateReverting
+	Deadline int64  `json:"deadline,omitempty"` // unix time the confirm timer rolls back at (statePending)
+	Via      string `json:"via"`                // origin: mr apply | web UI | restore
+}
+
+const (
+	stateApplying  = "applying"  // the apply is still running
+	statePending   = "pending"   // applied, waiting for `mr confirm`
+	stateReverting = "reverting" // being rolled back
+)
+
+func readPending() (*pendingApply, error) {
+	b, err := os.ReadFile(ConfirmFile)
+	if err != nil {
+		return nil, err
+	}
+	var p pendingApply
+	if err := json.Unmarshal(b, &p); err != nil || p.Snapshot == "" {
+		return nil, fmt.Errorf("%s: unreadable marker", ConfirmFile)
+	}
+	return &p, nil
+}
+
+func setPending(p pendingApply) error {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	return writeDurable(ConfirmFile, b, 0600)
+}
+
+// clearPending removes the marker when it names snap ("" = any). Everything written before is synced
+// first: the marker must never reach the disk as gone while the change's files are still in flight.
+func clearPending(snap string) {
+	if snap != "" {
+		if p, err := readPending(); err != nil || p.Snapshot != snap {
+			return
+		}
+	}
+	syscall.Sync()
+	if os.Remove(ConfirmFile) == nil {
+		syncDir(filepath.Dir(ConfirmFile))
+	}
+}
+
+// writeDurable is writeAtomic that returns only when the data and the rename are on disk.
+func writeDurable(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	tmp := path + ".mr-tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	syncDir(filepath.Dir(path))
+	return nil
+}
+
+func syncDir(dir string) {
+	if d, err := os.Open(dir); err == nil {
+		d.Sync()
+		d.Close()
+	}
+}
+
+func armConfirm(snap string, secs int, via string) {
+	setPending(pendingApply{Snapshot: snap, State: statePending, Deadline: time.Now().Unix() + int64(secs), Via: via})
 	self, _ := os.Executable()
 	startDetached(self, "rollback-if-unconfirmed", snap, fmt.Sprint(secs))
 }
 
 func rollbackIfUnconfirmed(snap string, secs int) error {
 	time.Sleep(time.Duration(secs) * time.Second)
-	cur, err := os.ReadFile(ConfirmFile)
-	if err != nil || string(cur) != snap {
-		return nil // confirmed, or superseded by a newer apply
+	p, err := readPending()
+	if err != nil || p.Snapshot != snap || p.State != statePending {
+		return nil // confirmed, being reverted, or superseded by a newer apply
 	}
-	os.Remove(ConfirmFile)
+	p.State = stateReverting
+	setPending(*p)
 	return rollback(snap, fmt.Errorf("not confirmed within %ds", secs))
 }
 
 func confirm() error {
-	if _, err := os.Stat(ConfirmFile); err != nil {
+	p, err := readPending()
+	if errors.Is(err, fs.ErrNotExist) {
 		fmt.Println("nothing pending")
 		return nil
 	}
-	os.Remove(ConfirmFile)
+	if err == nil && p.State == stateApplying {
+		return errors.New("the apply is still running: confirm it when it has finished")
+	}
+	if err == nil && p.State == stateReverting {
+		return errors.New("the change is being rolled back")
+	}
+	clearPending("") // an unreadable marker too: `mr confirm` is the way out
 	fmt.Println("confirmed")
 	return nil
+}
+
+// rollbackCommand is `mr rollback [--boot] [SNAPSHOT]`.
+func rollbackCommand(args []string, cfgPath, secPath string) error {
+	fl := flag.NewFlagSet("rollback", flag.ContinueOnError)
+	boot := fl.Bool("boot", false, "at boot, before any service starts: roll back a change that was never accepted")
+	if err := fl.Parse(args); err != nil {
+		return err
+	}
+	if *boot {
+		return rollbackAtBoot(cfgPath, secPath)
+	}
+	var snap string
+	if fl.NArg() > 0 {
+		snap = filepath.Join(HistoryDir, filepath.Base(fl.Arg(0)))
+	} else {
+		ents, _ := os.ReadDir(HistoryDir)
+		if len(ents) == 0 {
+			return fmt.Errorf("no snapshots")
+		}
+		snap = filepath.Join(HistoryDir, ents[len(ents)-1].Name())
+	}
+	svcs, err := restore(snap)
+	if err != nil {
+		return err
+	}
+	restartAll(svcs)
+	if c, err := loadConfig(cfgPath, secPath); err == nil {
+		reconcileRunlevel(c)
+		refreshRoutes(c)
+		fwLoad(c)
+	}
+	clearPending("") // an explicit rollback settles a pending change
+	appendChangeLog("mr rollback: " + filepath.Base(snap))
+	fmt.Println("restored", filepath.Base(snap))
+	return nil
+}
+
+// rollbackAtBoot runs before OpenRC (mr-preinit on the image, the mr-unconfirmed boot service
+// elsewhere). A marker left over means the router went down in the middle of an apply or inside its
+// confirm window: the snapshot's files and the default runlevel's links go back, and the services
+// start from them. Nothing is restarted — nothing runs yet.
+func rollbackAtBoot(cfgPath, secPath string) error {
+	p, err := readPending()
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	at := bootClock()
+	if err != nil {
+		os.Rename(ConfirmFile, ConfirmFile+".bad")
+		appendChangeLogAt(at, "boot: unreadable pending marker set aside ("+filepath.Base(ConfirmFile)+".bad), config kept")
+		return err
+	}
+	snap := filepath.Join(HistoryDir, filepath.Base(p.Snapshot))
+	what := "unconfirmed change"
+	if p.State == stateApplying {
+		what = "interrupted apply"
+	}
+	if _, err := restore(snap); err != nil {
+		os.Rename(ConfirmFile, ConfirmFile+".failed") // do not retry at every boot
+		appendChangeLogAt(at, fmt.Sprintf("boot: rolling back the %s (%s) to %s FAILED: %v", what, p.Via, filepath.Base(snap), err))
+		return fmt.Errorf("rolling back the %s to %s: %w", what, filepath.Base(snap), err)
+	}
+	if c, err := loadConfig(cfgPath, secPath); err == nil {
+		linkRunlevel(c)
+	}
+	clearPending("")
+	appendChangeLogAt(at, fmt.Sprintf("boot: %s (%s) rolled back to %s — the router restarted before it was confirmed", what, p.Via, filepath.Base(snap)))
+	fmt.Printf("%s (%s) rolled back to %s\n", what, p.Via, filepath.Base(snap))
+	return nil
+}
+
+// bootClock: the board has no RTC and mr-clock has not run yet — the latest of the clock, the marker
+// (written by the apply) and mr-clock's reference file is the best guess for the change log.
+func bootClock() time.Time {
+	t := time.Now()
+	for _, f := range []string{ConfirmFile, clockRef} {
+		if st, err := os.Stat(f); err == nil && st.ModTime().After(t) {
+			t = st.ModTime()
+		}
+	}
+	return t
+}
+
+// linkRunlevel is reconcileRunlevel before OpenRC runs: only the default runlevel's links change.
+func linkRunlevel(c *Config) {
+	want := map[string]bool{}
+	for _, s := range enabledServices(c) {
+		want[s] = true
+	}
+	for _, s := range managedServices(c) {
+		if !want[s] {
+			os.Remove(filepath.Join(runlevelDir, s))
+		}
+	}
+	// links to init scripts the restore removed (per-WAN instances)
+	ents, _ := os.ReadDir(runlevelDir)
+	for _, e := range ents {
+		l := filepath.Join(runlevelDir, e.Name())
+		if e.Type()&fs.ModeSymlink != 0 {
+			if _, err := os.Stat(l); errors.Is(err, fs.ErrNotExist) {
+				os.Remove(l)
+			}
+		}
+	}
+	for s := range want {
+		if _, err := os.Stat(filepath.Join(initDir, s)); err == nil {
+			os.Symlink(filepath.Join(initDir, s), filepath.Join(runlevelDir, s)) // already there: EEXIST
+		}
+	}
 }
 
 // ---- verification ----
@@ -520,7 +747,7 @@ func confirm() error {
 // dependents of a service it stops, and does not bring them back).
 func ensureStarted(c *Config) {
 	for _, s := range enabledServices(c) {
-		if _, err := os.Stat("/etc/init.d/" + s); err != nil {
+		if _, err := os.Stat(filepath.Join(initDir, s)); err != nil {
 			continue
 		}
 		if _, err := run("rc-service", s, "status"); err != nil {
@@ -536,7 +763,7 @@ func verify(c *Config, restarted []string) []string {
 		if s == "mr-network" || s == "sysctl" {
 			continue
 		}
-		if _, err := os.Stat("/etc/init.d/" + s); err != nil {
+		if _, err := os.Stat(filepath.Join(initDir, s)); err != nil {
 			continue
 		}
 		if _, err := run("rc-service", s, "status"); err != nil {

@@ -21,6 +21,8 @@
 #   P6 no rootfs_data volume: tmpfs overlay
 #   P7 first boot of a new image: overlay copies of its programs dropped, config and other files kept;
 #      the next boot of the same image leaves the overlay alone
+#   P8 power cut inside a confirm window: the unconfirmed change (files, runlevel links) is rolled back
+#      before init; once confirmed (no marker) the change stays
 set -eu
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 W=${MR_PLATFORM_DIR:-/root/build/mini-router-platform}
@@ -359,6 +361,41 @@ PROBE
 	[ -f $u/usr/sbin/mr ] || fail "P7b: pruned again with the same image (a later fix was dropped)"
 	umount /data
 	echo "P7 ok ($(grep -o '[0-9]* program file(s)' /t/res/P7/kmsg | head -n 1))"
+
+	say "P8: power cut inside the confirm window"
+	unconfirmed() { # the state an apply with --confirm leaves: snapshot, new files, runlevel link, marker
+		fresh
+		datamount
+		mkdir -p $u/etc/mini-router/history $u/etc/hostapd $u/etc/runlevels/default /data/mr/work /t/snap/etc/mini-router
+		cp /t/sq-tree/etc/mini-router/router.yaml /t/snap/etc/mini-router/router.yaml
+		printf '%s\n' /etc/mini-router/router.yaml /etc/hostapd/hostapd-phy0.conf > /t/snap/.mr-paths
+		tar -C /t/snap -czf $u/etc/mini-router/history/20260925-120000.tar.gz etc/mini-router/router.yaml .mr-paths
+		sed 's#192\.168\.31\.1/24#192.168.77.1/24#' /t/sq-tree/etc/mini-router/router.yaml > $u/etc/mini-router/router.yaml
+		echo 'interface=phy0-ap0' > $u/etc/hostapd/hostapd-phy0.conf
+		ln -s /etc/init.d/mr-hostapd $u/etc/runlevels/default/mr-hostapd
+		[ "$1" = confirmed ] ||
+			printf '{"snapshot":"/etc/mini-router/history/20260925-120000.tar.gz","state":"pending","deadline":1790000000,"via":"web UI"}' \
+				> $u/etc/mini-router/confirm-pending
+		umount /data
+	}
+	unconfirmed pending
+	boot P8
+	has P8 '192.168.31.1' lan
+	if grep -q '^mr-hostapd$' /t/res/P8/default; then fail "P8: the change's service is still in the runlevel"; fi
+	has P8 'unconfirmed change (web UI) rolled back to 20260925-120000.tar.gz' kmsg
+	datamount
+	[ ! -e $u/etc/mini-router/confirm-pending ] || fail "P8: marker left behind"
+	[ ! -e $u/etc/hostapd/hostapd-phy0.conf ] || fail "P8: file created by the change survived"
+	grep -q 'boot: unconfirmed change (web UI) rolled back' $u/etc/router-changes.log || fail "P8: change log"
+	umount /data
+	unconfirmed confirmed
+	boot P8b
+	has P8b '192.168.77.1' lan
+	has P8b '^mr-hostapd$' default
+	datamount
+	[ -e $u/etc/hostapd/hostapd-phy0.conf ] || fail "P8b: confirmed change rolled back"
+	umount /data
+	echo "P8 ok"
 
 	ubidetach -d $UBINUM
 	umount /ram/proc-real /ram/sys /ram/dev /ram/o /ram/repo /ram/t 2> /dev/null || :

@@ -25,6 +25,7 @@ const usage = `mr — mini-router control
                               with --confirm, also roll back unless 'mr confirm' runs in time)
   mr confirm                  keep the last --confirm apply
   mr rollback [SNAPSHOT]      restore the latest (or given) snapshot
+  mr rollback --boot          at boot (mr-preinit): roll back a change that was never confirmed
   mr history                  list snapshots
   mr render DIR               write all generated files under DIR (for review/tests)
   mr fw                       (re)load the firewall for the current set of netdevs
@@ -79,29 +80,7 @@ func dispatch(args []string, cfgPath, secPath string) error {
 		}
 		return nil
 	case "rollback":
-		snap := ""
-		if len(args) > 1 {
-			snap = filepath.Join(HistoryDir, filepath.Base(args[1]))
-		} else {
-			ents, _ := os.ReadDir(HistoryDir)
-			if len(ents) == 0 {
-				return fmt.Errorf("no snapshots")
-			}
-			snap = filepath.Join(HistoryDir, ents[len(ents)-1].Name())
-		}
-		svcs, err := restore(snap)
-		if err != nil {
-			return err
-		}
-		restartAll(svcs)
-		if c, err := loadConfig(cfgPath, secPath); err == nil {
-			reconcileRunlevel(c)
-			refreshRoutes(c)
-			fwLoad(c)
-		}
-		appendChangeLog("mr rollback: " + filepath.Base(snap))
-		fmt.Println("restored", filepath.Base(snap))
-		return nil
+		return rollbackCommand(args[1:], cfgPath, secPath)
 	case "rollback-if-unconfirmed":
 		secs, _ := strconv.Atoi(args[2])
 		return rollbackIfUnconfirmed(args[1], secs)

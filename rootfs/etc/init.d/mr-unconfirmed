@@ -1,0 +1,17 @@
+#!/sbin/openrc-run
+# Alpine installs (install.sh adds this to the boot runlevel): a change that was never confirmed —
+# the machine went down during an apply or inside its confirm window — is rolled back before sysctl,
+# hostname and every service start from it. The firmware image does this in mr-preinit instead.
+description="roll back a mini-router change that was never confirmed"
+depend() {
+	need localmount
+	before sysctl hostname net mr-network
+}
+start() {
+	[ -e /etc/mini-router/confirm-pending ] || return 0
+	ebegin "Rolling back the unconfirmed mini-router change"
+	out=$(/usr/sbin/mr rollback --boot 2>&1)
+	rc=$?
+	if [ $rc = 0 ]; then einfo "$out"; else eerror "$out"; fi # also in /etc/router-changes.log
+	eend $rc
+}

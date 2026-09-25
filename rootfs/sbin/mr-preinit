@@ -8,7 +8,8 @@
 #              programs the image ships, prune_upper), stack overlayfs (lower = squashfs, upper =
 #              /overlay/mr/upper) on /mnt, pivot_root into it (the squashfs stays at /rom) and exec
 #              busybox init (OpenRC). /overlay/.mr-factory-reset (written by factory-reset) wipes
-#              rootfs_data first.
+#              rootfs_data first. A change that was never confirmed (/etc/mini-router/confirm-pending
+#              left by a power cut or crash) is rolled back before init: `mr rollback --boot`.
 #   initramfs  / is the kernel's RAM rootfs. /mr-install (the sysupgrade installer payload) runs the
 #              installer; anything else is the RAM test system (kexec): provisioned config is applied
 #              and a safety timer reboots back to flash after 10 minutes unless /tmp/keep exists
@@ -92,6 +93,17 @@ firstboot() {
 	rm -f /etc/mini-router/.firstboot
 	log "applied the provisioned router.yaml"
 	return 0
+}
+
+# A change that was never accepted (the router went down during an apply or inside its confirm window)
+# must not survive the reboot: its snapshot goes back before any service starts.
+unconfirmed() {
+	[ -e /etc/mini-router/confirm-pending ] && [ -x /usr/sbin/mr ] || return 0
+	if out=$(/usr/sbin/mr rollback --boot 2>&1); then
+		log "$out"
+	else
+		log "rolling back the unconfirmed change failed: $out"
+	fi
 }
 
 mount -t proc -o nosuid,nodev,noexec proc /proc 2>/dev/null
@@ -178,6 +190,7 @@ if [ -n "$data" ] && mkdir -p /overlay/mr/upper /overlay/mr/work &&
 	done
 	# devtmpfs, if the kernel auto-mounted it on the old root (else OpenRC's devfs mounts it)
 	grep -q " /rom/dev " /proc/mounts && { mount -o move /rom/dev /dev || log "moving /rom/dev failed"; }
+	unconfirmed
 	firstboot
 else
 	log "overlay setup failed: booting the read-only root"
