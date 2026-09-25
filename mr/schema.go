@@ -62,7 +62,8 @@ func schemaEnums() map[string][]string {
 		"ProxyNode.UDPRelayMode":      opt(proxyUDPRelay),
 		"ProxyNode.Fingerprint":       opt(proxyFingerprints),
 		"ProxyGroup.Type":             e("urltest", "selector"),
-		"Schedule.Action":             e("reboot", "restart", "reconnect"),
+		"Schedule.Action":             e("reboot", "restart", "reconnect", "wol"),
+		"DDNSRecord.Provider":         e("", "cloudflare"),
 		"APIToken.Scope":              e("read", "operate", "apply"),
 	}
 }

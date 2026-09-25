@@ -29,10 +29,18 @@ services:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDOGJDCePFDR8nNJPCzmDX6zxWpEH/sQ3kBFp/rZ0D2I lab-laptop
       - ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBNv5ls2cMXY7dW6O6Vz2KVjjr95X1TsH3S+tudkbci188YyeFDhEsK8e2dNFxXjUS5IERTFJe/VODdvFE/zB8/I= lab-phone
   panel: {enabled: true}
+  ddns:                                     # no daemon: WAN hooks + crond run `mr ddns sync` (only calls the API on change)
+    enabled: true
+    interval: 10                            # crontab: */10 * * * * /usr/sbin/mr ddns sync --cron
+    records:
+      - {name: home.example.com, zone: example.com, token_secret: cf_ddns_token, ipv4: active, ipv6: router}
+      - {name: "*.example.com", zone: example.com, token_secret: cf_ddns_token, ipv4: wan2}
+      - {name: nas.example.com, zone: example.com, token_secret: cf_ddns_token, ipv4: "off", ipv6: "::10", ttl: 300}
 
 schedules:                                  # busybox crond, fixed action set
   - {name: weekly-reboot, cron: "30 4 * * 1", action: reboot}
   - {name: wifi-restart, cron: "0 5 * * *", action: restart, target: mr-hostapd}
   - {name: redial-iptv, cron: "15 */6 * * *", action: reconnect, target: iptv}      # DHCP WAN -> mr-udhcpc.iptv
   - {name: redial-wan2, cron: "0 3 * * 0", action: reconnect, target: wan2}         # PPPoE WAN -> mr-pppoe.wan2
+  - {name: wake-lab-pc, cron: "0 7 * * 1-5", action: wol, target: "02:00:00:00:00:10"}  # Wake-on-LAN (a MAC or a dhcp.hosts name)
   - {name: monthly-reboot, enabled: false, cron: "0 2 1 * *", action: reboot}      # kept, not in the crontab

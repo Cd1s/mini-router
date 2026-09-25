@@ -59,11 +59,62 @@ function download(name, u8, type){
 }
 const sleep = ms => new Promise(r=>setTimeout(r, ms));
 
+// ---------- DDNS (services.ddns; no daemon: WAN hooks + crond run `mr ddns sync`) ----------
+const ago = t => t ? fmtDur(Date.now()/1000 - t)+"前" : "—";
+const DDNS_BLANK = ()=>({name:"", zone:"", provider:"cloudflare", token_secret:"cf_ddns_token", ipv4:"active", ipv6:"off", ttl:0});
+function ddnsCard(c, st){
+  const sv = c.services;
+  const dd = sv.ddns || {enabled:false, interval:10};
+  const recs = dd.records || [];
+  // the section (and its list) appears in router.yaml on the first edit, not by opening this page
+  const attach = ()=>{ if (!dd.records) dd.records = recs; if (!sv.ddns) sv.ddns = dd; touch(); };
+  const v4 = ()=>[["active","在用的 WAN（自动）"],["off","不更新"], ...(c.wan||[]).map(w=>[w.name, w.name])];
+  const t = etable(recs, [
+    {k:"name", l:"域名", ph:"home.example.com"},
+    {k:"zone", l:"Zone（域）", ph:"example.com"},
+    {k:"token_secret", l:"Token 引用名", ph:"cf_ddns_token", w:"130px"},
+    {k:"token_secret", l:"API Token", t:"secret"},
+    {k:"ipv4", l:"A 记录（IPv4）", t:"sel", o:v4},
+    {k:"ipv6", l:"AAAA（IPv6）", ph:"off / router / ::10", w:"130px"},
+    {k:"ttl", l:"TTL", t:"num", w:"80px"},
+  ], ()=>{ attach(); return DDNS_BLANK(); }, {noMove:true});
+  const stBox = h("div");
+  const state = r=>{
+    if (r.error) return h("span",{class:"err",title:r.error}, r.stopped ? "Token 被拒绝，已停止自动重试（改配置或点“立即更新”）：" : "失败（"+ago(r.error_at)+"）：", r.error);
+    if (!r.local) return dash("");
+    return r.published===r.local ? h("span",{class:"tag ok"},"已同步") : h("span",{class:"tag warn"},"待更新");
+  };
+  const drawSt = rows=>{
+    rows = rows||[];
+    stBox.replaceChildren(rows.length ? roTable(["域名","类型","来源","本机地址","已发布","上次成功","状态"], rows.map(r=>[
+      mono(r.name), r.type, mono(r.source||""), r.local ? mono(r.local) : h("span",{class:"mut"}, r.note||"—"),
+      r.published ? mono(r.published) : dash(""), ago(r.last_ok), state(r)])) :
+      h("div",{class:"mut",style:"padding:10px 16px"}, "（保存并应用后显示状态）"));
+  };
+  drawSt(st && st.records);
+  const upd = h("button",{class:"btn sm",onclick:async e=>{
+    e.target.disabled = true;
+    try { const r = await api("sys.ddnsupdate",{force:true}); drawSt(r.records); toast("已检查并更新"); }
+    catch(err){ toast(err.message, 5000); } finally { e.target.disabled = false; } }}, "立即更新");
+  return card("DDNS 动态域名（Cloudflare）", [
+    h("div",{style:"padding:10px 16px 0"}, form(
+      ...field("启用", inBool(dd,"enabled",attach)),
+      ...field("定时检查（分钟）", h("input",{type:"number", min:0, max:60, value:dd.interval??10, style:"max-width:110px",
+        oninput:e=>{ dd.interval = e.target.value===""?10:Number(e.target.value); attach(); }}),
+        "WAN 上线 / 续约 / IPv6 前缀变化时立即更新；此外每隔几分钟核对一次（地址没变就不联网），0 = 只靠 WAN 事件。每天还会向 Cloudflare 核对一次记录。"))),
+    h("div",{class:"sys-note",style:"padding:0 16px"},
+      "Token：Cloudflare › My Profile › API Tokens › “Edit zone DNS” 模板，只授权这个域。只改记录的地址（和填了的 TTL），代理（橙色云）等设置保持不变；记录不存在时新建（不代理）。",
+      " A 记录用 WAN 的公网 IPv4（运营商内网 / CGNAT 地址不会发布）。AAAA：router = 路由器自己的 IPv6；::10 这样的后缀 = LAN 设备（前缀 + 后缀，外网访问还要在 防火墙 › IPv6 入站 放行）。"),
+    t.el,
+    h("div",{class:"row",style:"padding:10px 16px 0"}, h("b",{},"状态"), h("span",{class:"sp",style:"flex:1"}), upd),
+    stBox], t.add, true);
+}
+
 // ---------- 服务 ----------
 registerPage("services", "services", "服务", 10, async ()=>{
   const c = C(), sv = c.services;
-  let d = {services:[], others:[]};
-  try { d = await api("sys.services"); } catch(e){ toast("读取服务状态失败："+e.message, 4000); }
+  let d = {services:[], others:[]}, dns = null;
+  try { [d, dns] = await Promise.all([api("sys.services"), api("sys.ddns").catch(()=>null)]); } catch(e){ toast("读取服务状态失败："+e.message, 4000); }
   const row = Object.fromEntries((d.services||[]).map(x=>[x.name,x]));
   const state = name=>{
     const r = row[name];
@@ -105,7 +156,7 @@ registerPage("services", "services", "服务", 10, async ()=>{
     svcCard("Web 管理 (httpd)", "mr-panel", form(...field("启用", inBool(sv.panel,"enabled"),
       h("span",{class:"err"},"关闭后本页面也无法访问，只能用 SSH 管理")))),
     svcCard("NTP (busybox ntpd)", "ntpd", h("div",{}, "始终启用。", c.system.ntp_server?"同时为局域网提供时间服务。":"", " ", h("a",{href:"#system"},"时间设置 →"))),
-    svcCard("计划任务 (crond)", "crond", h("div",{}, "有启用的计划任务时自动启用（当前 ", String(c.schedules.filter(x=>x.enabled!==false).length), " 个）。 ", h("a",{href:"#schedules"},"计划任务 →"))),
+    svcCard("计划任务 (crond)", "crond", h("div",{}, "有启用的计划任务或 DDNS 定时检查时自动启用（当前 ", String(c.schedules.filter(x=>x.enabled!==false).length), " 个任务）。 ", h("a",{href:"#schedules"},"计划任务 →"))),
     svcCard("zram 压缩内存", "mr-zram", form(...field("启用", inBool(c.system,"zram"), "内存的 1/4 做压缩交换（zstd）"))),
   ];
   const peers = ts && ts.peers || [];
@@ -125,6 +176,7 @@ registerPage("services", "services", "服务", 10, async ()=>{
       h("button",{class:"btn sm",onclick:()=>show("services")},"刷新")),
     h("div",{class:"sys-grid"}, cards),
     h("div",{class:"sys-sp"}),
+    ddnsCard(c, dns),
     peerTable,
     card("其它服务（由其它页面的配置决定）", others.length ? h("div",{class:"row"}, others.map(x=>h("span",{class:"row",style:"gap:4px;margin-right:10px"},
       h("span",{class:"tag "+(x.running?"ok":"bad")}, x.name), x.installed && x.name!=="mr-network" ? restartBtn(x.name) : null))) : h("span",{class:"mut"},"（无）")));
@@ -296,7 +348,7 @@ function tokenCard(c){
 
 // ---------- 计划任务 ----------
 const DAYS = [["1","一"],["2","二"],["3","三"],["4","四"],["5","五"],["6","六"],["0","日"]];
-const ACTIONS = {reboot:"重启路由器", restart:"重启服务", reconnect:"重新拨号 / 重连 WAN"};
+const ACTIONS = {reboot:"重启路由器", restart:"重启服务", reconnect:"重新拨号 / 重连 WAN", wol:"唤醒设备 (WOL)"};
 const pad2 = n=>String(n).padStart(2,"0");
 function cronText(spec){
   const f = (spec||"").trim().split(/\s+/);
@@ -340,6 +392,7 @@ function cronBuild(st){
 function targetOptions(action, svcNames){
   if (action==="restart") return svcNames.filter(n=>n!=="mr-network").map(n=>[n,n]);
   if (action==="reconnect") return (S.cfg.wan||[]).filter(w=>w.proto!=="static").map(w=>[w.name, w.name+"（"+(w.proto==="pppoe"?"PPPoE 重拨":"DHCP 重新获取")+"）"]);
+  if (action==="wol") return (S.cfg.dhcp.hosts||[]).filter(x=>x.name).map(x=>[x.name, x.name+"（"+x.mac+"）"]);
   return [];
 }
 function editSchedule(orig, svcNames, onSave){
@@ -425,7 +478,7 @@ registerPage("system", "schedules", "计划任务", 20, async ()=>{
   const add = h("button",{class:"btn sm p",onclick:()=>editSchedule({name:"", action:"reboot", cron:"30 4 * * 1"}, svcNames, y=>{ list.push(y); touch(); draw(); })},"+ 添加");
   return h("div",{},
     card("计划任务", [h("div",{class:"mut",style:"padding:10px 16px"},
-      "由 busybox crond 按路由器时区执行，只有固定的几种动作：重启路由器、重启某个服务、重连某条 WAN（PPPoE 重拨 / DHCP 重新获取）。每次执行都记入系统日志和“最近变更”。"),
+      "由 busybox crond 按路由器时区执行，只有固定的几种动作：重启路由器、重启某个服务、重连某条 WAN（PPPoE 重拨 / DHCP 重新获取）、唤醒设备（WOL，对象是 DHCP 静态分配里的主机）。每次执行都记入系统日志和“最近变更”。"),
       h("div",{class:"tw"}, h("table",{}, h("thead",{}, h("tr",{}, ["启用","名称","时间","动作","对象",""].map(x=>h("th",{},x)))), tb))], add, true));
 });
 

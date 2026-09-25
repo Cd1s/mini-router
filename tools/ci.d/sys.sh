@@ -5,12 +5,16 @@
 #     glibc interpreting the POSIX string itself, every 5 days over two years (DST edges included)
 #  2. rendered service settings: home unchanged (ntpd, dropbear), lab: NTP server, LAN-only SSH on
 #     the LAN-zone addresses only, tailscale port, boot order for nf_conntrack sysctls
-#  3. crontab: managed block with fixed commands only; `mr sys run` refuses anything else
+#  3. crontab: managed block with fixed commands only (+ the DDNS check); `mr sys run` refuses anything
+#     else; `mr ddns status` works offline and never shows the token
 #  4. authorized_keys: managed block, and every line this host already had is still there
 #  5. every rendered conf.d file parses as sh and sets what the init scripts read
 #  6. `mr sys backup`: archive content, secrets only on request and never the web UI password hash
 #  7. sysctl, real kernel (network namespace): after the rendered file is loaded no netdev sends ICMP
 #     redirects — neither one that existed before nor one created after
+#  8. Wake-on-LAN, real sockets (two network namespaces): `mr wol` sends three 102-byte magic packets
+#     from the router's LAN address to the LAN broadcast through br-lan; a host behind the bridge gets
+#     them, a WAN-side netdev with the default route sends nothing; bad targets are refused
 set -eu
 : "${OUT:?}" "${ROOT:?}"
 MR=$OUT/mr-host
@@ -65,18 +69,42 @@ grep -qx 'crond' "$L/etc/mini-router/gen/services" || fail "lab: crond not enabl
 if grep -qx 'crond' "$H/etc/mini-router/gen/services"; then fail "home: crond enabled without schedules"; fi
 grep -qx "export TZ='CET-1CEST,M3.5.0,M10.5.0/3'" "$L/etc/conf.d/crond" || fail "lab: crond zone"
 block=$(sed -n '/^# --- begin mini-router schedules/,/^# --- end mini-router schedules/p' "$C" | grep -v '^#')
-[ "$(echo "$block" | wc -l)" = 4 ] || fail "lab crontab: want 4 jobs, got: $block"
+[ "$(echo "$block" | wc -l)" = 6 ] || fail "lab crontab: want 5 jobs + the DDNS check, got: $block"
 echo "$block" | while read -r m hr d mo w cmd; do
+	if [ "$cmd" = "/usr/sbin/mr ddns sync --cron" ]; then
+		[ "$m $hr $d $mo $w" = "*/10 * * * *" ] || fail "DDNS check time spec: $m $hr $d $mo $w"
+		continue
+	fi
 	echo "$m $hr $d $mo $w" | grep -Eq '^[0-9]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$' || fail "bad time spec: $m $hr $d $mo $w"
-	echo "$cmd" | grep -Eqx '/usr/sbin/mr sys run (reboot|restart [a-z0-9.-]+|reconnect [a-z0-9_-]+)' || fail "unexpected crontab command: $cmd"
+	echo "$cmd" | grep -Eqx '/usr/sbin/mr sys run (reboot|restart [a-z0-9.-]+|reconnect [a-z0-9_-]+|wol [A-Za-z0-9:-]+)' || fail "unexpected crontab command: $cmd"
 done
 grep -qx '15 \*/6 \* \* \* /usr/sbin/mr sys run reconnect iptv' "$C" || fail "lab crontab: reconnect iptv"
+grep -qx '0 7 \* \* 1-5 /usr/sbin/mr sys run wol 02:00:00:00:00:10' "$C" || fail "lab crontab: wol"
+grep -qx '\*/10 \* \* \* \* /usr/sbin/mr ddns sync --cron' "$C" || fail "lab crontab: no DDNS check"
 CFG="-c $OUT/lab.yaml -s $OUT/lab-secrets.yaml"
-for bad in "restart dnsmasq;reboot" "restart mr-network" "reconnect office" "shutdown" "reboot now" "restart sshd"; do
+for bad in "restart dnsmasq;reboot" "restart mr-network" "reconnect office" "shutdown" "reboot now" "restart sshd" "wol no-such-host" "wol 01:00:5e:00:00:01"; do
 	# shellcheck disable=SC2086
 	if "$MR" $CFG sys run $bad >/dev/null 2>&1; then fail "mr sys run $bad accepted"; fi
 done
 ok "crontab + mr sys run"
+
+# 3b. DDNS: status works offline (no lease files here: nothing to publish, no request is made) and
+#     never shows the token; the home config has no DDNS
+# shellcheck disable=SC2086
+"$MR" $CFG ddns status > "$OUT/ddns-status.json"
+python3 - "$OUT/ddns-status.json" <<'EOF' || fail "lab ddns status"
+import json, sys
+rows = json.load(open(sys.argv[1]))
+want = [("home.example.com", "A", "active"), ("home.example.com", "AAAA", "router"), ("*.example.com", "A", "wan2"), ("nas.example.com", "AAAA", "::10")]
+got = [(r["name"], r["type"], r["source"]) for r in rows]
+assert got == want, got
+assert all(not r.get("published") and r.get("note") for r in rows), rows
+EOF
+if grep -q 'lab-token' "$OUT/ddns-status.json"; then fail "ddns status shows the token"; fi
+[ "$("$MR" -c "$ROOT/examples/router.yaml" -s "$ROOT/mr/testdata/secrets.yaml" ddns status | tr -d ' \n')" = "[]" ] || fail "home: ddns status not empty"
+# shellcheck disable=SC2086
+if "$MR" $CFG ddns update nope.example.com >/dev/null 2>&1; then fail "ddns update of an unknown record accepted"; fi
+ok "ddns status"
 
 # 4. authorized_keys: managed block + everything this host already had
 K=$L/root/.ssh/authorized_keys
@@ -149,3 +177,61 @@ done
 ip netns del "$NS"
 trap - EXIT
 ok "no ICMP redirects on netdevs created before or after the sysctl file"
+
+# 8. Wake-on-LAN through br-lan (lab LAN 192.168.1.6/24) to a receiver in another namespace
+NA=mrciwola$$ NB=mrciwolb$$
+ip netns add "$NA"
+ip netns add "$NB"
+# shellcheck disable=SC2064
+trap "ip netns del $NA 2>/dev/null; ip netns del $NB 2>/dev/null" EXIT
+ip -n "$NA" link set lo up
+ip -n "$NA" link add br-lan type bridge
+ip -n "$NA" link add wol0 type veth peer name wol1 netns "$NB"
+ip -n "$NA" link set wol0 master br-lan
+ip -n "$NA" link set wol0 up
+ip -n "$NA" addr add 192.168.1.6/24 dev br-lan
+ip -n "$NA" link set br-lan up
+ip -n "$NA" link add wan0 type dummy
+ip -n "$NA" addr add 10.99.0.2/24 dev wan0
+ip -n "$NA" link set wan0 up
+ip -n "$NA" route add default via 10.99.0.1 dev wan0
+ip -n "$NB" addr add 192.168.1.50/24 dev wol1
+ip -n "$NB" link set wol1 up
+rm -f "$OUT/wol.ready" "$OUT/wol.rx"
+ip netns exec "$NB" python3 - "$OUT/wol" <<'EOF' &
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(("", 9))
+s.settimeout(5)
+open(sys.argv[1] + ".ready", "w").close()
+got = []
+try:
+    while len(got) < 3:
+        d, a = s.recvfrom(512)
+        got.append("%s %s" % (d.hex(), a[0]))
+except socket.timeout:
+    pass
+open(sys.argv[1] + ".rx", "w").write("".join(g + "\n" for g in got))
+EOF
+RX=$!
+i=0
+while [ ! -e "$OUT/wol.ready" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+tx0=$(ip netns exec "$NA" cat /sys/class/net/wan0/statistics/tx_packets)
+# shellcheck disable=SC2086
+ip netns exec "$NA" "$MR" $CFG wol 02:00:00:00:00:01 > "$OUT/wol.json" || fail "mr wol"
+wait "$RX" || true
+want="ffffffffffff$(printf '020000000001%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16) 192.168.1.6"
+[ "$(grep -c . "$OUT/wol.rx")" = 3 ] || fail "wol: want 3 packets, got: $(cat "$OUT/wol.rx")"
+while read -r line; do [ "$line" = "$want" ] || fail "wol packet: $line"; done < "$OUT/wol.rx"
+grep -q '"broadcast":"192.168.1.255"' "$OUT/wol.json" || fail "wol answer: $(cat "$OUT/wol.json")"
+[ "$(ip netns exec "$NA" cat /sys/class/net/wan0/statistics/tx_packets)" = "$tx0" ] || fail "wol: packets left through the WAN"
+for bad in 01:00:5e:00:00:01 00:00:00:00:00:00 "nas;reboot" no-such-host; do
+	# shellcheck disable=SC2086
+	if ip netns exec "$NA" "$MR" $CFG wol "$bad" >/dev/null 2>&1; then fail "mr wol $bad accepted"; fi
+done
+# shellcheck disable=SC2086
+if ip netns exec "$NA" "$MR" $CFG wol 02:00:00:00:00:01 office >/dev/null 2>&1; then fail "mr wol on an unknown network accepted"; fi
+ip netns del "$NA"
+ip netns del "$NB"
+trap - EXIT
+ok "wol: 3 magic packets to 192.168.1.255:9 through br-lan, none through the WAN, bad targets refused"

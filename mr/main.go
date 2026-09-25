@@ -58,6 +58,8 @@ module commands (JSON output unless noted):
   mr proxy status | check | delay [NODE|GROUP] | select GROUP NODE | parse [--secrets] [FILE] | fetch [--secrets] URL|SUB
   mr mon now | history | devices | conns [JSON] | procs | dmesg
   mr sys run ACTION [TARGET] | backup [-secrets] FILE|- | restore [-confirm SECS] FILE | keys
+  mr ddns status | update [--force] [NAME...]   DDNS records; update now (sync --hook|--cron: WAN hooks / crond)
+  mr wol MAC|HOST [NETWORK]   Wake-on-LAN magic packet (HOST: a dhcp.hosts name) to the LAN's broadcast
   mr led                      set the status LEDs from the WAN state
 `
 
@@ -264,6 +266,21 @@ func logf(f string, a ...any) {
 		slog.Info(msg)
 	}
 	fmt.Fprintln(os.Stderr, msg)
+}
+
+// selfCmd is this mr binary with the same -c / -s files, to run a subcommand in the background.
+func selfCmd(args ...string) (string, []string) {
+	self, err := os.Executable()
+	if err != nil {
+		self = "/usr/sbin/mr"
+	}
+	var pre []string
+	for _, f := range []string{"c", "s"} {
+		if fl := flag.Lookup(f); fl != nil && fl.Value.String() != fl.DefValue {
+			pre = append(pre, "-"+f, fl.Value.String())
+		}
+	}
+	return self, append(pre, args...)
 }
 
 func startDetached(name string, args ...string) {

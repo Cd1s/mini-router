@@ -17,7 +17,7 @@ file, applies with snapshot + verify + auto-rollback, and serves the web UI API 
 | fw    | 40 | `mr/mod_fw*.go` | `ui/fw.js` | `firewall` | nftables skeleton + hooks, zones, forwards, rules, NAT, IPv6 pinholes, access control |
 | mon   | 50 | `mr/mod_mon*.go` | `ui/mon.js` | — | realtime graphs, per-device traffic, connections, system load |
 | proxy | 55 | `mr/mod_proxy*.go` | `ui/proxy.js` | `proxy` | selective transparent proxy: sing-box, fake-ip DNS, tproxy, bypass devices |
-| sys   | 70 | `mr/mod_sys*.go` | `ui/sys.js` | `system`, `services`, `schedules` | hostname/time/NTP/sysctl, SSH, add-on services, backup/restore, schedules, logs, diagnostics |
+| sys   | 70 | `mr/mod_sys*.go` | `ui/sys.js` | `system`, `services`, `schedules` | hostname/time/NTP/sysctl, SSH, add-on services, DDNS, backup/restore, schedules, logs, diagnostics |
 | api   | 80 | `mr/api_token.go`, `mr/api_plan.go`, `mr/cfgpath.go`, `mr/schema.go` | card in `ui/sys.js` (管理与 SSH) | `api` | API tokens for scripts / agents, `plan` / patches / `base_rev`, config paths (`mr get/set/add/del/export`), JSON Schema (`mr schema`); `docs/api.md` |
 | platform | — | — | — | — | kernel/kmods, sing-box build, image (build/**), preinit, sysupgrade/factory-reset, docs/flash.md |
 | core  | —  | `config.go`, `module.go`, `render.go`, `apply.go`, `api.go`, `status.go`, `main.go` | `ui/core.js`, `index.html` | — | loading, apply/rollback, auth, registry, layout (changes need the integrator) |
@@ -53,6 +53,9 @@ Register exactly one `Module` in `init()`:
   list a new action there deliberately, or not at all (logs, secrets, firmware stay session-only).
 - `Commands` — `mr <name> ...` subcommands (for hooks/daemons).
 - `Secrets(c)` — names of every secret this module's config references (so the UI can show 已设置).
+- `OnWAN(c, wan, event)` — called by the net hooks (`hooks.go`) when a WAN's addresses may have changed: `up`
+  (PPP up, DHCP bound / renew), `ipv6` (dhcpcd RA / delegated prefix), `down`, `health` (multi-WAN failover; wan
+  `""`). It runs inside pppd / udhcpc / dhcpcd: return at once, start slow work detached (sys: DDNS sync).
 
 **Guard and risk.** `guard:` (core, `guard.go`) holds the owner's baselines — `never_expose` (ssh, panel, dns: no
 `firewall.open` or forward to the router reaches their ports from the WAN), `always_bypass` (devices never proxied),

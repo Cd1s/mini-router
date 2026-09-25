@@ -26,6 +26,12 @@ const cleanName = (s, ip)=>{ s=String(s||"").replace(/[^A-Za-z0-9-]/g,"-").repla
 // widgets bound to an object that may not exist in S.cfg yet: attach it on the first edit
 const lazy = (parent, key, init)=>{ const o = parent[key] || init(); return {o, attach:()=>{ if(!parent[key]) parent[key]=o; touch(); }}; };
 const onEdit = (el, fn)=>{ el.addEventListener("input", fn); el.addEventListener("change", fn); return el; };
+// Wake-on-LAN (sys.wol): magic packet to the device's network broadcast; the router checks MAC and network.
+// mac: a string or a function (a row whose MAC field may still be edited)
+const wakeBtn = (mac, network)=>h("button",{class:"btn sm",title:"发送网络唤醒（WOL）魔术包；设备要在 BIOS / 网卡里开启 Wake-on-LAN",onclick:async()=>{
+  const target = typeof mac==="function" ? mac() : mac;
+  try { const r = await api("sys.wol", network ? {target, network} : {target}); toast("已发送唤醒包："+r.mac+" → "+r.broadcast+"（"+r.dev+"）", 4000); }
+  catch(e){ toast("唤醒失败："+e.message, 5000); } }}, "唤醒");
 
 // ---------------- 状态 › 终端设备 ----------------
 registerPage("status", "clients", "终端设备", 20, async ()=>{
@@ -43,7 +49,7 @@ registerPage("status", "clients", "终端设备", 20, async ()=>{
         h("button",{class:"btn sm",title:"把当前地址固定给这台设备",onclick:e=>{ S.cfg.dhcp.hosts.push({name:cleanName(l.name,l.ip), mac, ip:l.ip}); touch(); e.target.replaceWith(h("span",{class:"tag warn"},"待应用")); }},"设为静态");
       const rel = confirmBtn("释放", "释放 "+l.ip+"（"+l.mac+"）的租约？\n设备下次续约时会重新申请地址；适合清理已离线设备或把地址腾给静态分配。", async()=>{
         await api("dns.release",{ip:l.ip, mac:l.mac}); toast("已释放 "+l.ip); await load(); });
-      return [l.name==="*"?h("span",{class:"mut"},"-"):l.name, mono(l.ip), mono(l.mac), l.network||"-", remain(l.expires, now), h("span",{class:"row"}, st, rel)];
+      return [l.name==="*"?h("span",{class:"mut"},"-"):l.name, mono(l.ip), mono(l.mac), l.network||"-", remain(l.expires, now), h("span",{class:"row"}, st, wakeBtn(l.mac, l.network), rel)];
     });
     const v6Rows = (ls.leases6||[]).filter(l=>match(l.name,l.ip,l.duid)).map(l=>[l.name==="*"?"-":l.name, mono(l.ip), mono(l.iaid),
       h("span",{class:"mono",title:l.duid}, (l.duid||"").slice(0,23)+((l.duid||"").length>23?"…":"")), remain(l.expires, now)]);
@@ -106,7 +112,7 @@ const hostsTab = ()=>{
       const lease = h("input",{type:"text", value:leaseOf(row.mac), placeholder:"默认（"+(c.dhcp.lease||"12h")+"）", oninput:e=>setLease(row.mac, e.target.value.trim())});
       tb.append(h("tr",{}, h("td",{}, inText(row,"name",{placeholder:"nas"})), h("td",{}, macIn), h("td",{}, inText(row,"ip",{placeholder:routerIP(c.lan.ipv4).replace(/\.\d+$/,".x")})),
         h("td",{style:"width:130px"}, lease),
-        h("td",{style:"width:1%"}, h("button",{class:"btn sm d",onclick:()=>{ setLease(row.mac,""); arr.splice(i,1); touch(); draw(); }},"删除"))));
+        h("td",{style:"width:1%;white-space:nowrap"}, wakeBtn(()=>row.mac), " ", h("button",{class:"btn sm d",onclick:()=>{ setLease(row.mac,""); arr.splice(i,1); touch(); draw(); }},"删除"))));
     });
   };
   draw();

@@ -1,0 +1,2 @@
+# sys module lab test secrets (fake values).
+cf_ddns_token: "lab-token-not-real-0123456789abcdef"

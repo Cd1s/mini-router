@@ -1,0 +1,9 @@
+{
+ "enabled": true,
+ "interval": 10,
+ "records": [
+  {"name": "home.example.com", "type": "A", "source": "active", "local": "203.0.113.45", "published": "203.0.113.45", "last_ok": 1790248800, "changed": 1790170000, "checked": 1790248800},
+  {"name": "home.example.com", "type": "AAAA", "source": "router", "local": "2001:db8:4a1:7700::1", "published": "2001:db8:4a1:7600::1", "last_ok": 1790170000, "changed": 1790170000, "checked": 1790248900, "error": "Cloudflare: HTTP 429 (971 Please wait and consider throttling your request speed)", "error_at": 1790248900, "retry": 1790249020, "fails": 1},
+  {"name": "nas.example.com", "type": "AAAA", "source": "::10", "note": "no global IPv6 prefix on br-lan"}
+ ]
+}

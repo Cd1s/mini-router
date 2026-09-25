@@ -1,0 +1,9 @@
+{
+ "enabled": true,
+ "interval": 10,
+ "records": [
+  {"name": "home.example.com", "type": "A", "source": "active", "local": "203.0.113.45", "published": "203.0.113.45", "last_ok": 1790249149, "changed": 1790170000, "checked": 1790249149},
+  {"name": "home.example.com", "type": "AAAA", "source": "router", "local": "2001:db8:4a1:7700::1", "published": "2001:db8:4a1:7700::1", "last_ok": 1790249149, "changed": 1790249149, "checked": 1790249149},
+  {"name": "nas.example.com", "type": "AAAA", "source": "::10", "note": "no global IPv6 prefix on br-lan"}
+ ]
+}

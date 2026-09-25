@@ -113,6 +113,15 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
   Connections stay hardware-offloaded. Check: `mr dns query site.example`, then `nft list set inet mr pr_<index>_4`
   lists the learned addresses. Devices using DoH / their own DNS are not covered (`dns.redirect` catches plain DNS).
 - **Services** (`services:` in router.yaml, e.g. `ssh`, `tailscale`, `stubby`): enabling adds them to the runlevel on apply.
+- **DDNS** (Cloudflare; no daemon: WAN hooks + crond): token (Zone › DNS › Edit on that zone) into secrets.yaml as
+  e.g. `cf_ddns_token`, then `services: {ddns: {enabled: true, records: [{name: home.example.com, zone: example.com,
+  token_secret: cf_ddns_token, ipv4: active, ipv6: router}]}}` (`ipv4`: active | WAN name | "off"; `ipv6`: "off" |
+  router | "::10" for a LAN device; `interval`: minutes, default 10). Check: `mr ddns status` (`local` vs `published`,
+  `note` explains a missing address, e.g. CGNAT); force a re-check: `mr ddns update --force`. Only changes record content
+  (proxied stays); never deletes records.
+- **Wake a device (WOL)**: `mr wol <dhcp.hosts name>` or `mr wol aa:bb:cc:dd:ee:ff [network]` — magic packet to that
+  LAN network's broadcast through its bridge (never a WAN). Scheduled: `schedules: [{name: wake-nas, cron: "0 7 * * 1-5",
+  action: wol, target: nas}]`. The device needs WOL enabled in its BIOS / NIC and usually a cable.
 
 ## Status and diagnostics (read-only)
 
@@ -123,6 +132,7 @@ mr wifi status | mr wifi stations | mr wifi survey
 mr dns leases | mr dns stats | mr dns query example.com AAAA
 mr mon now | mr mon devices | mr mon conns '{"limit":20}'
 mr proxy status | mr proxy check
+mr ddns status                 # DDNS records: local / published address, last error
 rc-status -c                   # crashed services (should be empty)
 tail -n 100 /var/log/messages  # system log (logread is not used)
 dmesg | tail -n 50
