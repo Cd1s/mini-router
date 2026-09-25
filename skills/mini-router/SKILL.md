@@ -54,6 +54,7 @@ lan: {bridge: br-lan, ports: [lan1, lan2], ipv4: 192.168.1.1/24, ipv6_ra: true}
 wan:
   - {name: wan, device: wan, proto: pppoe, username: "…", password_secret: pppoe_password, ipv6: true, ipv6_pd: true}
   - {name: wan2, device: eth2, proto: dhcp}           # proto: pppoe | dhcp | static (ipv4:, gateway:, dns:)
+                                                      # portal: auto | off (captive-portal check; default: DHCP on)
 policy_routes:                                        # pick the WAN for NEW connections (selectors are ANDed)
   - {name: nas, mac: "aa:bb:cc:dd:ee:02", via: wan2}  # mac / src / dst / domains
   - {name: video, domains: [video.example], via: wan2}  # + subdomains; dnsmasq fills nft set pr_<index>_4/_6
@@ -105,6 +106,13 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
 - **A website via another WAN**: `policy_routes: [{name: …, domains: [site.example], via: wan2}]` (or `domains_file:`).
   Connections stay hardware-offloaded. Check: `mr dns query site.example`, then `nft list set inet mr pr_<index>_4`
   lists the learned addresses. Devices using DoH / their own DNS are not covered (`dns.redirect` catches plain DNS).
+- **Travelling (hotel / airport / someone else's router)**: `mr wan check [WAN]` says `online`, `portal` (with the
+  login URL: open it on any LAN device, the login covers the whole router) or `offline`; DHCP WANs are checked
+  automatically when they come up. A DHCP lease in the LAN's own subnet is refused (`"conflict"` in `mr wan status`,
+  with a free `suggest`ed subnet): move `lan.ipv4` (and static leases / forwards in the old subnet) with the user's OK,
+  apply, and the WAN asks for a lease again by itself. No NTP (udp/123 blocked): the check sets the clock from the
+  HTTP `Date` once it is online (only while NTP is unsynced and > 60 s off). Check URLs: `system.connectivity_check`
+  (plain http://, answering 204).
 - **Services** (`services:` in router.yaml, e.g. `ssh`, `tailscale`, `stubby`): enabling adds them to the runlevel on apply.
 
 ## Status and diagnostics (read-only)

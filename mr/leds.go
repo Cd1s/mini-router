@@ -1,7 +1,9 @@
 package main
 
 // Front-panel LEDs: status = green once the router is up; network = blue while at least one WAN has
-// an IPv4 address, red when none does. U-Boot leaves the status LED red, and nothing else touches it.
+// an IPv4 address, amber while every WAN that has one waits for a captive-portal login (last
+// connectivity check, mod_net_travel.go), red when none has one. U-Boot leaves the status LED red,
+// and nothing else touches it.
 // LEDs are found by name (*:status, *:network or *:wan); RGB (multicolor) LEDs get a colour, single
 // colour LEDs are switched on/off. system.leds: false turns them all off.
 
@@ -51,14 +53,7 @@ func updateLEDs(c *Config) {
 	for _, l := range status {
 		setLED(l, "0 255 0", on)
 	}
-	up := false
-	for _, w := range c.WAN {
-		up = up || hasIPv4(w.Ifname())
-	}
-	rgb := "255 0 0"
-	if up {
-		rgb = "0 0 255"
-	}
+	rgb := map[string]string{"down": "255 0 0", "portal": "255 120 0", "up": "0 0 255"}[wanLEDState(c)]
 	for _, l := range network {
 		setLED(l, rgb, on)
 	}

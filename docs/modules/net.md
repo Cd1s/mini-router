@@ -22,6 +22,8 @@ net 负责路由器的"线"：物理网口和网桥、LAN 与额外网络（访�
 | VLAN 网络 | 额外网络可带 802.1Q 标签：`<port>.<vlan>` 加入该网络的网桥，端口原来的用途不变 | 无 |
 | 接口状态 | `net.ports` 读 `/sys/class/net`：链路、速率、双工、计数、错误；网页显示前面板网口 + 接口表（实时速率） | 无 |
 | WAN DNS | 钩子维护 `/run/mini-router/resolv.conf`（在线线路的 DNS，健康的优先），dnsmasq 读它 | 无 |
+| 旅行：门户检测 | WAN 上线 / 续租时钩子在后台跑一次 `mr wan check`：经这条 WAN 访问 HTTP 204 地址，在线 / 需要网页登录 / 不通；网络灯变黄 = 需要登录 | 无（一次性进程） |
+| 旅行：网段冲突 | DHCP 租约与 LAN 侧网络重叠时拒绝安装，网页红色提示 + 建议网段；改完网段应用后自动重新获取 | 无 |
 
 ## 路由表 / 规则 / 标记布局
 
@@ -44,8 +46,9 @@ ip rule
   4. 负载均衡（`mode: balance`）：只处理 `meta mark 0x0` 的新 IPv4 连接，目标不是 LAN 侧网络。
 - 健康检测判定某线路故障时：该线路 main 表默认路由 metric +10000（下一条接管，但检测 ping 仍能从它出去），
   它的 WAN 表删掉默认路由（策略路由 / 均衡 / 恢复标记的流量落到 main = 最好的健康线路），并从均衡表里拿掉。恢复后全部还原。
-- 状态文件（tmpfs）：`/run/mini-router/wan/<wan>.json`（这条线拿到的地址、网关、DNS、上线时间），
-  `/run/mini-router/wan-state.json`（健康检测每轮写），`/run/mini-router/resolv.conf`。
+- 状态文件（tmpfs）：`/run/mini-router/wan/<wan>.json`（这条线拿到的地址、网关、DNS、上线时间、DHCP option 114），
+  `/run/mini-router/wan-state.json`（健康检测每轮写），`/run/mini-router/resolv.conf`，
+  `/run/mini-router/wan-check/<wan>.json`（上次连通性检测）、`<wan>.conflict.json`（被拒绝的冲突租约）。
 
 **给其它模块（proxy）的约定**：net 用到的 fwmark 是各 WAN 的标记（默认 0x200-0x2ff，策略路由可指定，例如家里的 0x102）。
 net 的 `mark_pre` 链在 mangle+1；LAN 侧有 `ct mark != 0` 的包会被恢复成 `meta mark` 并跳出该链，所以透明代理最好用自己的链
@@ -105,6 +108,7 @@ wan:
     proto: dhcp
     metric: 50
     peerdns: true
+    portal: auto              # 门户 / 连通性检测：auto | off；不写 = DHCP 开，PPPoE / 静态关（见“旅行”）
   - name: office
     device: wan
     vlan: 30
@@ -211,12 +215,14 @@ multicast: {igmp_snooping: false, igmp_proxy: false, upstream: wan2}
 | `mr wan status` | 每条 WAN 的运行状态 JSON（地址、网关、DNS、表 / 标记、当前 metric、健康、延迟） |
 | `mr wan health` | 按健康状态重装路由和防火墙（net-wanmon 在状态变化时调用） |
 | `mr wan dhcp <event>` | udhcpc 事件钩子 |
+| `mr wan check [WAN...]` | 连通性 / 门户检测（不写 = 所有有地址的 WAN），打印结果 JSON，写 `wan-check/<wan>.json` |
 | `mr routes` | 重装所有在线 WAN 的路由 / 规则，重载防火墙 |
 | API `net` | 原始 `ip -j` 视图（链路、地址、路由、规则、邻居） |
 | API `net.ports` | 网口 / 接口状态（`/sys`） |
 | API `net.routes` | 所有表的 v4/v6 路由 + 规则 |
 | API `net.wan` | 同 `mr wan status` |
 | API `net.redial` | POST `{"wan":"wan2"}`：重启该 WAN 的服务（重新拨号 / 重新获取） |
+| API `net.check` | POST `{"wan":"hotel"}`：立即检测这条 WAN（每个检测地址最多约 6 秒），返回同 `mr wan check` 的一项 |
 
 ## 对家里配置（examples/router.yaml）输出的改动（都是有意的）
 
@@ -260,12 +266,76 @@ multicast: {igmp_snooping: false, igmp_proxy: false, upstream: wan2}
   - {name: travel, device: wan, proto: dhcp, metric: 100, peerdns: true}
   ```
   在家 PPPoE 拨上、DHCP 没有服务器就一直空着；到了外面 PPPoE 拨不上，DHCP 拿到地址自动成为默认线路。
+  拿到地址后会自动做门户检测（需要网页登录时总览提示、网络灯变黄）；上级网络和 LAN 同网段时这个地址不会启用，见“旅行”。
   也可以直接把 `wan` 改成 `proto: dhcp`。应用时如果 DHCP 拿不到地址、而且没有别的线路在线，会自动回滚。
   （一个口 / VLAN 上只能有一条 DHCP 或静态 WAN，PPPoE 可以多条。）
 - 运营商要求 VLAN（例如马来西亚 Unifi PPPoE 走 VLAN 500）：在那条 WAN 上加 `vlan: 500`。
 - 查看线路：`mr wan status`；手动重拨：`rc-service mr-pppoe.wan2 restart`（或网页按钮）；
   看健康检测日志：`grep wanmon /var/log/messages`。
 - agent 改完一定 `mr validate` → `mr plan` → `mr apply --confirm 120` → 验证 → `mr confirm`。
+
+## 旅行：门户检测、网段冲突、上级 NAT
+
+路由器会被带去酒店、机场、朋友家。代码在 `mr/mod_net_travel.go`（+ `_linux.go` 的 SO_BINDTODEVICE），不常驻。
+这些逻辑只认“某条 WAN 拿到了一个 IPv4 租约”，以太网 DHCP WAN 和以后的 WiFi 客户端 WAN（WISP，#25）走的是同一套。
+
+### 门户 / 连通性检测（`wan[].portal`，`system.connectivity_check`）
+
+- **什么时候跑**：`portal: auto` 的 WAN（不写时 DHCP 默认开，PPPoE / 静态默认关）拿到或续租地址时，udhcpc / pppd 钩子
+  在后台起一个 `mr wan check <wan>`（同一地址 60 秒内不重复）；网页“检测”“我已登录，重新检测”（API `net.check`）；手动 `mr wan check`。
+  续租（T1，通常是租期的一半）就是天然的定期复查，门户会话过期能被发现，不需要常驻进程。
+- **怎么测**：对 `system.connectivity_check` 里的地址（默认 `http://connectivitycheck.gstatic.com/generate_204`、
+  `http://cp.cloudflare.com/generate_204`，只允许 http://，最多 4 个）发 GET，不跟随跳转。
+  连接用 SO_BINDTODEVICE 绑在这条 WAN 上（即使别的 WAN 占着默认路由、或它被健康检测降级，也真的从它出去），
+  域名用这条 WAN 自己的 DNS 解析（同样绑定；`peerdns: false` 时用 DHCP 给的服务器，记在租约的 `offered_dns`，不交给 dnsmasq；
+  都没有时用系统解析）——不经 dnsmasq，所以 `dns.upstream: dot` 在时钟还不对时也不影响检测；路由器自己的流量本来就不走代理。
+  每个地址最多约 6 秒，第一个有回答的地址说了算：
+
+  | 回答 | 结果 |
+  |---|---|
+  | 204，或空的 200（有些透明代理会把 204 改成 200） | `online` |
+  | 其它 2xx / 3xx，或 511 | `portal`：登录页取 `Location`（相对地址按检测地址补全），没有就从页面里的 meta refresh / `location=` 找 |
+  | 403、404、5xx | 不算数，试下一个地址 |
+  | 全部没有回答 | `offline`（记下错误） |
+
+  来自网络的 URL 都要过 `cleanURL`：只允许 http / https、必须有主机、不能带用户名密码、不能有控制字符 / 引号 / 尖括号、最长 512 字节，
+  网页只把它当链接地址用。
+- **RFC 8910 / 8908**：udhcpc 带 `-O 114` 请求“门户 API 地址”（busybox 以 `opt114=<hex>` 交给事件脚本，已在构建机上核实），
+  只接受 https，记在租约 `portal_api`。检测结果不是 online 时读这个 API（`Accept: application/captive+json`），
+  `captive: true` 就判为 `portal`，`user-portal-url` 作为登录页。
+- **结果**：`/run/mini-router/wan-check/<wan>.json`（`state`、`url`、`code`、`portal_url`、`portal_api`、`rtt_ms`、`error`、
+  `clock_skew`、`clock_set`、检测时的地址 `ip`——地址变了旧结果就不再显示）；状态变化写一行 syslog；
+  `mr status` / `mr wan status` 的每条 WAN 带 `check`。
+- **网络灯**：有地址的 WAN 全部处于 `portal` 时变琥珀色（255 120 0），登录后下一次检测变回蓝色。
+- **登录**：路由器做 NAT，在任意一台 LAN 设备上完成认证，门户授权的都是路由器的 WAN MAC，其它设备随之可用。
+  总览的黄色提示给出［打开登录页］［我已登录，重新检测］；登录页的域名如果被 `dns.rebind_protection` 拦下（门户域名常解析到私网地址），
+  提示里会说明可以临时关掉它。
+- **校时**：`online` 回答的 `Date` 头交给 sys 模块的 `clockFromHTTP`：NTP 未同步且偏差超过 60 秒时粗调一次（见 sys.md）。
+
+### WAN / LAN 网段冲突
+
+- DHCP 租约（地址 / 掩码，或网关）与任何 LAN 侧网络（`lan`、`networks`）重叠时，钩子**拒绝安装**：
+  不配地址、不装路由，之前这条 WAN 装过的租约一并撤掉（否则两条同网段的直连路由会把 LAN 一起弄断），
+  写 `wan-check/<wan>.conflict.json`（租约、网关、撞上的网络、`suggest` 建议网段）并记一次日志。
+- 建议网段从 `10.77.0.1/24`、`172.22.77.1/24`、`192.168.77.1/24`、… 里挑第一个不和上级网段、其它 LAN 侧网络重叠的
+  （避开 tailscale 的 100.64.0.0/10）。
+- 网页：总览红色提示 +［修改网段］；“LAN 与网络”页顶部有［改为 10.77.0.1/24］一键填入（只改地址，静态分配、端口转发里
+  旧网段的地址保存时会逐条提示）。改完应用后，`mr routes`（每次 apply / rollback 都会跑）发现冲突已解除，
+  自动重启这条 WAN 的 udhcpc 重新获取；反过来，已装好的租约在改配置（或回滚）后变成冲突，也会被撤掉。
+- 静态 WAN 的地址 / 网关与 LAN 侧网络重叠：`mr validate` 直接报错。
+- PPPoE 不检查（点对点 /32，撞了也不影响 LAN 路由）。
+
+### 上级 NAT
+
+`mr status` / `mr wan status` 每条 WAN 带 `addr_class`：`private`（RFC 1918、169.254/16）或 `cgnat`（100.64.0.0/10）。
+这时上级还有一层 NAT，端口转发和 WAN 侧 IPv4 入站规则不起作用；配置里有 `firewall.forwards` / `open` 时总览给一条可关闭的提示，
+WAN 页状态行有标签。
+
+### 没做（另开 issue）
+
+- “登录模式”（临时让 dnsmasq 用 WAN 下发的 DNS、对门户域名放行 rebind、暂停 DoT 分流和代理 DNS 劫持）：
+  要在运行时改 dnsmasq / 代理的配置，比检测 + 提示风险大，单独做。
+- 把 option 114 转发给 LAN 客户端、用本设备 MAC 伪装 WAN（MAC 模式见 #25）、抵达新网络的环境指纹（公网 IP / 国家 / ASN / NAT64 / DNS 篡改）。
 
 ## 限制 / 注意
 

@@ -10,6 +10,9 @@
 #     a LAN client's connection to such an address leaves through the policy's WAN (others through the
 #     default WAN), the learned addresses survive a firewall reload, a new connection restarts an
 #     address's timer, and a changed domain list starts with empty sets.
+#  4. travel: the connectivity / captive-portal check against a busybox httpd "internet" (started by
+#     the DHCP hook, online → portal → online, bound to its WAN, names via the WAN's DNS), DHCP option
+#     114, and a lease that overlaps the LAN being refused (and taken again once it no longer does).
 set -eu
 : "${OUT:?}" "${ROOT:?}"
 step() { printf '\n== net: %s\n' "$*"; }
@@ -50,6 +53,8 @@ S=mrnet$$s C=mrnet$$c
 DS=mrdom$$s DC=mrdom$$c DL=mrdom$$l # policy route by domain (3.)
 cleanup() {
 	[ -f "$T/dnsmasq.pid" ] && kill "$(cat "$T/dnsmasq.pid")" 2> /dev/null
+	[ -f "$T/dns.pid" ] && kill "$(cat "$T/dns.pid")" 2> /dev/null
+	[ -z "${HTTPD:-}" ] || kill "$HTTPD" 2> /dev/null
 	for n in "$S" "$C" "$DS" "$DC" "$DL"; do
 		for p in $(ip netns pids "$n" 2> /dev/null); do kill "$p" 2> /dev/null; done
 		ip netns del "$n" 2> /dev/null
@@ -59,7 +64,7 @@ cleanup() {
 }
 trap cleanup EXIT
 cat > "$T/router.yaml" << 'EOF'
-system: {hostname: nettest}
+system: {hostname: nettest, connectivity_check: ["http://check.example/cgi-bin/gen204"]}
 lan: {bridge: br-lan, ports: [lan2], ipv4: 192.168.1.6/24}
 wan:
   - {name: wan, device: wan, proto: dhcp, metric: 10, peerdns: true, ipv6: true, ipv6_srcroute: true}
@@ -98,7 +103,21 @@ ip -n "$C" link add lan2 type dummy
 inC sh -c 'for d in all default wan wan2; do echo 0 > /proc/sys/net/ipv4/conf/$d/promote_secondaries; done'
 ip netns exec "$S" dnsmasq --conf-file=/dev/null --port=0 --interface=up1 --bind-interfaces \
 	--dhcp-range=10.99.0.50,10.99.0.60,255.255.255.0,1h --dhcp-option=3,10.99.0.1 --dhcp-option=6,10.99.0.53,10.99.0.54 \
+	--dhcp-option=114,"https://portal.example.net/api" \
 	--dhcp-leasefile="$T/leases" --pid-file="$T/dnsmasq.pid" --user=root --group=root
+# the connectivity check's "internet": check.example = 10.96.0.1 (not on any uplink's subnet, so the
+# answer's path depends on routing), known only to the DNS server uplink 1's DHCP hands out (10.99.0.53).
+# The CGI answers 204, or with a login redirect while $T/www/portal exists.
+ip -n "$S" addr add 10.99.0.53/24 dev up1
+ip -n "$S" addr add 10.96.0.1/32 dev lo
+ip netns exec "$S" sysctl -qw net.ipv4.conf.all.arp_ignore=1 # 10.96.0.1 is not on the uplinks: no ARP answers for it
+ip netns exec "$S" dnsmasq --conf-file=/dev/null --port=53 --listen-address=10.99.0.53 --bind-interfaces --no-resolv --no-hosts \
+	--address=/check.example/10.96.0.1 --pid-file="$T/dns.pid" --user=root --group=root
+mkdir -p "$T/www/cgi-bin"
+printf '#!/bin/sh\nif [ -e %s/www/portal ]; then printf "Status: 302 Found\\r\\nLocation: /login?ap=1\\r\\n\\r\\n"; else printf "Status: 204 No Content\\r\\n\\r\\n"; fi\n' "$T" > "$T/www/cgi-bin/gen204"
+chmod 755 "$T/www/cgi-bin/gen204"
+ip netns exec "$S" busybox httpd -f -p 10.96.0.1:80 -h "$T/www" &
+HTTPD=$!
 
 # network.sh as generated (without the IRQ/RPS tail, which would touch the build host)
 sed '/^# --- tail/,$d' "$T/r/etc/mini-router/gen/network.sh" > "$T/net.sh"
@@ -111,10 +130,11 @@ has "wan2 static address" "$(ip -n "$C" -4 addr show dev wan2 2> /dev/null)" "in
 has "br-lan" "$(ip -n "$C" -4 addr show dev br-lan)" "inet 192.168.1.6/24"
 
 # DHCP: the real busybox udhcpc with the real event script → `mr wan dhcp bound`
-inC busybox udhcpc -f -q -n -t 5 -T 1 -i wan -s "$ROOT/rootfs/usr/libexec/mr/net-udhcpc" > "$T/udhcpc.log" 2>&1 || {
+inC busybox udhcpc -f -q -n -t 5 -T 1 -O 114 -i wan -s "$ROOT/rootfs/usr/libexec/mr/net-udhcpc" > "$T/udhcpc.log" 2>&1 || {
 	cat "$T/udhcpc.log"
 	fail "udhcpc got no lease"
 }
+grep -q '"portal_api":"https://portal.example.net/api"' /run/mini-router/wan/wan.json || fail "DHCP option 114 not in the lease: $(cat /run/mini-router/wan/wan.json)"
 has "wan address" "$(ip -n "$C" -4 addr show dev wan 2> /dev/null)" "inet 10.99.0.[56][0-9]/24"
 has "main default" "$(ip -n "$C" route show default)" "default via 10.99.0.1 dev wan metric 10"
 has "table 200" "$(ip -n "$C" route show table 200)" "default via 10.99.0.1 dev wan"
@@ -133,6 +153,40 @@ nft=$(inC nft list table inet mr)
 has "nft balance" "$nft" "numgen random mod 2 map { 0 : 0x0*200, 1 : 0x0*201 }"
 has "nft policy" "$nft" 'ip saddr 192.168.1.66 ip daddr != 192.168.1.0/24 ct state new ct mark set 0x0*201'
 has "nft flowtable" "$nft" "flowtable ft"
+
+step "travel: connectivity / captive-portal check (hook, portal, binding to the WAN)"
+# the DHCP hook started `mr wan check wan` in the background when the lease came (portal: auto for DHCP)
+i=0
+until grep -q '"state":"online"' /run/mini-router/wan-check/wan.json 2> /dev/null; do
+	i=$((i + 1))
+	[ "$i" -le 40 ] || fail "no check after the lease: $(cat /run/mini-router/wan-check/wan.json 2>&1)"
+	sleep 0.5
+done
+k=$(cat /run/mini-router/wan-check/wan.json)
+has "hook check" "$k" '"url":"http://check.example/cgi-bin/gen204","code":204'
+has "hook check" "$k" '"portal_api":"https://portal.example.net/api"'
+has "hook check" "$k" "\"ip\":\"$(ip -n "$C" -4 -o addr show dev wan | sed -n 's/.* inet \([0-9.]*\)\/.*/\1/p')\""
+touch "$T/www/portal"
+k=$(inC mr wan check wan)
+has "portal" "$k" '"state":"portal"'
+has "portal" "$k" '"code":302'
+has "portal" "$k" '"portal_url":"http://check.example/login?ap=1"'
+has "portal in mr wan status" "$(inC mr wan status)" '"portal_check":true,"check":{"wan":"wan","state":"portal"'
+rm "$T/www/portal"
+has "logged in" "$(inC mr wan check wan)" '"state":"online"'
+# bound to its WAN: without its default routes (main and its table 200) wan cannot reach the internet,
+# even though wan2's default route could (an unbound check would go out through wan2: "online")
+inC ip route del default dev wan
+inC ip route del default table 200
+k=$(inC mr wan check wan)
+has "bound to the WAN" "$k" '"state":"offline"'
+has "the other WAN" "$(inC mr wan check wan2)" '"state":"offline"' # its DNS (10.98.0.53) does not exist: names go to the WAN's own servers
+inC mr routes
+has "default back" "$(ip -n "$C" route show default)" "default via 10.99.0.1 dev wan metric 10"
+has "table 200 back" "$(ip -n "$C" route show table 200)" "default via 10.99.0.1 dev wan"
+has "online again" "$(inC mr wan check wan)" '"state":"online"'
+has "mr wan check (all up)" "$(inC mr wan check)" '"wan":"wan2"'
+if inC mr wan check nosuch 2> /dev/null; then fail "check of an unknown WAN accepted"; fi
 
 # health checker, both WANs answer
 inC env WANMON_CONF="$T/r/etc/mini-router/gen/wanmon.conf" WANMON_ROUNDS=2 busybox sh "$ROOT/rootfs/usr/libexec/mr/net-wanmon"
@@ -195,6 +249,28 @@ a=$(ip -n "$C" -4 -o addr show dev wan)
 has "new lease in the same subnet" "$a" "inet 10.99.0.78/24"
 hasnt "new lease in the same subnet" "$a" "10.99.0.77/"
 has "new lease: default" "$(ip -n "$C" route show default)" "default via 10.99.0.1 dev wan metric 10"
+
+step "travel: a lease that overlaps the LAN is refused"
+# the upstream (a hotel, a friend's router) uses the LAN's own subnet: nothing of it may be installed,
+# and the address it replaces goes away with its routes
+inC env interface=wan ip=192.168.1.50 mask=24 router=192.168.1.1 dns=192.168.1.1 mr wan dhcp bound
+a=$(ip -n "$C" -4 -o addr show dev wan)
+hasnt "conflict: address" "$a" "192.168.1.50"
+hasnt "conflict: old address" "$a" "10.99.0.78"
+hasnt "conflict: default" "$(ip -n "$C" route show default)" "dev wan "
+hasnt "conflict: resolv" "$(cat /run/mini-router/resolv.conf)" "192.168.1.1"
+has "conflict: LAN route" "$(ip -n "$C" route show 192.168.1.0/24)" "dev br-lan"
+hasnt "conflict: LAN route" "$(ip -n "$C" route show 192.168.1.0/24)" "dev wan"
+k=$(cat /run/mini-router/wan-check/wan.conflict.json)
+has "conflict record" "$k" '"lease":"192.168.1.50/24","gateway":"192.168.1.1","network":"lan","net":"192.168.1.0/24","suggest":"10.77.0.1/24"'
+has "conflict in mr wan status" "$(inC mr wan status)" '"conflict":{"lease":"192.168.1.50/24"'
+inC mr routes # an apply with the LAN unchanged: still refused, nothing asked for again
+[ -e /run/mini-router/wan-check/wan.conflict.json ] || fail "conflict dropped by mr routes"
+# a lease that does not collide is installed again and clears the record
+inC env interface=wan ip=10.99.0.78 mask=24 router=10.99.0.1 dns=10.99.0.53 mr wan dhcp bound
+has "after conflict" "$(ip -n "$C" -4 -o addr show dev wan)" "inet 10.99.0.78/24"
+has "after conflict: default" "$(ip -n "$C" route show default)" "default via 10.99.0.1 dev wan metric 10"
+[ ! -e /run/mini-router/wan-check/wan.conflict.json ] || fail "conflict record kept after a good lease"
 
 # the DHCP WAN leaves router.yaml (back home after travelling): its client's deconfig no longer finds
 # the interface, so `mr routes` (run by every apply) removes the address and default route left on it

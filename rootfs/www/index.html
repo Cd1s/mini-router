@@ -122,6 +122,13 @@ pre{background:var(--code);border:1px solid var(--line);border-radius:6px;paddin
 pre.chg{max-height:40vh;overflow:auto;margin:0}
 #pbanner .t{flex:1}
 #pending .t{flex:1}
+.notices{display:grid;gap:8px;margin-bottom:14px}
+.notice{display:flex;gap:8px 10px;align-items:center;flex-wrap:wrap;padding:9px 12px;border-radius:6px;border:1px solid var(--line);background:var(--panel);font-size:13px}
+.notice .t{flex:1 1 260px;min-width:0;overflow-wrap:anywhere}
+a.btn{text-decoration:none;display:inline-block}
+.notice.warn{border-color:rgba(201,138,11,.45);box-shadow:inset 0 0 0 999px rgba(201,138,11,.08)}
+.notice.bad{border-color:rgba(214,69,69,.45);box-shadow:inset 0 0 0 999px rgba(214,69,69,.07)}
+.notice.info{border-color:rgba(47,111,237,.35);box-shadow:inset 0 0 0 999px rgba(47,111,237,.05)}
 .modal{position:fixed;inset:0;background:rgba(10,14,20,.5);display:flex;align-items:center;justify-content:center;z-index:20;padding:16px}
 .modal .box{background:var(--panel);border-radius:8px;width:min(720px,100%);max-height:90vh;overflow:auto;border:1px solid var(--line)}
 .modal .box h3{margin:0;padding:14px 18px;border-bottom:1px solid var(--line);font-size:15px}

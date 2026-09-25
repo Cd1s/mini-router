@@ -324,6 +324,17 @@ function cpuBusy(a, b){
 }
 // confirmBtn(label, question, fn): a red button that asks before running fn.
 function confirmBtn(label, question, fn){ return h("button",{class:"btn sm d",onclick:async()=>{ if(!confirm(question)) return; try{ await fn(); }catch(e){ toast(e.message,4000); } }}, label); }
+// Overview notices: modules add hints about the current state (captive portal, subnet conflict, time
+// zone ...). registerNotice(fn): fn(status) → Node | [Node] | null on every overview refresh.
+// notice(level, text, ...buttons): level warn | bad | info. dismissKey: a × that hides this notice in
+// this browser until its key changes.
+const NOTICES = [];
+function registerNotice(fn){ NOTICES.push(fn); }
+function notice(level, text, ...btns){ return h("div",{class:"notice "+level}, h("span",{class:"t"}, text), btns); }
+function dismissed(key){ return (pref("dismiss")||"").split("\n").includes(key); }
+function dismissBtn(key){ return h("button",{class:"btn sm",title:"在这个浏览器里不再提示",onclick:e=>{
+  const l = (pref("dismiss")||"").split("\n").filter(Boolean).slice(-19); l.push(key); pref("dismiss", l.join("\n"));
+  e.target.closest(".notice").remove(); }},"×"); }
 
 // ---------- core pages ----------
 // overview gauges keep a short history for their sparklines (40 points = 2 min at 3 s)
@@ -352,7 +363,9 @@ registerPage("status", "overview", "总览", 10, async ()=>{
       h("dl",{class:"kv"}, h("dt",{},"接口"),h("dd",{class:"mono"},w.ifname), h("dt",{},"信道"),h("dd",{},(w.channel||"-")+" · "+(w.htmode||"-")),
         h("dt",{},"终端"),h("dd",{},w.clients))));
     const ts = s.tailscale||{};
+    const notes = NOTICES.flatMap(f=>{ try { return [f(s)].flat().filter(Boolean); } catch(e){ return []; } });
     wrap.replaceChildren(
+      h("div",{class:notes.length ? "notices" : ""}, notes),
       h("div",{class:"grid gauges"},
         gauge({label:"CPU", pct:busy, value:busy==null ? "…" : busy.toFixed(0)+" %", sub:cores+"负载 "+s.load, extra:spark(OV.h.cpu, null, 100)}),
         gauge({label:"内存", pct:memPct, value:fmtBytes(memUsed*1024), sub:"共 "+fmtBytes(s.mem_total_kb*1024)+" · 可用 "+fmtBytes(s.mem_avail_kb*1024), extra:spark(OV.h.mem, COLORS[4], 100)}),

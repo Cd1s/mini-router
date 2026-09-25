@@ -8,6 +8,7 @@ package main
 //	wan/<name>.json   what the WAN got when it came up (address, gateway, DNS, since) — written here
 //	wan-state.json    health of every WAN — written by net-wanmon each round
 //	resolv.conf       nameservers of every WAN that is up, healthy first — read by dnsmasq
+//	wan-check/        connectivity / captive-portal checks and refused leases (mod_net_travel.go)
 
 import (
 	"encoding/json"
@@ -41,6 +42,11 @@ type wanLease struct {
 	DNS     []string `json:"dns,omitempty"`
 	Since   int64    `json:"since"`
 	Dev     string   `json:"dev,omitempty"` // L3 interface, so leftovers can be removed once the WAN is gone
+	// PortalAPI: RFC 8910 DHCP option 114 (captive-portal API URI), validated https URL
+	PortalAPI string `json:"portal_api,omitempty"`
+	// OfferedDNS: the DHCP server's DNS servers when peerdns is off (not used by dnsmasq; the
+	// connectivity check resolves its URLs through the WAN's own servers)
+	OfferedDNS []string `json:"offered_dns,omitempty"`
 }
 
 func readLease(name string) (wanLease, bool) {
@@ -135,7 +141,11 @@ func hookPPP(c *Config, up bool, args []string) error {
 		wanDown(c, w)
 	}
 	updateLEDs(c)
-	return fwLoad(c)
+	err := fwLoad(c)
+	if up {
+		spawnCheck(w, args[3]) // wan[].portal: auto (off by default for PPPoE)
+	}
+	return err
 }
 
 // validIPs keeps up to max strings that parse as IP addresses (they come from the network).
@@ -316,6 +326,7 @@ func wanDown(c *Config, w *WAN) {
 // router.yaml. A leftover default route with a lower metric than the remaining WANs would take all
 // traffic. Leases record the interface, so the leftovers can be found here.
 func dropStaleWANs(c *Config) {
+	dropStaleChecks(c)
 	ents, _ := os.ReadDir(wanRunDir)
 	live := map[string]bool{}
 	for _, w := range c.WAN {
@@ -374,11 +385,21 @@ func refreshRoutes(c *Config) {
 			if !ok {
 				continue // address without a lease record: udhcpc will report it on renew
 			}
+			// the config changed under an installed lease (a LAN-side network moved onto it, or a
+			// rollback moved it back): take the lease down like the hook would have refused it
+			if ip, n, err := net.ParseCIDR(addrs[0]); err == nil {
+				ones, _ := n.Mask.Size()
+				if ln, nn, bad := lanConflict(c, ip, ones, net.ParseIP(l.Gateway)); bad {
+					refuseLease(c, w, ifn, ip.To4(), ones, l.Gateway, ln, nn)
+					continue
+				}
+			}
 			gw = l.Gateway
 		}
 		wanUp(c, w, ifn, local, gw)
 	}
 	writeResolv(c)
+	retryConflicts(c)
 }
 
 // writeResolv rewrites resolvConf from the WANs that are up (healthy first, then by metric).
@@ -496,6 +517,7 @@ func hookUdhcpc(c *Config, event string) error {
 		if _, had := readLease(w.Name); had {
 			logf("wan %s: DHCP lease dropped on %s", w.Name, iface)
 		}
+		clearConflict(w.Name) // link down / new network: the next lease is judged on its own
 		wanDown(c, w)
 		run("ip", "-4", "addr", "flush", "dev", iface)
 		run("ip", "link", "set", iface, "up")
@@ -512,10 +534,20 @@ func hookUdhcpc(c *Config, event string) error {
 				break
 			}
 		}
-		var dns []string
+		var dns, offered []string
 		if w.PeerDNS {
 			dns = validIPs(3, os.Getenv("dns"))
+		} else {
+			offered = validIPs(3, os.Getenv("dns"))
 		}
+		// hotels and other people's routers often hand out the LAN's own subnet: installing the lease
+		// would take the LAN down with it (two connected routes, the gateway looked up on the LAN)
+		if ln, nn, bad := lanConflict(c, ip, prefix, net.ParseIP(gw)); bad {
+			refuseLease(c, w, iface, ip, prefix, gw, ln, nn)
+			updateLEDs(c)
+			return nil
+		}
+		clearConflict(w.Name)
 		cidr := fmt.Sprintf("%s/%d", ip, prefix)
 		old, had := readLease(w.Name)
 		// a new address in the old one's subnet is added as a secondary; with the kernel default
@@ -533,9 +565,11 @@ func hookUdhcpc(c *Config, event string) error {
 		} else {
 			logf("wan %s: DHCP %s gateway %s on %s", w.Name, cidr, gw, iface)
 		}
-		writeLease(w.Name, wanLease{IP: ip.String(), Prefix: prefix, Gateway: gw, DNS: dns, Since: since, Dev: iface})
+		writeLease(w.Name, wanLease{IP: ip.String(), Prefix: prefix, Gateway: gw, DNS: dns, Since: since, Dev: iface,
+			PortalAPI: portalAPIFromEnv(), OfferedDNS: offered})
 		wanUp(c, w, iface, ip.String(), gw)
 		writeResolv(c)
+		spawnCheck(w, ip.String()) // captive portal? (wan[].portal, default on for DHCP)
 	case "leasefail", "nak":
 		logf("wan %s: DHCP %s on %s", w.Name, event, iface)
 	}
@@ -564,10 +598,11 @@ func hookHealth(c *Config) error {
 	return fwLoad(c)
 }
 
-// wanCommand: `mr wan dhcp EVENT` (udhcpc script), `mr wan health` (net-wanmon), `mr wan status`.
+// wanCommand: `mr wan dhcp EVENT` (udhcpc script), `mr wan health` (net-wanmon), `mr wan status`,
+// `mr wan check [WAN...]` (connectivity / captive-portal check).
 func wanCommand(c *Config, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: mr wan dhcp EVENT | health | status")
+		return fmt.Errorf("usage: mr wan dhcp EVENT | health | status | check [WAN...]")
 	}
 	switch args[0] {
 	case "dhcp":
@@ -579,6 +614,8 @@ func wanCommand(c *Config, args []string) error {
 		return hookHealth(c)
 	case "status":
 		return json.NewEncoder(os.Stdout).Encode(wanRuntime(c))
+	case "check":
+		return wanCheckCommand(c, args[1:])
 	}
 	return fmt.Errorf("unknown: mr wan %s", args[0])
 }
