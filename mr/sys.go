@@ -16,9 +16,10 @@ func dfKB(path string) (int64, int64) {
 	return int64(s.Blocks) * bs / 1024, int64(s.Bavail) * bs / 1024
 }
 
-// effOper: the state to show for a netdev. PPP and tun devices have no carrier and always report operstate
-// "unknown" (RFC 2863), even while they carry traffic: then IFF_UP|IFF_RUNNING in sysfs "flags" decides.
-func effOper(oper, flags string) string {
+// effOper: the state to show for a netdev. PPP and tun devices always report operstate "unknown" (RFC 2863),
+// even while they carry traffic, and sysfs "flags" never has the volatile IFF_RUNNING (the kernel computes it
+// for ioctls only): for them admin-up (IFF_UP in flags) plus carrier = 1 means up.
+func effOper(oper, flags, carrier string) string {
 	oper = strings.TrimSpace(oper)
 	if oper != "unknown" {
 		return oper
@@ -27,7 +28,7 @@ func effOper(oper, flags string) string {
 	if err != nil {
 		return oper
 	}
-	if f&0x1 != 0 && f&0x40 != 0 { // IFF_UP, IFF_RUNNING
+	if f&0x1 != 0 && strings.TrimSpace(carrier) == "1" { // IFF_UP
 		return "up"
 	}
 	return "down"
