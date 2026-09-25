@@ -1,0 +1,8 @@
+# lab config — API tokens (mr/api_token.go, docs/api.md). Hashes in mr/testdata/secrets.d/api.yaml.
+# CI concatenates examples/lab.d/*.yaml into one router.yaml; keep only this module's top-level keys here.
+
+api:
+  tokens:
+    # Home Assistant: status and monitoring only, from the LAN, until the end of 2098
+    - {name: homeassistant, scope: read, allow: [status, mon.*, wifi.stations], from: [192.168.1.0/24], expires: "2099-01-01"}
+    - {name: agent, scope: apply}                  # an AI agent: plan / apply / confirm / rollback

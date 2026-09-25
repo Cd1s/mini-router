@@ -28,6 +28,7 @@ type Config struct {
 	Services  Services   `yaml:"services"`            // sys
 	Schedules []Schedule `yaml:"schedules,omitempty"` // sys
 	Guard     Guard      `yaml:"guard,omitempty"`     // baselines every config must keep (guard.go)
+	API       APIConf    `yaml:"api,omitempty"`       // api: tokens for scripts and agents (api_token.go)
 
 	secrets map[string]string
 }

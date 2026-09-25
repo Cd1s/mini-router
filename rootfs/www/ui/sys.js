@@ -251,7 +251,7 @@ registerPage("system", "admin", "管理与 SSH", 15, async ()=>{
   const check = ()=>{
     const lines = ssh.authorized_keys||[];
     const bad = lines.filter(l=>!KEY_RE.test(l));
-    keysInfo.replaceChildren(lines.length+" 个受管公钥", bad.length ? h("span",{class:"err"}, "，"+bad.length+" 行格式不对（保存时会被拒绝）") : null);
+    keysInfo.replaceChildren(lines.length+" 个受管公钥", bad.length ? h("span",{class:"err"}, "，"+bad.length+" 行格式不对（保存时会被拒绝）") : "");
     const w = [];
     if (ssh.enabled && !ssh.password_login && !lines.length && !(k.other||[]).length)
       w.push("没有任何公钥且禁止密码登录：SSH 将无法登录（Web 管理不受影响）。");
@@ -290,8 +290,55 @@ registerPage("system", "admin", "管理与 SSH", 15, async ()=>{
       h("span"), h("div",{}, h("button",{class:"btn p",onclick:async()=>{
         if (pw.nw!==pw.nw2) return toast("两次输入不一致");
         if (pw.nw.length<8) return toast("新密码至少 8 位");
-        try { await api("password",{old:pw.old,new:pw.nw}); toast("密码已修改"); } catch(e){ toast(e.message,4000); } }},"修改密码")))));
+        try { await api("password",{old:pw.old,new:pw.nw}); toast("密码已修改"); } catch(e){ toast(e.message,4000); } }},"修改密码")))),
+    tokenCard(c));
 });
+
+// ---------- API 令牌 (api.tokens; hash in secrets.yaml, see docs/api.md) ----------
+const SCOPES = {read:"只读", operate:"操作", apply:"修改配置"};
+const tokenKey = n => "api_token_"+n;
+function tokenCard(c){
+  const toks = ()=>(c.api && c.api.tokens) || [];
+  const nt = {name:"", scope:"read", from:[], expires:""};
+  const list = h("div");
+  let used = {};
+  const draw = ()=>list.replaceChildren(toks().length ? roTable(["名称","权限","来源","到期","最后使用",""], toks().map(t=>{
+    const u = used[t.name];
+    return [mono(t.name), (SCOPES[t.scope]||t.scope)+((t.allow||[]).length ? "（"+t.allow.join(", ")+"）" : ""), (t.from||[]).join(", ")||"任意", h("span",{style:"white-space:nowrap"}, t.expires||"永不"),
+      u ? new Date(u.time*1000).toLocaleString()+" · "+u.from : S.secretsSet[tokenKey(t.name)] ? "从未" : h("span",{class:"mut"},"保存并应用后生效"),
+      h("button",{class:"btn sm d",onclick:()=>{
+        c.api.tokens = toks().filter(x=>x!==t); if (!c.api.tokens.length) delete c.api;
+        delete S.secrets[tokenKey(t.name)]; touch(); draw(); }},"吊销")];
+  })) : h("div",{class:"mut"},"还没有令牌。"));
+  const create = ()=>{
+    const name = nt.name.trim();
+    if (!/^[a-z][a-z0-9_-]{0,14}$/.test(name)) return toast("名称：小写字母开头，最多 15 个字符（a-z 0-9 _ -）");
+    if (toks().some(t=>t.name===name)) return toast("已有同名令牌");
+    const tok = "mrt_"+btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+    const sh = new Sha256(); sh.update(new TextEncoder().encode(tok));
+    const t = {name, scope:nt.scope};
+    if (nt.from.length) t.from = nt.from.slice();
+    if (nt.expires) t.expires = nt.expires;
+    c.api ||= {}; c.api.tokens ||= []; c.api.tokens.push(t);
+    S.secrets[tokenKey(name)] = "sha256:"+sh.hex(); // only the hash leaves the browser
+    touch(); draw();
+    const m = modal("新令牌 "+name, [h("p",{},"只显示这一次，请现在复制保存（路由器只保存它的哈希）。点“保存并应用”后生效。"),
+      h("pre",{style:"user-select:all;white-space:pre-wrap;word-break:break-all"}, tok),
+      h("p",{class:"mut"},"curl -H 'Authorization: Bearer mrt_…' 'http://"+location.host+"/cgi-bin/api?a=status'")],
+      [navigator.clipboard ? h("button",{class:"btn",onclick:()=>navigator.clipboard.writeText(tok).then(()=>toast("已复制"))},"复制") : null,
+       h("button",{class:"btn p",onclick:()=>m.remove()},"我已保存")]);
+  };
+  api("tokens").then(j=>{ used = j.used||{}; draw(); }).catch(()=>{});
+  draw();
+  return card("API 令牌（脚本 / Home Assistant / AI agent）", [
+    h("div",{class:"mut",style:"margin-bottom:8px"},"请求带 Authorization: Bearer <令牌> 即可调用本页面的 API，不需要登录。只读：状态、配置、监控、变更历史；操作：重拨、踢下线、重启服务、切换代理节点；修改配置：plan / apply / 保留 / 回滚（同样有确认倒计时和自动回滚，历史里记为 api:名称）。任何令牌都不能改管理员密码、读密钥和日志、备份恢复、升级固件、恢复出厂或重启，也不能改令牌、SSH 和 sysctl。"),
+    list,
+    form(...field("名称", inText(nt,"name",{placeholder:"如 homeassistant", maxlength:15})),
+      ...field("权限", inSel(nt,"scope",[["read","只读"],["operate","操作（重拨、踢下线、重启服务）"],["apply","修改配置（plan / apply）"]])),
+      ...field("来源", inList(nt,"from",{placeholder:"可选，如 192.168.1.0/24"}), "留空 = 任意来源（管理页只在 LAN 地址上监听）"),
+      ...field("到期", inText(nt,"expires",{type:"date"}), "留空 = 永不过期"),
+      h("span"), h("div",{}, h("button",{class:"btn p",onclick:create},"生成令牌")))]);
+}
 
 // ---------- 计划任务 ----------
 const DAYS = [["1","一"],["2","二"],["3","三"],["4","四"],["5","五"],["6","六"],["0","日"]];

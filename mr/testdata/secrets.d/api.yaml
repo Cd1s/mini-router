@@ -1,0 +1,3 @@
+# API token hashes for examples/lab.d/80-api.yaml (the tokens: mrt_lab-<name>-token-not-a-secret)
+api_token_homeassistant: sha256:8cdd160ef4c53ebdfca03ae424a6d2719d456392641e69f4875324de8aadc9ad
+api_token_agent: sha256:c50c7e8b6e90d43dc1935dea9644bb1a7eaa8a5cfcf2d3a34b37dbea73ed1453

@@ -42,7 +42,7 @@ async function api(action, body){
 // Every API answer carries X-MR-Pending while a change is not accepted yet — made here, in another
 // browser, by `mr apply` over SSH or by an agent. The banner on top of every page shows it with
 // 保留 / 回滚; quiet pages ask every 10 s. No other change can be applied until it is settled.
-const VIA = {"web UI":"网页", "mr apply":"命令行 mr apply", "restore":"恢复备份"};
+const VIA = {"web UI":"网页", "mr apply":"命令行 mr apply", "restore":"恢复备份", "mr token":"命令行 mr token"};
 function pendingFrom(r){
   let p = null;
   const v = r.headers.get("X-MR-Pending");
@@ -83,7 +83,7 @@ function touch(){ const p=$("#pending"); if(!p) return; p.classList.toggle("on",
 
 async function loadConfig(){
   const j = await api("config");
-  S.cfg = j.config; S.secretsSet = j.secrets_set||{}; S.secrets = {};
+  S.cfg = j.config; S.secretsSet = j.secrets_set||{}; S.secrets = {}; S.rev = j.rev||"";
   const c = S.cfg;
   c.wan ||= []; c.policy_routes ||= []; c.static_routes ||= [];
   c.firewall ||= {}; c.firewall.forwards ||= []; c.firewall.open ||= []; c.firewall.ipv6_allow ||= []; c.firewall.rules ||= []; c.firewall.access ||= [];
@@ -421,9 +421,10 @@ function modal(title, body, buttons){
 }
 async function startApply(){
   if (S.pend) return toast("有待确认的更改：请先在页面顶部点“保留”或“回滚”，再应用新的更改。", 5000);
-  const payload = {config:S.cfg, secrets:S.secrets};
+  const payload = {config:S.cfg, secrets:S.secrets, base_rev:S.rev}; // 409 if router.yaml changed meanwhile
   let v;
-  try { v = await api("validate", payload); } catch(e){ return toast("校验请求失败："+e.message, 5000); }
+  try { v = await api("validate", payload); } catch(e){
+    return toast(e.data&&e.data.rev ? "配置已被其它来源修改（另一个浏览器、命令行或 API）：请刷新页面后重做这次修改。" : "校验请求失败："+e.message, 6000); }
   if (v.errors && v.errors.length){
     const m = modal("配置有误，未应用", h("ul",{class:"err"}, v.errors.map(x=>h("li",{},x))), [h("button",{class:"btn p",onclick:()=>m.remove()},"返回修改")]);
     return;

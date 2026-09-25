@@ -42,8 +42,8 @@ cd "$ROOT"
 
 step "init cost of mr (every CGI request and hook pays it)"
 b=$(GODEBUG=inittrace=1 "$OUT/mr-host" version 2>&1 | sed -n 's/^init main .* clock, \([0-9]*\) bytes.*/\1/p')
-if [ -z "$b" ] || [ "$b" -ge 262144 ]; then
-	echo "FAIL: init of package main allocates ${b:-?} bytes (budget 256 KiB) — a package-level regexp.MustCompile? use lazyRegexp"
+if [ -z "$b" ] || [ "$b" -ge 131072 ]; then
+	echo "FAIL: init of package main allocates ${b:-?} bytes (budget 128 KiB) — a package-level regexp.MustCompile? use lazyRegexp"
 	exit 1
 fi
 echo "ok: init main allocates $b bytes"
@@ -154,5 +154,66 @@ printf '%s' "$body" | REQUEST_METHOD=POST QUERY_STRING=a=login REMOTE_ADDR=192.0
 grep -q '^Set-Cookie: mrsid=' "$OUT/login.other" || { echo "FAIL: another address could not log in"; exit 1; }
 rm -f /etc/mini-router/secrets.yaml && umount /run/mini-router
 echo "ok: 5 checked, 15 refused (429) without a check; another address logs in"
+
+# 5) API tokens through real `mr api` CGI runs (no X-MR header, no cookie): scopes, sources, expiry,
+#    no secret in any answer, plan with a patch, base_rev, locked paths, the throttle. Nothing is
+#    applied: an accepted apply would start a job on this host.
+step "API tokens: mr api CGI with Authorization: Bearer"
+mkdir -p /run/mini-router && mount -t tmpfs tmpfs /run/mini-router
+RT=mrt_ci-reader-token-not-a-secret AT=mrt_ci-agent-token-not-a-secret XT=mrt_ci-old-token-not-a-secret
+thash() { printf 'sha256:%s' "$(printf %s "$1" | sha256sum | cut -d' ' -f1)"; }
+{ cat examples/router.yaml; printf '\napi:\n  tokens:\n    - {name: ci-read, scope: read}\n'
+  printf '    - {name: ci-agent, scope: apply, from: [192.0.2.0/24]}\n    - {name: ci-old, scope: read, expires: "2020-01-01"}\n'; } > /etc/mini-router/router.yaml
+{ cat mr/testdata/secrets.yaml
+  printf 'api_token_ci-read: %s\napi_token_ci-agent: %s\napi_token_ci-old: %s\n' "$(thash $RT)" "$(thash $AT)" "$(thash $XT)"; } > /etc/mini-router/secrets.yaml
+"$OUT/mr-host" validate > /dev/null
+fail() { echo "FAIL: $*"; cat "$OUT/api.out"; exit 1; }
+# expect STATUS METHOD ACTION TOKEN REMOTE [BODY]: the answer (headers + JSON) is left in $OUT/api.out
+expect() {
+	want=$1 b=${6:-}
+	printf '%s' "$b" | REQUEST_METHOD=$2 QUERY_STRING="a=$3" HTTP_AUTHORIZATION="Bearer $4" REMOTE_ADDR=$5 \
+		CONTENT_LENGTH=${#b} "$OUT/mr-host" api > "$OUT/api.out" 2> /dev/null
+	got=$(sed -n 's/^Status: \([0-9]*\).*/\1/p' "$OUT/api.out")
+	[ "${got:-200}" = "$want" ] || fail "$2 $3 from $5: ${got:-200}, want $want"
+}
+expect 200 GET config "$RT" 192.0.2.5
+rev=$(sed -n 's/.*"rev":"\([0-9a-f]\{16\}\)".*/\1/p' "$OUT/api.out")
+[ -n "$rev" ] || fail "GET config: no rev"
+sed -n 's/^[a-z0-9_-]*: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' /etc/mini-router/secrets.yaml | while read -r v; do
+	[ ${#v} -lt 6 ] || ! grep -qF -- "$v" "$OUT/api.out" || fail "a secret value is in the answer"
+done
+expect 403 POST apply "$RT" 192.0.2.5 '{"patch":[]}'
+expect 403 POST password "$AT" 192.0.2.5 '{"old":"x","new":"yyyyyyyy"}'
+expect 403 POST sys.factoryreset "$AT" 192.0.2.5 '{}'
+expect 403 POST sys.backup "$AT" 192.0.2.5 '{"secrets":true}'
+expect 403 GET status "$AT" 198.51.100.7
+expect 401 GET status "$XT" 192.0.2.5
+expect 200 POST plan "$AT" 192.0.2.5 '{"base_rev":"'"$rev"'","patch":[{"op":"set","path":"firewall.offload","value":"software"}]}'
+grep -q '"errors":\[\]' "$OUT/api.out" || fail "plan of a good patch"
+expect 200 POST plan "$AT" 192.0.2.5 '{"patch":[{"op":"set","path":"firewall.nosuch","value":1}]}'
+grep -q '"errors":\["' "$OUT/api.out" || fail "plan of a bad patch path"
+expect 403 POST apply "$AT" 192.0.2.5 '{"base_rev":"'"$rev"'","patch":[{"op":"set","path":"services.ssh.password_login","value":true}]}'
+expect 409 POST apply "$AT" 192.0.2.5 '{"base_rev":"0000000000000000","patch":[{"op":"set","path":"firewall.offload","value":"software"}]}'
+expect 400 POST apply "$AT" 192.0.2.5 '{"config":{}}'
+[ ! -e /run/mini-router/job.json ] || fail "an apply job was started"
+grep -q '"ci-read"' /run/mini-router/api-used.json || fail "last use not recorded"
+i=0
+while [ $i -lt 20 ]; do
+	i=$((i + 1))
+	REQUEST_METHOD=GET QUERY_STRING=a=status HTTP_AUTHORIZATION="Bearer mrt_guess-$i" REMOTE_ADDR=192.0.2.99 \
+		"$OUT/mr-host" api > "$OUT/tok.$i" 2> /dev/null &
+done
+wait
+n401=$(grep -l '^Status: 401' "$OUT"/tok.* | wc -l)
+n429=$(grep -l '^Status: 429' "$OUT"/tok.* | wc -l)
+[ "$n401" = 5 ] && [ "$n429" = 15 ] || fail "20 bad tokens at once: $n401 x 401, $n429 x 429 (want 5 and 15)"
+expect 429 GET status "$RT" 192.0.2.99
+expect 200 GET config "$RT" 192.0.2.98
+"$OUT/mr-host" get firewall.offload > /dev/null
+"$OUT/mr-host" set -n firewall.offload=software | grep -q '~ firewall.offload' || fail "mr set -n"
+"$OUT/mr-host" schema wan | grep -q '"pppoe"' || fail "mr schema"
+"$OUT/mr-host" token list | grep -q '^ci-agent' || fail "mr token list"
+rm -f /etc/mini-router/router.yaml /etc/mini-router/secrets.yaml && umount /run/mini-router
+echo "ok: scopes, sources, expiry, no secrets, plan / patch, base_rev 409, locked paths 403, 5 x 401 + 15 x 429"
 
 printf '\nALL CHECKS PASSED\n'

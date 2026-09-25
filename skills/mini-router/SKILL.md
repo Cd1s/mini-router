@@ -18,13 +18,20 @@ No python/jq there: edit YAML with care, or edit a copy on your side and send it
 
 ## The safe change workflow (every change)
 
-1. **Read first**: `mr status` and the section you will touch (`sed -n '/^firewall:/,/^[a-z]/p' /etc/mini-router/router.yaml`).
-2. **Edit a copy**, validate and preview it, then install it:
+1. **Read first**: `mr status` and the part you will touch: `mr get firewall.forwards` (effective values, defaults
+   filled in; `--json`), `mr export --flat | grep …` (one `PATH=VALUE` per line), `mr schema firewall.forwards` (keys,
+   types, allowed values).
+2. **Edit with `mr set` / `mr add` / `mr del`** — prefer them to editing the file by hand: they validate the result
+   before writing (an invalid edit changes nothing), keep router.yaml's comments and layout, print the config-level
+   changes, and never touch secrets. Paths address list items by name (`[key=value]` for other keys, quotes for dots):
    ```sh
-   cp /etc/mini-router/router.yaml /tmp/new.yaml        # edit /tmp/new.yaml (or copy it out, edit, copy back)
-   mr -c /tmp/new.yaml validate && mr -c /tmp/new.yaml plan
-   cp /tmp/new.yaml /etc/mini-router/router.yaml
+   mr set 'firewall.forwards[nas].enabled=false' 'lan.ipv6_ra=true'   # -n: only show the changes
+   mr add dhcp.hosts '{name: tv, mac: "aa:bb:cc:dd:ee:01", ip: 192.168.1.30}'
+   mr del 'firewall.forwards[old-game]'                               # a key: back to its default
+   mr plan                                                            # changes + files + services
    ```
+   For a large rework, edit a copy instead: `cp /etc/mini-router/router.yaml /tmp/new.yaml`, edit,
+   `mr -c /tmp/new.yaml validate && mr -c /tmp/new.yaml plan`, then copy it back.
 3. **Apply with a safety net**: `mr apply --confirm 120`. It prints the plan, applies, verifies services; failures
    roll back at once. Then verify (step 4) and run **`mr confirm` within 120 s** — without it the change is rolled
    back automatically (that is the net when you cut your own connection; never forget it when all is fine).
@@ -128,6 +135,19 @@ rc-status -c                   # crashed services (should be empty)
 tail -n 100 /var/log/messages  # system log (logread is not used)
 dmesg | tail -n 50
 ```
+
+## Without SSH: the HTTP API with a token
+
+Scripts, Home Assistant or an agent without root access use the web UI's API with a scoped token
+(`docs/api.md` in the repository): the user creates it (web UI 系统 → 管理与 SSH → API 令牌, or
+`mr token create NAME -scope read|operate|apply [-from CIDR] [-expires DATE]`), it is shown once and only its
+hash is stored. Requests: `curl -H "Authorization: Bearer $MR_TOKEN" http://<router-ip>/cgi-bin/api?a=status`.
+Changing the config (scope `apply`): `GET config` (note `rev`) → `POST plan {"base_rev": REV, "patch": [{"op":
+"set", "path": "firewall.forwards[nas].enabled", "value": false}]}` → read `errors` / `changes` / `plan` →
+`POST apply` (same body, plus `"comment"`) → poll `GET job` until `ok` → verify → `POST confirm` within 120 s.
+409 = someone else changed router.yaml (read again) or a change waits for confirmation. Tokens can never
+change the token list, SSH, sysctl, read logs or secrets, back up / restore, upgrade, reset or reboot — ask
+the user to do those. Never print or store a token in files, logs or chat.
 
 ## Firmware upgrade (AX6000 image; installs from the running system)
 
