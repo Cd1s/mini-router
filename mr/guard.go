@@ -10,6 +10,8 @@ package main
 //	  always_bypass: [desktop]          # these devices (dhcp.hosts / proxy.bypass names) never go through the proxy
 //	  offload: hardware                 # flow offload may not drop below this (hardware > software > off)
 //	  ssh_lan_only: true                # SSH, when on, listens on the LAN-zone addresses only
+//	  approvers: [sk-ssh-ed25519@openssh.com AAAA… owner]  # FIDO keys that approve agents' plans (mcp_ssh.go)
+//	  max_risk_without_touch: medium    # agents' plans above this need an approver's signature (low | medium)
 
 import (
 	"net"
@@ -22,6 +24,11 @@ type Guard struct {
 	AlwaysBypass []string `yaml:"always_bypass,omitempty"`
 	Offload      string   `yaml:"offload,omitempty"`
 	SSHLANOnly   bool     `yaml:"ssh_lan_only,omitempty"`
+
+	// Approvers: the owner's FIDO security keys (sk-* public keys); MaxRiskWithoutTouch: the highest
+	// risk an MCP agent may apply without a signature from one of them (low | medium; default medium).
+	Approvers           []string `yaml:"approvers,omitempty"`
+	MaxRiskWithoutTouch string   `yaml:"max_risk_without_touch,omitempty"`
 }
 
 // guardPorts: the router's own services a guard can name, and their TCP/UDP ports.
@@ -103,6 +110,7 @@ func guardValidate(c *Config, v *Validator) {
 	if g.SSHLANOnly && c.Services.SSH.Enabled && !c.Services.SSH.LANOnly {
 		v.Add("guard.ssh_lan_only: services.ssh.lan_only must stay true")
 	}
+	validateApproval(c, v)
 }
 
 // portIn: whether port p is in a port spec ("443", "8000-8100", "80,443", "").

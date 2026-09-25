@@ -48,6 +48,8 @@ services:
     lan_only: false          # true: listen only on the IPv4 address of every LAN-zone network
     authorized_keys:         # managed block in /root/.ssh/authorized_keys (other lines are never touched)
       - ssh-ed25519 AAAAC3Nza... me@laptop
+    agents:                  # AI agents: keys that can only run `mr mcp` with this scope (docs/mcp.md)
+      - {name: claude, scope: operate, key: ssh-ed25519 AAAAC3Nza...}
   panel: {enabled: true}     # web UI (busybox httpd on the main LAN address, port 80)
   ddns:                      # dynamic DNS, no daemon (see "DDNS" below)
     enabled: true
@@ -79,6 +81,10 @@ Validation (the security boundary — everything below ends up in a file, a cron
 * `ssh.authorized_keys`: `type base64 [comment]`, type one of ed25519 / rsa / ecdsa / sk-*, the base64
   blob must start with the same key type, no options (`command=`, `from=` …), printable comment, no
   duplicates, at most 32. `ssh.port` must not be 53/67/80/123/547 or the tailscale port.
+* `ssh.agents`: name `[a-z][a-z0-9_-]{0,14}` and unique, `scope` read / operate / apply, `key` validated like
+  `authorized_keys` and neither a login key nor another agent's; at most 8. Rendered into the managed block as
+  `command="/usr/sbin/mr mcp --scope=S --agent=NAME",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty
+  <type> <base64> mr-agent:NAME` (see `docs/mcp.md`).
 * `schedules`: name `[A-Za-z0-9_.-]{1,40}` and unique; `cron` exactly 5 numeric fields (`*`, `n`,
   `a-b`, `*/n`, `a-b/n`, lists; no names, no `@reboot`), minute a single number (every task runs at
   most once per hour), for `reboot` the hour too (at most once per day). `restart` targets must be a

@@ -7,7 +7,8 @@
 #     the LAN-zone addresses only, tailscale port, boot order for nf_conntrack sysctls
 #  3. crontab: managed block with fixed commands only (+ the DDNS check); `mr sys run` refuses anything
 #     else; `mr ddns status` works offline and never shows the token
-#  4. authorized_keys: managed block, and every line this host already had is still there
+#  4. authorized_keys: managed block (login keys + an AI agent's forced `mr mcp`), and every line
+#     this host already had is still there
 #  5. every rendered conf.d file parses as sh and sets what the init scripts read
 #  6. `mr sys backup`: archive content, secrets only on request and never the web UI password hash
 #  7. sysctl, real kernel (network namespace): after the rendered file is loaded no netdev sends ICMP
@@ -109,7 +110,11 @@ ok "ddns status"
 # 4. authorized_keys: managed block + everything this host already had
 K=$L/root/.ssh/authorized_keys
 [ "$(stat -c %a "$K")" = 600 ] || fail "authorized_keys mode"
-[ "$(sed -n '/^# --- begin mini-router managed keys/,/^# --- end mini-router managed keys/p' "$K" | grep -c '^[a-z]')" = 2 ] || fail "lab: managed keys"
+block=$(sed -n '/^# --- begin mini-router managed keys/,/^# --- end mini-router managed keys/p' "$K")
+[ "$(echo "$block" | grep -c '^[a-z]')" = 3 ] || fail "lab: managed keys (2 logins + 1 agent)"
+# the agent's key runs `mr mcp` and nothing else (services.ssh.agents, docs/mcp.md)
+echo "$block" | grep -q '^command="/usr/sbin/mr mcp --scope=apply --agent=claude",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 [A-Za-z0-9+/=]* mr-agent:claude$' || fail "lab: agent key line"
+[ "$(echo "$block" | grep -c '^command=')" = 1 ] || fail "lab: forced command on a login key"
 if [ -r /root/.ssh/authorized_keys ]; then
 	n=0
 	while IFS= read -r line; do

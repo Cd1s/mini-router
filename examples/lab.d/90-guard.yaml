@@ -4,3 +4,6 @@ guard:
   always_bypass: [desktop]          # proxy.bypass (or dhcp.hosts) name: never proxied
   offload: hardware                 # firewall.offload may not drop below hardware
   ssh_lan_only: true                # SSH listens on LAN-zone addresses only
+  max_risk_without_touch: low       # agents' plans above low risk need a FIDO approval (default medium)
+  approvers:                        # the owner's FIDO keys (ssh-keygen -t ed25519-sk): docs/mcp.md
+    - sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIAic9mpj7c7OC0mrEYHm+JIeVGDCCDHhs2/pYBpfOnufAAAABHNzaDo= lab-owner

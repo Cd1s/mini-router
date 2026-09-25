@@ -65,6 +65,8 @@ func schemaEnums() map[string][]string {
 		"Schedule.Action":             e("reboot", "restart", "reconnect", "wol"),
 		"DDNSRecord.Provider":         e("", "cloudflare"),
 		"APIToken.Scope":              e("read", "operate", "apply"),
+		"SSHAgent.Scope":              e("read", "operate", "apply"),
+		"Guard.MaxRiskWithoutTouch":   e("", "low", "medium"),
 	}
 }
 

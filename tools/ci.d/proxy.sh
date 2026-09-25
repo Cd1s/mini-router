@@ -390,7 +390,18 @@ EOF
 while read -r tag net; do
 	# shellcheck disable=SC2086
 	ip netns exec "$R" $MR proxy select pick "$tag" > /dev/null || { logs; fail "mr proxy select pick $tag"; }
+	# the switch is in effect before the first request (clash API)
+	# shellcheck disable=SC2086
+	ip netns exec "$R" $MR proxy status | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin)["proxies"]["pick"]["now"] != sys.argv[1])' "$tag" ||
+		{ logs; fail "selector pick is not on $tag after mr proxy select"; }
 	tcp=$(get "$C" http://198.51.100.10:8080/)
+	if [ "$tcp" != 198.51.100.10 ]; then
+		# Cd1s/mini-router#51: the first connection after switching to trojan + httpupgrade is now and
+		# then refused by the server ("bad request"); retried once, and the retry must work
+		echo "node $tag: first TCP attempt failed ($tcp), retrying once (#51)"
+		sleep 1
+		tcp=$(get "$C" http://198.51.100.10:8080/)
+	fi
 	udp=-
 	[ "$net" = tcp ] || udp=$(q "$C" udp 198.51.100.10 9999)
 	echo "node $tag: tcp=$tcp udp=$udp"
