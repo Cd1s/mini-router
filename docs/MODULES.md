@@ -76,6 +76,9 @@ Use only helpers from `ui/core.js`: `h`, `api`, `S` (state: `S.cfg` = editable c
 `etable/tableCard/roTable`, `tabs`, `lineChart`, `COLORS`, `modal`, `toast`, `confirmBtn`, `addCSS`,
 `fmtBytes/fmtRate/fmtDur`. Live pages may set `S.timer = setInterval(...)` (cleared on navigation).
 Config edits only change `S.cfg`; the shared "保存并应用" bar runs validate → plan → apply → confirm.
+The router.yaml it installs is the live file with only the changed values edited (`yamledit.go`): comments, key
+order, quoting and layout stay; if an edit cannot be made in place, or the result would not decode to exactly the
+submitted config, the canonical encoding is written instead (comments lost, logged).
 Style: professional router UI (think RouterOS/LuCI density), Chinese labels, technical terms as-is.
 Pages must work at 360 px width.
 
