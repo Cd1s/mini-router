@@ -116,6 +116,10 @@ pre{background:var(--code);border:1px solid var(--line);border-radius:6px;paddin
 .tabs a.act{color:var(--acc);border-bottom-color:var(--acc)}
 #pending{position:fixed;left:212px;right:0;bottom:0;background:var(--panel);border-top:1px solid var(--line);padding:10px 24px;display:none;align-items:center;gap:12px;z-index:10;box-shadow:0 -2px 8px rgba(0,0,0,.06)}
 #pending.on{display:flex}
+.top{position:sticky;top:0;z-index:5}
+#pbanner{display:none;align-items:center;gap:10px;padding:8px 24px;background:var(--panel);box-shadow:inset 0 0 0 999px rgba(201,138,11,.12);border-bottom:1px solid rgba(201,138,11,.4)}
+#pbanner.on{display:flex}
+#pbanner .t{flex:1}
 #pending .t{flex:1}
 .modal{position:fixed;inset:0;background:rgba(10,14,20,.5);display:flex;align-items:center;justify-content:center;z-index:20;padding:16px}
 .modal .box{background:var(--panel);border-radius:8px;width:min(720px,100%);max-height:90vh;overflow:auto;border:1px solid var(--line)}
@@ -139,6 +143,7 @@ pre{background:var(--code);border:1px solid var(--line);border-radius:6px;paddin
   #menu{display:block}
   header .meta{display:none}
   #pending{left:0;padding:10px 16px}
+  #pbanner{padding:8px 16px;flex-wrap:wrap}
   header{padding:10px 16px}
   .content{padding:16px 16px 100px}
   .form{grid-template-columns:1fr}

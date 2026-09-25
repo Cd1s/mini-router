@@ -376,6 +376,9 @@ func startRestore(rs *restoreSet, confirmSecs int) (map[string]any, []string, er
 	if j := readJob(); j.State == "running" {
 		return nil, nil, errors.New("another apply is running")
 	}
+	if err := pendingBlocks(); err != nil { // before the list files are touched
+		return nil, nil, err
+	}
 	y, sec, snap, errs, err := restoreStage(rs)
 	if err != nil || len(errs) > 0 {
 		return nil, errs, err

@@ -24,7 +24,8 @@ const usage = `mr — mini-router control
   mr apply [--confirm SECS]   apply router.yaml (auto-rollback on failure;
                               with --confirm, also roll back unless 'mr confirm' runs in time)
   mr confirm                  keep the last --confirm apply
-  mr rollback [SNAPSHOT]      restore the latest (or given) snapshot
+  mr rollback [SNAPSHOT]      undo the change waiting for confirmation, else restore the latest
+                              (or given) snapshot
   mr rollback --boot          at boot (mr-preinit): roll back a change that was never confirmed
   mr history                  list snapshots
   mr render DIR               write all generated files under DIR (for review/tests)
@@ -72,7 +73,11 @@ func dispatch(args []string, cfgPath, secPath string) error {
 		fmt.Println(version)
 		return nil
 	case "confirm":
-		return confirm()
+		ok, err := confirm()
+		if err == nil {
+			fmt.Println(map[bool]string{true: "confirmed", false: "nothing pending"}[ok])
+		}
+		return err
 	case "history":
 		ents, _ := os.ReadDir(HistoryDir)
 		for _, e := range ents {

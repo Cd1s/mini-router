@@ -357,6 +357,11 @@ func ApplyCandidate(candYAML, candSecrets string, confirmSecs int, via string) e
 }
 
 func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, via string) error {
+	if !dryRun {
+		if err := pendingBlocks(); err != nil {
+			return err
+		}
+	}
 	if errs := c.Validate(); len(errs) > 0 {
 		return fmt.Errorf("router.yaml invalid:\n  %s", strings.Join(errs, "\n  "))
 	}
@@ -382,9 +387,11 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, vi
 		return fmt.Errorf("snapshot: %w", err)
 	}
 	// on disk before the first new file: if the router goes down from here until the change is
-	// accepted, the next boot rolls it back
-	if err := setPending(pendingApply{Snapshot: snap, State: stateApplying, Via: via}); err != nil {
-		return fmt.Errorf("pending marker: %w", err)
+	// accepted, the next boot rolls it back. Claimed atomically: of two applies started at once, one
+	// is refused here.
+	if err := claimPending(pendingApply{Snapshot: snap, State: stateApplying, Via: via}); err != nil {
+		os.Remove(snap)
+		return err
 	}
 	if install != nil {
 		if err := install(); err != nil {
@@ -540,6 +547,68 @@ func readPending() (*pendingApply, error) {
 	return &p, nil
 }
 
+// pendingBlocks refuses a new change while another one is not accepted yet: applied on top, a later
+// rollback of the second would silently keep the first.
+func pendingBlocks() error {
+	p, err := readPending()
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%v: `mr confirm` clears it", err)
+	}
+	switch p.State {
+	case stateApplying:
+		return fmt.Errorf("another apply (%s) is running", p.Via)
+	case stateReverting:
+		return fmt.Errorf("a change (%s) is being rolled back", p.Via)
+	}
+	return fmt.Errorf("a change (%s) is waiting for confirmation (rolled back in %ds): keep it (`mr confirm`) or roll it back (`mr rollback`) first",
+		p.Via, p.left())
+}
+
+// left: seconds until the confirm timer rolls the change back.
+func (p *pendingApply) left() int64 {
+	if l := p.Deadline - time.Now().Unix(); l > 0 {
+		return l
+	}
+	return 0
+}
+
+// claimPending creates the marker only if there is none: checking and claiming are one step.
+func claimPending(p pendingApply) error {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(ConfirmFile), 0755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(ConfirmFile, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if errors.Is(err, fs.ErrExist) {
+		if err := pendingBlocks(); err != nil {
+			return err
+		}
+		return errors.New("another change is pending")
+	}
+	if err != nil {
+		return fmt.Errorf("pending marker: %w", err)
+	}
+	_, err = f.Write(b)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(ConfirmFile)
+		return fmt.Errorf("pending marker: %w", err)
+	}
+	syncDir(filepath.Dir(ConfirmFile))
+	return nil
+}
+
 func setPending(p pendingApply) error {
 	b, err := json.Marshal(p)
 	if err != nil {
@@ -614,21 +683,20 @@ func rollbackIfUnconfirmed(snap string, secs int) error {
 	return rollback(snap, fmt.Errorf("not confirmed within %ds", secs))
 }
 
-func confirm() error {
+// confirm keeps the pending change; false: there was none.
+func confirm() (bool, error) {
 	p, err := readPending()
 	if errors.Is(err, fs.ErrNotExist) {
-		fmt.Println("nothing pending")
-		return nil
+		return false, nil
 	}
 	if err == nil && p.State == stateApplying {
-		return errors.New("the apply is still running: confirm it when it has finished")
+		return false, errors.New("the apply is still running: confirm it when it has finished")
 	}
 	if err == nil && p.State == stateReverting {
-		return errors.New("the change is being rolled back")
+		return false, errors.New("the change is being rolled back")
 	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
-	fmt.Println("confirmed")
-	return nil
+	return true, nil
 }
 
 // rollbackCommand is `mr rollback [--boot] [SNAPSHOT]`.
@@ -641,18 +709,35 @@ func rollbackCommand(args []string, cfgPath, secPath string) error {
 	if *boot {
 		return rollbackAtBoot(cfgPath, secPath)
 	}
+	p, err := readPending()
+	if err == nil && p.State == stateApplying {
+		return fmt.Errorf("an apply (%s) is running: roll back when it has finished", p.Via)
+	}
 	var snap string
-	if fl.NArg() > 0 {
+	switch {
+	case fl.NArg() > 0:
 		snap = filepath.Join(HistoryDir, filepath.Base(fl.Arg(0)))
-	} else {
+	case err == nil:
+		snap = filepath.Join(HistoryDir, filepath.Base(p.Snapshot)) // undo the pending change
+	default:
 		ents, _ := os.ReadDir(HistoryDir)
 		if len(ents) == 0 {
 			return fmt.Errorf("no snapshots")
 		}
 		snap = filepath.Join(HistoryDir, ents[len(ents)-1].Name())
 	}
+	// pending, or marked reverting by the web UI's revert that started this rollback
+	reverting := err == nil && (p.State == statePending || p.State == stateReverting)
+	if reverting && p.State == statePending {
+		p.State = stateReverting // the confirm timer leaves it alone now
+		setPending(*p)
+	}
 	svcs, err := restore(snap)
 	if err != nil {
+		if reverting { // still pending: the timer, `mr confirm` or another rollback decide
+			p.State = statePending
+			setPending(*p)
+		}
 		return err
 	}
 	restartAll(svcs)
