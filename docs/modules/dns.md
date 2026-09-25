@@ -243,6 +243,8 @@ No handler builds a shell command; `rc-service dnsmasq restart` is the only exec
   静态分配 手动添加。服务器可以在“租期”列填 `infinite`。
 - **释放租约**：状态 › 终端设备 → “释放”。路由器替设备发送 DHCPRELEASE，地址立即回到地址池（设备
   下次续约会重新申请）。
+- **网络唤醒**：状态 › 终端设备 和 DHCP / IPv6 RA › 静态分配 每行有“唤醒”，发送 Wake-on-LAN 魔术包
+  （sys 模块的 `sys.wol`，见 sys.md）。
 - **上游 DNS**：网络 › DNS › 上游与缓存。默认用运营商 DNS（出国换网络自动跟随）；也可以手动指定，
   或全部走 DoT（需同时开启 stubby；NTP 域名会用“引导 DNS”明文解析，保证开机对时）。
 - **DHCP 选项**：网络 › DHCP / IPv6 RA › DHCP 选项，按网络设置下发的 DNS、NTP、搜索域和其他编号选项。

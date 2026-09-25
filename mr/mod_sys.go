@@ -1,10 +1,11 @@
 package main
 
 // sys module: hostname, time (timezone, NTP client/server), sysctl, SSH (dropbear, managed
-// authorized_keys), add-on services (tailscale, lucky, dstatus, stubby, web UI, zram), scheduled
-// tasks (busybox crond), backup/restore, firmware upgrade / factory reset, logs, diagnostics.
-// Owns router.yaml: system, services, schedules. Files: mod_sys_time.go (TZ, TZif, NTP),
-// mod_sys_ssh.go, mod_sys_cron.go, mod_sys_backup.go, mod_sys_fw.go, mod_sys_api.go.
+// authorized_keys), add-on services (tailscale, lucky, dstatus, stubby, web UI, zram), dynamic DNS,
+// Wake-on-LAN, scheduled tasks (busybox crond), backup/restore, firmware upgrade / factory reset, logs,
+// diagnostics. Owns router.yaml: system, services, schedules. Files: mod_sys_time.go (TZ, TZif, NTP),
+// mod_sys_ssh.go, mod_sys_cron.go, mod_sys_ddns.go, mod_sys_wol.go, mod_sys_backup.go, mod_sys_fw.go,
+// mod_sys_api.go.
 // Docs: docs/modules/sys.md.
 
 import (
@@ -37,6 +38,7 @@ type Services struct {
 	Stubby    Toggle    `yaml:"stubby"`
 	SSH       SSH       `yaml:"ssh"`
 	Panel     Toggle    `yaml:"panel"`
+	DDNS      DDNS      `yaml:"ddns,omitempty"` // dynamic DNS (mod_sys_ddns.go): no daemon, runs from WAN hooks + crond
 }
 
 type Toggle struct {
@@ -235,6 +237,7 @@ func init() {
 			if len(c.System.NTP) == 0 {
 				c.System.NTP = []string{"pool.ntp.org"} // no RTC: the clock must come from somewhere
 			}
+			ddnsDefaults(c)
 		},
 		Validate: sysValidate,
 		Render:   sysRender,
@@ -268,7 +271,25 @@ func init() {
 				}
 			}
 			st["tailscale"] = ts
+			if ddnsOn(c) {
+				st["ddns"] = ddnsSummary(c)
+			}
 		},
+		// DDNS: a WAN that came up / renewed / got a prefix, or a failover, may have changed the
+		// address; an apply may have changed the records. Both only start a background sync (a DDNS
+		// failure never fails an apply).
+		OnWAN: func(c *Config, wan, event string) {
+			if ddnsOn(c) && ddnsUses(c, event) {
+				ddnsKick()
+			}
+		},
+		Verify: func(c *Config, restarted []string) []string {
+			if ddnsOn(c) {
+				ddnsKick()
+			}
+			return nil
+		},
+		Secrets: ddnsSecrets,
 		API: map[string]func(r apiReq) apiResp{
 			"diag":              apiDiag,
 			"service":           apiService,
@@ -283,9 +304,14 @@ func init() {
 			"sys.fwupgrade":     apiSysFwUpgrade,
 			"sys.factoryreset":  apiSysFactoryReset,
 			"sys.schedulecheck": apiSysScheduleCheck,
+			"sys.ddns":          apiSysDDNS,
+			"sys.ddnsupdate":    apiSysDDNSUpdate,
+			"sys.wol":           apiSysWOL,
 		},
 		Commands: map[string]func(c *Config, args []string) error{
-			"sys": sysCommand,
+			"sys":  sysCommand,
+			"ddns": ddnsCommand,
+			"wol":  wolCommand,
 		},
 	})
 }
@@ -336,6 +362,7 @@ func sysValidate(c *Config, v *Validator) {
 	}
 	validateSSH(c, v)
 	validateSchedules(c, v)
+	validateDDNS(c, v)
 }
 
 // apiSysScheduleCheck: POST {cron, action, target} → {ok, error, cron (normalized)} so the schedule

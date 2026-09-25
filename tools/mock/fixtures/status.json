@@ -9,6 +9,7 @@
  ],
  "conntrack": 757,
  "conntrack_max": 100000,
+ "ddns": {"records": 3, "ok": 1, "errors": [{"name": "home.example.com", "type": "AAAA", "error": "Cloudflare: HTTP 429 (971 Please wait and consider throttling your request speed)"}]},
  "hnat_bind": 26,
  "host": "mini-router",
  "kernel": "6.18.52",

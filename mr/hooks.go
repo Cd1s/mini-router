@@ -134,7 +134,13 @@ func hookPPP(c *Config, up bool, args []string) error {
 		wanDown(c, w)
 	}
 	updateLEDs(c)
-	return fwLoad(c)
+	err := fwLoad(c)
+	if up {
+		runOnWAN(c, w.Name, "up")
+	} else {
+		runOnWAN(c, w.Name, "down")
+	}
+	return err
 }
 
 // validIPs keeps up to max strings that parse as IP addresses (they come from the network).
@@ -451,6 +457,7 @@ func hookDhcpcd(c *Config) error {
 		args := append(append([]string{"-6", "route", "replace", "default", "from", pfx}, via...), "dev", iface, "metric", "512")
 		run("ip", args...)
 	}
+	runOnWAN(c, w.Name, "ipv6")
 	return refreshLan6()
 }
 
@@ -498,6 +505,7 @@ func hookUdhcpc(c *Config, event string) error {
 		wanDown(c, w)
 		run("ip", "-4", "addr", "flush", "dev", iface)
 		run("ip", "link", "set", iface, "up")
+		runOnWAN(c, w.Name, "down")
 	case "bound", "renew":
 		ip := net.ParseIP(os.Getenv("ip")).To4()
 		if ip == nil || ip.IsUnspecified() {
@@ -535,6 +543,7 @@ func hookUdhcpc(c *Config, event string) error {
 		writeLease(w.Name, wanLease{IP: ip.String(), Prefix: prefix, Gateway: gw, DNS: dns, Since: since, Dev: iface})
 		wanUp(c, w, iface, ip.String(), gw)
 		writeResolv(c)
+		runOnWAN(c, w.Name, "up")
 	case "leasefail", "nak":
 		logf("wan %s: DHCP %s on %s", w.Name, event, iface)
 	}
@@ -560,7 +569,9 @@ func dhcpPrefix(mask, subnet string) int {
 // the balance map is re-rendered without them.
 func hookHealth(c *Config) error {
 	refreshRoutes(c)
-	return fwLoad(c)
+	err := fwLoad(c)
+	runOnWAN(c, "", "health")
+	return err
 }
 
 // wanCommand: `mr wan dhcp EVENT` (udhcpc script), `mr wan health` (net-wanmon), `mr wan status`.

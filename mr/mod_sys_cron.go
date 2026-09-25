@@ -8,6 +8,11 @@ package main
 //	reboot             /usr/sbin/mr sys run reboot
 //	restart <service>  /usr/sbin/mr sys run restart <service>   (a service the config enables)
 //	reconnect <wan>    /usr/sbin/mr sys run reconnect <wan>     (restarts mr-pppoe.<wan> / mr-udhcpc.<wan>)
+//	wol <host>         /usr/sbin/mr sys run wol <host>          (Wake-on-LAN: a dhcp.hosts name or a MAC)
+//
+// plus, while services.ddns is on with an interval, the DDNS safety check (mod_sys_ddns.go):
+//
+//	*/<interval> * * * * /usr/sbin/mr ddns sync --cron
 //
 // `mr sys run` checks the action against the live config again, logs it (syslog + change log) and
 // runs it. The time spec is a strict 5-field cron expression (numbers, *, a-b, /step, lists; no
@@ -28,8 +33,8 @@ type Schedule struct {
 	Name    string `yaml:"name"`
 	Enabled *bool  `yaml:"enabled,omitempty"` // default true
 	Cron    string `yaml:"cron"`              // "minute hour day month weekday", e.g. "30 4 * * 1"
-	Action  string `yaml:"action"`            // reboot | restart | reconnect
-	Target  string `yaml:"target,omitempty"`  // restart: service name; reconnect: WAN name
+	Action  string `yaml:"action"`            // reboot | restart | reconnect | wol
+	Target  string `yaml:"target,omitempty"`  // restart: service name; reconnect: WAN name; wol: dhcp.hosts name or MAC
 }
 
 // cronFile is root's crontab (a variable so tests can point it elsewhere).
@@ -156,8 +161,14 @@ func scheduleService(c *Config, action, target string) (string, error) {
 			return "", fmt.Errorf("reconnect: wan %q is static (nothing to reconnect)", target)
 		}
 		return svc, nil
+	case "wol":
+		// target ends up in the crontab line: a MAC or an existing dhcp.hosts name (reHostname) only
+		if _, _, _, err := wolTarget(c, target, ""); err != nil {
+			return "", fmt.Errorf("wol: %v", err)
+		}
+		return "", nil
 	}
-	return "", fmt.Errorf("action: reboot | restart | reconnect, got %q", action)
+	return "", fmt.Errorf("action: reboot | restart | reconnect | wol, got %q", action)
 }
 
 func validateSchedules(c *Config, v *Validator) {
@@ -183,6 +194,9 @@ func validateSchedules(c *Config, v *Validator) {
 }
 
 func cronWanted(c *Config) bool {
+	if ddnsInterval(c) > 0 {
+		return true
+	}
 	for _, s := range c.Schedules {
 		if on(s.Enabled) {
 			return true
@@ -211,6 +225,9 @@ func renderCronLines(c *Config) []string {
 		}
 		lines = append(lines, "# "+s.Name, spec+" "+cmd)
 	}
+	if n := ddnsInterval(c); n > 0 {
+		lines = append(lines, "# ddns (services.ddns)", fmt.Sprintf("*/%d * * * * %s ddns sync --cron", n, mrBin))
+	}
 	return lines
 }
 
@@ -227,7 +244,7 @@ func renderCrondConf(c *Config) string {
 // sysRunTask is `mr sys run ACTION [TARGET]` (called by crond).
 func sysRunTask(c *Config, args []string) error {
 	if len(args) < 1 || len(args) > 2 {
-		return fmt.Errorf("usage: mr sys run reboot | restart SERVICE | reconnect WAN")
+		return fmt.Errorf("usage: mr sys run reboot | restart SERVICE | reconnect WAN | wol HOST|MAC")
 	}
 	action, target := args[0], ""
 	if len(args) == 2 {
@@ -240,6 +257,10 @@ func sysRunTask(c *Config, args []string) error {
 	what := strings.TrimSpace(action + " " + target)
 	logf("schedule: %s", what)
 	appendChangeLog("schedule: " + what)
+	if action == "wol" {
+		_, err := wolWake(c, target, "")
+		return err
+	}
 	if action == "reboot" {
 		run("sync")
 		_, err := run("reboot")

@@ -57,6 +57,20 @@ type Module struct {
 	// Secrets lists the secret NAMES this module's config references (the web UI shows which are
 	// set; values are never returned).
 	Secrets func(c *Config) []string
+	// OnWAN is called by the net hooks when a WAN's addresses may have changed: event "up" (PPP up,
+	// DHCP bound / renew), "ipv6" (dhcpcd: RA, delegated prefix), "down", "health" (multi-WAN health
+	// changed which WAN carries the default route; wan is ""). It runs inside pppd / udhcpc / dhcpcd:
+	// return at once and start anything slow detached.
+	OnWAN func(c *Config, wan, event string)
+}
+
+// runOnWAN calls every module's OnWAN (from the net hooks).
+func runOnWAN(c *Config, wan, event string) {
+	for _, m := range modules {
+		if m.OnWAN != nil {
+			m.OnWAN(c, wan, event)
+		}
+	}
 }
 
 var modules []*Module

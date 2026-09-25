@@ -44,6 +44,14 @@
    },
    "panel": {
     "enabled": true
+   },
+   "ddns": {
+    "enabled": true,
+    "interval": 10,
+    "records": [
+     {"name": "home.example.com", "provider": "cloudflare", "zone": "example.com", "token_secret": "cf_ddns_token", "ipv4": "active", "ipv6": "router"},
+     {"name": "nas.example.com", "provider": "cloudflare", "zone": "example.com", "token_secret": "cf_ddns_token", "ipv4": "off", "ipv6": "::10", "ttl": 300}
+    ]
    }
   },
   "schedules": [
@@ -71,5 +79,8 @@
     "action": "reboot"
    }
   ]
+ },
+ "secrets_set": {
+  "cf_ddns_token": true
  }
 }

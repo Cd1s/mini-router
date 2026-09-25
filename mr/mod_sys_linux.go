@@ -14,3 +14,8 @@ func clockSynced() (bool, bool) {
 	const timeError, staUnsync = 5, 0x0040
 	return state != timeError && tx.Status&staUnsync == 0, true
 }
+
+// bindToDev pins a socket to one netdev (SO_BINDTODEVICE; Wake-on-LAN: the packet can only leave there).
+func bindToDev(fd int, dev string) error {
+	return syscall.SetsockoptString(fd, syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, dev)
+}
