@@ -34,11 +34,6 @@ type wanStatus struct {
 	Uptime int64    `json:"uptime"`
 	Health string   `json:"health,omitempty"` // up | down (multiwan health checker)
 	RTT    *float64 `json:"rtt_ms,omitempty"`
-	// travel (mod_net_travel.go): last connectivity check from the current address, a refused
-	// lease, and private / cgnat when the address sits behind another NAT
-	Check     *wanCheck    `json:"check,omitempty"`
-	Conflict  *wanConflict `json:"conflict,omitempty"`
-	AddrClass string       `json:"addr_class,omitempty"`
 }
 
 func netStatus(c *Config, st map[string]any) {
@@ -70,7 +65,6 @@ func netStatus(c *Config, st map[string]any) {
 		if h, ok := health[w.Name]; ok {
 			ws.Health, ws.RTT = h.State, h.RTT
 		}
-		ws.Check, ws.Conflict, ws.AddrClass = travelStatus(w.Name, ws.IP)
 		wans = append(wans, ws)
 	}
 	st["wan"] = wans
@@ -316,28 +310,24 @@ func apiNetPorts() apiResp {
 
 // wanRT is the runtime view of one WAN (WAN page, 多线路 page, `mr wan status`).
 type wanRT struct {
-	Name        string       `json:"name"`
-	Proto       string       `json:"proto"`
-	Dev         string       `json:"dev"`
-	Service     string       `json:"service,omitempty"`
-	Up          bool         `json:"up"` // has an IPv4 address
-	IP          string       `json:"ip,omitempty"`
-	Gateway     string       `json:"gateway,omitempty"`
-	DNS         []string     `json:"dns,omitempty"`
-	Since       int64        `json:"since,omitempty"`
-	Table       int          `json:"table"`
-	Mark        string       `json:"mark"`
-	Metric      int          `json:"metric"`                 // configured
-	RouteMetric *int         `json:"route_metric,omitempty"` // main-table default route right now (metric+10000 = down)
-	Weight      int          `json:"weight,omitempty"`
-	Health      string       `json:"health,omitempty"`
-	RTT         *float64     `json:"rtt_ms,omitempty"`
-	Fails       int          `json:"fails,omitempty"`
-	HealthSince int64        `json:"health_since,omitempty"`
-	Portal      bool         `json:"portal_check"` // wan[].portal: checked automatically when it comes up
-	Check       *wanCheck    `json:"check,omitempty"`
-	Conflict    *wanConflict `json:"conflict,omitempty"`
-	AddrClass   string       `json:"addr_class,omitempty"`
+	Name        string   `json:"name"`
+	Proto       string   `json:"proto"`
+	Dev         string   `json:"dev"`
+	Service     string   `json:"service,omitempty"`
+	Up          bool     `json:"up"` // has an IPv4 address
+	IP          string   `json:"ip,omitempty"`
+	Gateway     string   `json:"gateway,omitempty"`
+	DNS         []string `json:"dns,omitempty"`
+	Since       int64    `json:"since,omitempty"`
+	Table       int      `json:"table"`
+	Mark        string   `json:"mark"`
+	Metric      int      `json:"metric"`                 // configured
+	RouteMetric *int     `json:"route_metric,omitempty"` // main-table default route right now (metric+10000 = down)
+	Weight      int      `json:"weight,omitempty"`
+	Health      string   `json:"health,omitempty"`
+	RTT         *float64 `json:"rtt_ms,omitempty"`
+	Fails       int      `json:"fails,omitempty"`
+	HealthSince int64    `json:"health_since,omitempty"`
 }
 
 type wanRuntimeView struct {
@@ -377,8 +367,6 @@ func wanRuntime(c *Config) wanRuntimeView {
 		if h, ok := health[w.Name]; ok {
 			r.Health, r.RTT, r.Fails, r.HealthSince = h.State, h.RTT, h.Fails, h.Since
 		}
-		r.Portal = w.PortalCheck()
-		r.Check, r.Conflict, r.AddrClass = travelStatus(w.Name, r.IP)
 		v.WANs = append(v.WANs, r)
 	}
 	return v
