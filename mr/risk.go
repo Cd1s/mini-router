@@ -112,6 +112,8 @@ func serviceEffect(s string) string {
 		return "SSH 服务重启"
 	case s == "mr-panel":
 		return "网页管理服务重启"
+	case s == "mr-edge":
+		return "HTTPS 反向代理重启：经它的连接断开重连"
 	case s == "mr-network":
 		return "网络设置原地重新应用（通常不断线）"
 	case s == "hostname", s == "sysctl":
@@ -168,6 +170,9 @@ func classifyRisk(p *Plan, changes []string, admin adminPath) riskInfo {
 	}
 	if touched("firewall.open") || touched("services.ssh") || touched("services.panel") || touched("services.tailscale") {
 		high("改动了路由器的入站规则或管理通道（SSH / 网页 / Tailscale）")
+	}
+	if touched("services.edge") {
+		high("改动了 HTTPS 反向代理（对外开放的站点 / 端口）")
 	}
 	// the administrator's own path
 	restarts := map[string]bool{}

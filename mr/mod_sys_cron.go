@@ -10,9 +10,11 @@ package main
 //	reconnect <wan>    /usr/sbin/mr sys run reconnect <wan>     (restarts mr-pppoe.<wan> / mr-udhcpc.<wan>)
 //	wol <host>         /usr/sbin/mr sys run wol <host>          (Wake-on-LAN: a dhcp.hosts name or a MAC)
 //
-// plus, while services.ddns is on with an interval, the DDNS safety check (mod_sys_ddns.go):
+// plus, while services.ddns is on with an interval, the DDNS safety check (mod_sys_ddns.go), and while
+// services.edge is on, the daily certificate check (mod_sys_edge_acme.go; minute and hour fixed per router):
 //
 //	*/<interval> * * * * /usr/sbin/mr ddns sync --cron
+//	M H * * * /usr/sbin/mr edge renew --cron
 //
 // `mr sys run` checks the action against the live config again, logs it (syslog + change log) and
 // runs it. The time spec is a strict 5-field cron expression (numbers, *, a-b, /step, lists; no
@@ -194,7 +196,7 @@ func validateSchedules(c *Config, v *Validator) {
 }
 
 func cronWanted(c *Config) bool {
-	if ddnsInterval(c) > 0 {
+	if ddnsInterval(c) > 0 || edgeOn(c) {
 		return true
 	}
 	for _, s := range c.Schedules {
@@ -228,7 +230,7 @@ func renderCronLines(c *Config) []string {
 	if n := ddnsInterval(c); n > 0 {
 		lines = append(lines, "# ddns (services.ddns)", fmt.Sprintf("*/%d * * * * %s ddns sync --cron", n, mrBin))
 	}
-	return lines
+	return append(lines, edgeCronLine(c)...)
 }
 
 // renderCrontab: /etc/crontabs/root with the managed block (ok=false: leave the file alone).

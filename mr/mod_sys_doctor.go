@@ -11,7 +11,7 @@ package main
 // per-WAN tables), dns (a lookup through dnsmasq on 127.0.0.1), ipv6 (delegated prefix on the LAN), offload
 // (flowtable, hardware flag, PPE entries), services (wanted vs running), wifi (radios / BSSes up), clock
 // (plausible, NTP synced), storage (config flash, /tmp), memory, conntrack, temp, crash (pstore records,
-// oops / OOM in this boot's kernel log), ssh (password logins).
+// oops / OOM in this boot's kernel log), ssh (password logins), certs (the reverse proxy's certificates).
 //
 // No arbitrary commands: the only programs run are `ip -j`, `nft list flowtable inet mr ft` and
 // `rc-service NAME status` for the services the config enables; everything else is read from /proc,
@@ -172,7 +172,7 @@ var doctorChecks = []struct {
 	{"config", docConfig}, {"pending", docPending}, {"wan", docWAN}, {"routes", docRoutes}, {"dns", docDNS},
 	{"ipv6", docIPv6}, {"offload", docOffload}, {"services", docServices}, {"wifi", docWiFi}, {"clock", docClock},
 	{"storage", docStorage}, {"memory", docMemory}, {"conntrack", docConntrack}, {"temp", docTemp},
-	{"crash", docCrash}, {"ssh", docSSH},
+	{"crash", docCrash}, {"ssh", docSSH}, {"certs", docCerts},
 }
 
 // runDoctor runs every check and saves the result.
@@ -636,6 +636,35 @@ func docSSH(c *Config, e *docEnv) []docFinding {
 		return []docFinding{docOK("SSH", "off")}
 	}
 	return []docFinding{docOK("SSH", "keys only")}
+}
+
+// docCerts: the HTTPS reverse proxy's certificates (services.edge): missing or expired = risk, less
+// than 14 days left or a failed renewal = warn. Reads the certificate files' leaves, never a key.
+func docCerts(c *Config, e *docEnv) []docFinding {
+	if !edgeOn(c) {
+		return []docFinding{{Sev: "skip", Title: "Certificates", Detail: "the reverse proxy (services.edge) is off"}}
+	}
+	var out []docFinding
+	fix := "mr edge status; mr edge renew (grep edge: /var/log/messages)"
+	for _, x := range edgeStatusCerts(c, edgeLoadState()) {
+		f := docFinding{ID: "certs." + x.Name, Title: "Certificate " + x.Name, Fix: fix}
+		left := time.Unix(x.NotAfter, 0).Sub(e.now)
+		switch {
+		case x.State == "missing" || x.State == "expired":
+			f.Sev, f.Detail = "risk", x.State
+		case x.Error != "":
+			f.Sev, f.Detail = "warn", "renewal failed: "+eventClean(x.Error, 160)
+		case x.State != "ok" && x.State != "due":
+			f.Sev, f.Detail = "warn", x.State+" (a renewal is pending)"
+		case left < 14*24*time.Hour:
+			f.Sev, f.Detail = "warn", fmt.Sprintf("expires in %s", fmtSecs(int64(left/time.Second)))
+		default:
+			f = docOK(f.Title, fmt.Sprintf("valid for %d more days", int(left.Hours()/24)))
+			f.ID = "certs." + x.Name
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // ---- background runs → events ----

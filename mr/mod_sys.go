@@ -2,11 +2,11 @@ package main
 
 // sys module: hostname, time (timezone, NTP client/server), sysctl, SSH (dropbear, managed
 // authorized_keys), add-on services (tailscale, lucky, dstatus, stubby, web UI, zram), dynamic DNS,
-// Wake-on-LAN, scheduled tasks (busybox crond), backup/restore, firmware upgrade / factory reset, logs,
-// diagnostics, `mr doctor`, the event log and notifications. Owns router.yaml: system, services, schedules,
-// notify. Files: mod_sys_time.go (TZ, TZif, NTP), mod_sys_ssh.go, mod_sys_cron.go, mod_sys_ddns.go,
-// mod_sys_wol.go, mod_sys_backup.go, mod_sys_fw.go, mod_sys_api.go, mod_sys_doctor.go, mod_sys_event.go,
-// mod_sys_notify.go.
+// Wake-on-LAN, the HTTPS reverse proxy with certificates (mr-edge), scheduled tasks (busybox crond),
+// backup/restore, firmware upgrade / factory reset, logs, diagnostics, `mr doctor`, the event log and
+// notifications. Owns router.yaml: system, services, schedules, notify. Files: mod_sys_time.go (TZ, TZif,
+// NTP), mod_sys_ssh.go, mod_sys_cron.go, mod_sys_ddns.go, mod_sys_edge.go (+ _acme, _serve), mod_sys_wol.go,
+// mod_sys_backup.go, mod_sys_fw.go, mod_sys_api.go, mod_sys_doctor.go, mod_sys_event.go, mod_sys_notify.go.
 // Docs: docs/modules/sys.md.
 
 import (
@@ -40,6 +40,7 @@ type Services struct {
 	SSH       SSH       `yaml:"ssh"`
 	Panel     Toggle    `yaml:"panel"`
 	DDNS      DDNS      `yaml:"ddns,omitempty"` // dynamic DNS (mod_sys_ddns.go): no daemon, runs from WAN hooks + crond
+	Edge      Edge      `yaml:"edge,omitempty"` // HTTPS reverse proxy + certificates (mod_sys_edge*.go): mr-edge while on
 }
 
 type Toggle struct {
@@ -162,6 +163,7 @@ func sysRender(c *Config, out *Out) error {
 	if data, ok := renderAuthKeys(c); ok {
 		out.Add(authKeysFile, 0600, data)
 	}
+	edgeRender(c, out)
 	return nil
 }
 
@@ -185,6 +187,8 @@ func sysRestart(path string) string {
 		return "mr-panel"
 	case path == "/etc/conf.d/crond":
 		return "crond"
+	case path == edgeConfFile:
+		return "mr-edge"
 	case path == cronFile, path == authKeysFile:
 		return "-" // crond rescans /etc/crontabs when the directory changes; dropbear reads keys per login
 	}
@@ -216,6 +220,9 @@ func sysServices(c *Config) []string {
 	if c.System.Zram {
 		s = append(s, "mr-zram")
 	}
+	if edgeOn(c) {
+		s = append(s, "mr-edge")
+	}
 	if cronWanted(c) {
 		s = append(s, "crond")
 	}
@@ -240,6 +247,7 @@ func init() {
 				c.System.NTP = []string{"pool.ntp.org"} // no RTC: the clock must come from somewhere
 			}
 			ddnsDefaults(c)
+			edgeDefaults(c)
 			notifyDefaults(c)
 		},
 		Validate: sysValidate,
@@ -248,7 +256,9 @@ func init() {
 			if hook == "input" && c.Services.Tailscale.Enabled {
 				n.W("iifname { %s } udp dport %d accept comment \"tailscale\"", quoteList(c.WANIfnames()), c.Services.Tailscale.Port)
 			}
+			edgeNft(c, hook, n)
 		},
+		Dnsmasq: edgeDnsmasq,
 		FlowDevs: func(c *Config) []string {
 			if c.Services.Tailscale.Enabled {
 				return []string{"tailscale0"}
@@ -256,9 +266,9 @@ func init() {
 			return nil
 		},
 		Services:     sysServices,
-		Managed:      []string{"dropbear", "tailscale", "lucky", "lucky-dns-inotify", "dstatus-agent", "stubby", "mr-panel", "mr-zram", "crond", "mr-bootlog"},
+		Managed:      []string{"dropbear", "tailscale", "lucky", "lucky-dns-inotify", "dstatus-agent", "stubby", "mr-panel", "mr-zram", "crond", "mr-bootlog", "mr-edge"},
 		Restart:      sysRestart,
-		RestartOrder: []string{"ntpd", "syslog", "dropbear", "crond", "tailscale", "mr-panel"},
+		RestartOrder: []string{"ntpd", "syslog", "dropbear", "crond", "tailscale", "mr-panel", "mr-edge"},
 		Status: func(c *Config, st map[string]any) {
 			ts := map[string]any{"state": "unavailable"}
 			if !c.Services.Tailscale.Enabled {
@@ -276,6 +286,9 @@ func init() {
 			st["tailscale"] = ts
 			if ddnsOn(c) {
 				st["ddns"] = ddnsSummary(c)
+			}
+			if edgeOn(c) {
+				st["edge"] = edgeSummary(c)
 			}
 			if d := doctorSummary(); d != nil {
 				st["doctor"] = d
@@ -298,9 +311,15 @@ func init() {
 			}
 			notifyInit(c)    // new channels start at the end of the event log
 			eventSchedule(c) // background health checks: on, off, another interval
-			return nil
+			return edgeVerify(c, restarted)
 		},
-		Secrets: func(c *Config) []string { return append(ddnsSecrets(c), notifySecrets(c)...) },
+		Secrets: func(c *Config) []string {
+			s := append(ddnsSecrets(c), notifySecrets(c)...)
+			if t := c.Services.Edge.ACME.Token; t != "" {
+				s = append(s, t)
+			}
+			return s
+		},
 		API: map[string]func(r apiReq) apiResp{
 			"diag":              apiDiag,
 			"service":           apiService,
@@ -317,6 +336,8 @@ func init() {
 			"sys.schedulecheck": apiSysScheduleCheck,
 			"sys.ddns":          apiSysDDNS,
 			"sys.ddnsupdate":    apiSysDDNSUpdate,
+			"sys.edge":          apiSysEdge,
+			"sys.edgerenew":     apiSysEdgeRenew,
 			"sys.wol":           apiSysWOL,
 			"sys.doctor":        apiSysDoctor,
 			"sys.events":        apiSysEvents,
@@ -325,6 +346,7 @@ func init() {
 		Commands: map[string]func(c *Config, args []string) error{
 			"sys":    sysCommand,
 			"ddns":   ddnsCommand,
+			"edge":   edgeCommand,
 			"wol":    wolCommand,
 			"doctor": doctorCommand,
 			"event":  eventCommand,
@@ -380,6 +402,7 @@ func sysValidate(c *Config, v *Validator) {
 	validateSSH(c, v)
 	validateSchedules(c, v)
 	validateDDNS(c, v)
+	validateEdge(c, v)
 	validateNotify(c, v)
 }
 

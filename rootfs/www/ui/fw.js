@@ -138,6 +138,9 @@ registerPage("firewall", "firewall", "常规 / 安全", 10, async ()=>{
   if (f.wan_ping!==false) exp.push(h("li",{},"ICMPv4 ping（限速 20/秒）"));
   exp.push(h("li",{},"ICMPv6 必要报文（差错、邻居发现、MLD、ping 限速）、DHCPv6 客户端（仅链路本地）"));
   if ((c.services.tailscale||{}).enabled) exp.push(h("li",{},"tailscale UDP "+((c.services.tailscale||{}).port||41641)));
+  const edge = c.services.edge||{};
+  if (edge.enabled && edge.open) exp.push(h("li",{}, "HTTPS 反向代理 TCP "+(edge.port||443)+" · "+(edge.routes||[]).filter(isOn).length+" 个站点",
+    h("span",{class:"mut"}," （服务 › HTTPS 反向代理；每个站点可限制来源）")));
   for (const o of f.open.filter(isOn)){
     const warn = [];
     if (inPorts(o.port, sshPort) && (o.proto||[]).includes("tcp")) warn.push("SSH");

@@ -37,7 +37,7 @@ undone by a rollback. Revoking also drops the hash, so a name used again never b
 
 | Scope | Actions |
 |---|---|
-| `read` | `status`, `config`, `schema`, `history`, `history.diff`, `job`, `net`, `net.ports`, `net.routes`, `net.wan`, `wifi.status`, `wifi.stations`, `wifi.survey`, `dns.stats`, `dns.leases`, `fw.stats`, `proxy.status`, `mon.now`, `mon.history`, `mon.devices`, `mon.conns`, `mon.procs`, `mon.dmesg`, `sys.services`, `sys.time`, `sys.doctor` (runs the health checks), `sys.events` (the event log) |
+| `read` | `status`, `config`, `schema`, `history`, `history.diff`, `job`, `net`, `net.ports`, `net.routes`, `net.wan`, `wifi.status`, `wifi.stations`, `wifi.survey`, `dns.stats`, `dns.leases`, `fw.stats`, `proxy.status`, `mon.now`, `mon.history`, `mon.devices`, `mon.conns`, `mon.procs`, `mon.dmesg`, `sys.services`, `sys.time`, `sys.doctor` (runs the health checks), `sys.events` (the event log), `sys.edge` |
 | `operate` | + `net.redial`, `wifi.kick`, `wifi.scan`, `dns.release`, `proxy.delay`, `proxy.select`, `service` (start / stop / restart), `diag` |
 | `apply` | + `plan`, `validate`, `apply`, `confirm`, `revert`, `rollback` |
 

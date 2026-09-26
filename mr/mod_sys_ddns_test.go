@@ -25,7 +25,7 @@ const (
 	cfTestZone  = "0123456789abcdef0123456789abcdef"
 )
 
-// fakeCF is a small Cloudflare API v4: zones by name, dns_records list / create / patch.
+// fakeCF is a small Cloudflare API v4: zones by name, dns_records list / create / patch / delete.
 type fakeCF struct {
 	mu      sync.Mutex
 	recs    []map[string]any // id, name, type, content, ttl, proxied
@@ -99,6 +99,16 @@ func (f *fakeCF) handler(w http.ResponseWriter, r *http.Request) {
 					x[k] = v
 				}
 				ok(x)
+				return
+			}
+		}
+		fail(404, 81044, "Record does not exist.")
+	case strings.HasPrefix(path, "/zones/"+cfTestZone+"/dns_records/") && r.Method == "DELETE": // ACME TXT records (edge)
+		id := strings.TrimPrefix(path, "/zones/"+cfTestZone+"/dns_records/")
+		for i, x := range f.recs {
+			if x["id"] == id {
+				f.recs = append(f.recs[:i], f.recs[i+1:]...)
+				ok(map[string]any{"id": id})
 				return
 			}
 		}

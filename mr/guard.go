@@ -6,7 +6,7 @@ package main
 // agent. Changing the guard section itself is a high-risk change (risk.go).
 //
 //	guard:
-//	  never_expose: [ssh, panel, dns]   # never reachable from the WAN (firewall.open, forwards to the router)
+//	  never_expose: [ssh, panel, dns]   # never reachable from the WAN (firewall.open, forwards to the router, services.edge routes)
 //	  always_bypass: [desktop]          # these devices (dhcp.hosts / proxy.bypass names) never go through the proxy
 //	  offload: hardware                 # flow offload may not drop below this (hardware > software > off)
 //	  ssh_lan_only: true                # SSH, when on, listens on the LAN-zone addresses only
@@ -81,6 +81,8 @@ func guardValidate(c *Config, v *Validator) {
 				}
 			}
 		}
+		// the HTTPS reverse proxy: a WAN-reachable route to one of these ports on the router itself
+		edgeGuard(c, v, s, ports)
 	}
 	if len(g.AlwaysBypass) > 0 && c.Proxy.Enabled {
 		bypass := map[string]bool{}

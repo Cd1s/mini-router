@@ -115,11 +115,81 @@ function ddnsCard(c, st){
     stBox], t.add, true);
 }
 
+// ---------- HTTPS 反向代理 (services.edge: `mr edge serve` = service mr-edge; certificates: `mr edge renew`) ----------
+const EDGE_BLANK = ()=>({name:"", host:"", to:"http://192.168.1.10:5000"});
+function edgeCard(c, st, svc){
+  const sv = c.services;
+  const ed = sv.edge || {enabled:false, port:443};
+  const acme = ed.acme || {token_secret:"cf_ddns_token"};
+  const routes = ed.routes || [];
+  // the section appears in router.yaml on the first edit, not by opening this page
+  const attach = ()=>{ if (!ed.routes) ed.routes = routes; if (!ed.acme) ed.acme = acme; if (!sv.edge) sv.edge = ed; touch(); };
+  const tx = (o, k, ph, w)=>h("input",{type:"text", value:o[k]??"", placeholder:ph||"", style:w?"max-width:"+w:null, oninput:e=>{ o[k]=e.target.value; attach(); }});
+  const sw = (checked, set)=>h("label",{class:"sw"}, h("input",{type:"checkbox", checked, onchange:e=>{ set(e.target.checked); attach(); }}), h("span"));
+  const t = etable(routes, [
+    {k:"name", l:"名称", ph:"nas", w:"90px"},
+    {k:"host", l:"域名", ph:"nas.example.com"},
+    {k:"to", l:"转发到（内网服务）", ph:"http://192.168.1.10:5000"},
+    {k:"allow", l:"允许访问", t:"list", ph:"留空 = 所有人；lan, 203.0.113.0/24"},
+  ], ()=>{ attach(); return EDGE_BLANK(); }, {noMove:true});
+  const days = x => Math.floor((x - Date.now()/1000)/86400);
+  const allowText = a => !a || !a.length ? "所有人" : a.map(x=>x==="lan"?"局域网":x).join("、");
+  const certState = x=>{
+    if (x.error) return h("span",{class:"err",title:x.error}, "失败（"+ago(x.error_at)+"）：", x.error);
+    const d = x.not_after ? days(x.not_after) : 0;
+    switch (x.state){
+      case "ok": return h("span",{class:"tag "+(d<14?"warn":"ok")}, "有效，剩 "+d+" 天");
+      case "due": return h("span",{class:"tag warn"}, "待续期（剩 "+d+" 天）");
+      case "missing": return h("span",{class:"tag warn"}, "尚未签发");
+      case "expired": return h("span",{class:"tag bad"}, "已过期");
+    }
+    return h("span",{class:"tag warn"}, x.state==="names changed"?"域名已变，待重新签发":x.state==="other CA"?"测试 / 正式 CA 已切换，待重新签发":x.state);
+  };
+  const stBox = h("div");
+  const draw = s=>{
+    if (!s || !s.enabled){ stBox.replaceChildren(h("div",{class:"mut",style:"padding:10px 16px"}, "（保存并应用后显示状态）")); return; }
+    stBox.replaceChildren(...[
+      roTable(["站点","域名","转发到","允许","外网可达","请求","502"], (s.routes||[]).map(r=>[r.name, mono(r.host), mono(r.to), allowText(r.allow),
+        r.wan ? h("span",{class:"tag warn"},"是") : h("span",{class:"mut"},"否"), s.serving ? String(r.requests||0) : dash(""), s.serving ? String(r.errors||0) : dash("")])),
+      roTable(["证书","包含域名","状态","到期","上次签发"], (s.certs||[]).map(x=>[mono(x.name), mono((x.domains||[]).join(" ")), certState(x),
+        x.not_after ? new Date(x.not_after*1000).toLocaleDateString() : dash(""), ago(x.last_ok)])),
+      s.renewing ? h("div",{class:"sys-note",style:"padding:0 16px 10px"}, "正在申请证书（通常 1–2 分钟）…") : null].filter(Boolean));
+  };
+  draw(st);
+  const poll = async (left)=>{
+    try { const s = await api("sys.edge"); draw(s); if (s.renewing && left > 0) setTimeout(()=>poll(left-1), 5000); } catch(e){}
+  };
+  const renew = h("button",{class:"btn sm",onclick:async e=>{
+    e.target.disabled = true;
+    try { await api("sys.edgerenew",{}); toast("已开始申请 / 续期证书"); setTimeout(()=>poll(60), 3000); }
+    catch(err){ toast(err.message, 5000); } finally { e.target.disabled = false; } }}, "立即申请 / 续期");
+  const run = svc ? h("span",{class:"tag "+(svc.running?"ok":(svc.wanted?"bad":""))}, !svc.installed?"未安装":svc.running?"运行中":"已停止") : null;
+  return card("HTTPS 反向代理（自动证书）", [
+    h("div",{style:"padding:10px 16px 0"}, form(
+      ...field("启用", inBool(ed,"enabled",attach), "mr-edge：按域名把 HTTPS 转发到内网服务；证书由 Let's Encrypt 通过 Cloudflare DNS 验证自动申请、每天检查续期（不需要 80 端口）"),
+      ...field("HTTPS 端口", h("input",{type:"number", min:1, max:65535, value:ed.port??443, style:"max-width:110px",
+        oninput:e=>{ ed.port = e.target.value===""?443:Number(e.target.value); attach(); }})),
+      ...field("对外网开放", sw(!!ed.open, v=>{ ed.open = v; }), "打开后外网（IPv4 + IPv6）能访问这个端口；每个站点还可以用“允许访问”限制来源。不要再在防火墙里开放同一端口（会被拒绝）"),
+      ...field("局域网解析", sw(ed.lan_dns!==false, v=>{ if (v) delete ed.lan_dns; else ed.lan_dns = false; }), "局域网里这些域名直接解析到路由器（不绕公网，WAN 断了也能用）"),
+      ...field("证书邮箱", tx(acme,"email","可留空","260px")),
+      ...field("Cloudflare Token 引用名", tx(acme,"token_secret","cf_ddns_token","200px"), "和 DDNS 用同一种 Token（Zone › DNS › Edit），可以直接用同一个"),
+      ...field("API Token", inSecret(acme,"token_secret")),
+      ...field("通配符证书", h("input",{type:"text", value:(acme.wildcard||[]).join(", "), placeholder:"example.com", style:"max-width:260px",
+        oninput:e=>{ acme.wildcard = e.target.value.split(/[\s,]+/).filter(Boolean); attach(); }}), "这些域名下一级的站点共用一张 *.域名 证书（子域名不会出现在证书公开日志里）；其余每个域名一张"),
+      ...field("测试 CA", sw(!!acme.staging, v=>{ acme.staging = v; }), "Let's Encrypt staging：证书不受浏览器信任，只用来试配置"))),
+    h("div",{class:"sys-note",style:"padding:0 16px"},
+      "“转发到”写内网服务的 IP 和端口（http:// 或 https://，https 不校验内网自签证书）。“允许访问”：lan = 局域网和 Tailscale；也可以写 IP / 网段；留空 = 所有能到达端口的人。",
+      " 从 lucky 迁移：先关掉 lucky 的 443 反代、删除防火墙里开放 443 的规则，再在这里打开“对外网开放”。"),
+    t.el,
+    h("div",{class:"row",style:"padding:10px 16px 0"}, h("b",{},"状态"), run, h("span",{class:"sp",style:"flex:1"}), renew),
+    stBox], t.add, true);
+}
+
 // ---------- 服务 ----------
 registerPage("services", "services", "服务", 10, async ()=>{
   const c = C(), sv = c.services;
-  let d = {services:[], others:[]}, dns = null;
-  try { [d, dns] = await Promise.all([api("sys.services"), api("sys.ddns").catch(()=>null)]); } catch(e){ toast("读取服务状态失败："+e.message, 4000); }
+  let d = {services:[], others:[]}, dns = null, edge = null;
+  try { [d, dns, edge] = await Promise.all([api("sys.services"), api("sys.ddns").catch(()=>null), api("sys.edge").catch(()=>null)]); } catch(e){ toast("读取服务状态失败："+e.message, 4000); }
   const row = Object.fromEntries((d.services||[]).map(x=>[x.name,x]));
   const state = name=>{
     const r = row[name];
@@ -182,6 +252,7 @@ registerPage("services", "services", "服务", 10, async ()=>{
     h("div",{class:"sys-grid"}, cards),
     h("div",{class:"sys-sp"}),
     ddnsCard(c, dns),
+    edgeCard(c, edge, row["mr-edge"]),
     peerTable,
     card("其它服务（由其它页面的配置决定）", others.length ? h("div",{class:"row"}, others.map(x=>h("span",{class:"row",style:"gap:4px;margin-right:10px"},
       h("span",{class:"tag "+(x.running?"ok":"bad")}, x.name), x.installed && x.name!=="mr-network" ? restartBtn(x.name) : null))) : h("span",{class:"mut"},"（无）")));

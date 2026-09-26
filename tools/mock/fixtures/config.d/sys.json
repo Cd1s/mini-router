@@ -52,6 +52,17 @@
      {"name": "home.example.com", "provider": "cloudflare", "zone": "example.com", "token_secret": "cf_ddns_token", "ipv4": "active", "ipv6": "router"},
      {"name": "nas.example.com", "provider": "cloudflare", "zone": "example.com", "token_secret": "cf_ddns_token", "ipv4": "off", "ipv6": "::10", "ttl": 300}
     ]
+   },
+   "edge": {
+    "enabled": true,
+    "port": 8443,
+    "open": true,
+    "acme": {"email": "admin@example.com", "provider": "cloudflare", "token_secret": "cf_ddns_token", "wildcard": ["example.com"]},
+    "routes": [
+     {"name": "nas", "host": "nas.example.com", "to": "http://192.168.1.10:5000"},
+     {"name": "ha", "host": "ha.example.com", "to": "http://192.168.1.20:8123", "allow": ["lan", "198.51.100.0/24"]},
+     {"name": "cam", "host": "cam.home.example.org", "to": "https://192.168.1.30", "allow": ["lan"]}
+    ]
    }
   },
   "schedules": [

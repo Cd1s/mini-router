@@ -73,10 +73,14 @@ grep -qx 'crond' "$L/etc/mini-router/gen/services" || fail "lab: crond not enabl
 if grep -qx 'crond' "$H/etc/mini-router/gen/services"; then fail "home: crond enabled without schedules"; fi
 grep -qx "export TZ='CET-1CEST,M3.5.0,M10.5.0/3'" "$L/etc/conf.d/crond" || fail "lab: crond zone"
 block=$(sed -n '/^# --- begin mini-router schedules/,/^# --- end mini-router schedules/p' "$C" | grep -v '^#')
-[ "$(echo "$block" | wc -l)" = 6 ] || fail "lab crontab: want 5 jobs + the DDNS check, got: $block"
+[ "$(echo "$block" | wc -l)" = 7 ] || fail "lab crontab: want 5 jobs + the DDNS check + the certificate check, got: $block"
 echo "$block" | while read -r m hr d mo w cmd; do
 	if [ "$cmd" = "/usr/sbin/mr ddns sync --cron" ]; then
 		[ "$m $hr $d $mo $w" = "*/10 * * * *" ] || fail "DDNS check time spec: $m $hr $d $mo $w"
+		continue
+	fi
+	if [ "$cmd" = "/usr/sbin/mr edge renew --cron" ]; then
+		echo "$m $hr $d $mo $w" | grep -Eq '^[0-9]{1,2} [2-5] \* \* \*$' || fail "certificate check time spec: $m $hr $d $mo $w"
 		continue
 	fi
 	echo "$m $hr $d $mo $w" | grep -Eq '^[0-9]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$' || fail "bad time spec: $m $hr $d $mo $w"
@@ -358,7 +362,7 @@ python3 - "$OUT/doctor.json" <<'PY' || fail "mr doctor: $(head -c 600 "$OUT/doct
 import json, sys
 r = json.load(open(sys.argv[1]))
 checks = {f["check"] for f in r["checks"]}
-want = {"config", "pending", "wan", "routes", "dns", "ipv6", "offload", "services", "wifi", "clock", "storage", "memory", "conntrack", "temp", "crash", "ssh"}
+want = {"config", "pending", "wan", "routes", "dns", "ipv6", "offload", "services", "wifi", "clock", "storage", "memory", "conntrack", "temp", "crash", "ssh", "certs"}
 assert checks == want, checks ^ want
 assert all(f["sev"] in ("ok", "warn", "risk", "skip") and f["title"] and f["detail"] for f in r["checks"]), r
 assert all(f.get("fix") for f in r["checks"] if f["sev"] in ("warn", "risk")), r
