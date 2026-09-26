@@ -83,6 +83,9 @@ type docEnv struct {
 	v6default func() bool                  // an IPv6 default route in the main table; nil = not checked
 	nftChain  func(name string) string     // nft list chain inet mr NAME ("" = none)
 	restart   func(svc string) error       // --heal
+
+	// the current plan (reads files only); nil = not checked
+	plan func(c *Config) (*Plan, error)
 }
 
 // doctorFile keeps the last result (tmpfs).
@@ -165,6 +168,7 @@ var newDocEnv = func() *docEnv {
 		pending:   readPending,
 		validate:  func(c *Config) []string { return c.Validate() },
 		unapplied: changesSinceApplied,
+		plan:      plan,
 		klog:      monKlog,
 		pstore:    pstoreRecords,
 		wifi:      wifiNotReady,
