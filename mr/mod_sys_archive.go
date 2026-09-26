@@ -101,7 +101,7 @@ func validateArchive(c *Config, v *Validator) {
 		if !reArchUser.MatchString(a.User) {
 			bad("user", "the account name (no ':' or spaces)", a.User)
 		}
-		secret("password_secret", a.Password, token, "a single-line password")
+		secret("password_secret", a.Password, func(s string) bool { return s != "" && len(s) <= 4096 && safeText(s) }, "a single-line password") // Basic auth: spaces are fine
 	case "s3":
 		if u, err := url.Parse(a.Endpoint); !archiveEndpointOK(a.Endpoint) || err != nil || strings.Trim(u.Path, "/") != "" {
 			bad("url", "https:// endpoint without a path", a.Endpoint)
@@ -229,7 +229,10 @@ func archiveSend(c *Config, hc *http.Client) error {
 			return err
 		}
 		u, _ := url.Parse(a.Endpoint)
-		path := "/" + a.Prefix + archiveFile(a, now)
+		path := "/" + archiveFile(a, now)
+		if p := strings.Trim(a.Prefix, "/"); p != "" { // "backups" and "backups/" are the same folder
+			path = "/" + p + path
+		}
 		if a.Bucket != "" {
 			path = "/" + a.Bucket + path
 		}

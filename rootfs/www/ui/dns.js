@@ -168,7 +168,7 @@ const raTab = ()=>{
             ...(stateful ? [...field("地址范围起始", inText(r,"start",{placeholder:"::1000"}), "接口 ID（前缀后半部分），例如 ::1000"), ...field("地址范围结束", inText(r,"end",{placeholder:"::ffff"}))] : []),
             ...field("前缀 / 租约有效期", inText(r,"lease",{placeholder:"12h"}), "必须带单位：如 2h、12h、1d、infinite"),
             ...field("RDNSS / DHCPv6 DNS", inList(r,"dns",{placeholder:"留空 = 路由器"}), "IPv6 地址，“::” 表示路由器自己的全局地址"),
-            ...field("RA 间隔（秒）", inNum(r,"ra_interval",{placeholder:"60"}), "0 = 默认 60；4-1800"),
+            ...field("RA 间隔（秒）", inNum(r,"ra_interval",{placeholder:"60"}), "0 = 默认 60；4-900"),
             ...field("路由器生存期（秒）", inNum(r,"ra_lifetime",{placeholder:"1800"}), "0 = 默认 1800；60-9000"),
             ...field("路由器优先级", inSel(r,"ra_priority",[["","中（默认）"],["high","高"],["low","低"]])),
             ...field("通告 MTU", inNum(r,"ra_mtu"), "0 = 不通告；PPPoE 可填 1492")] : []));

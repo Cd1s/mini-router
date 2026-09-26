@@ -735,3 +735,14 @@ func TestSysTailscaleStatus(t *testing.T) {
 		t.Errorf("auth_url: %v", ts)
 	}
 }
+
+// MGLRU min_ttl_ms is set at boot by mr-network (always runs), not by mr-zram (only with system.zram).
+func TestMGLRUMinTTLAlways(t *testing.T) {
+	line := "echo 1000 > /sys/kernel/mm/lru_gen/min_ttl_ms"
+	for f, want := range map[string]bool{"../rootfs/etc/init.d/mr-network": true, "../rootfs/etc/init.d/mr-zram": false} {
+		b, err := os.ReadFile(f)
+		if err != nil || strings.Contains(string(b), line) != want {
+			t.Errorf("%s: min_ttl_ms line wanted = %v (%v)", f, want, err)
+		}
+	}
+}

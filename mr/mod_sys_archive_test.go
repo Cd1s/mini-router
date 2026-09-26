@@ -60,6 +60,7 @@ func TestArchiveTargets(t *testing.T) {
 	}{
 		{NotifyArchive{Type: "webdav", Endpoint: srv.URL + "/dav/mr/", User: "me@example.com", Password: "dav_pw", Name: "router.yaml"}, []string{"PUT /dav/mr/router.yaml"}},
 		{NotifyArchive{Type: "s3", Endpoint: srv.URL, Region: "auto", Bucket: "bk", Prefix: "backups/", KeyID: "AKIDEXAMPLE1", Secret: "s3_key", Name: "r.yaml"}, []string{"PUT /bk/backups/r.yaml"}},
+		{NotifyArchive{Type: "s3", Endpoint: srv.URL, Region: "auto", Prefix: "a/b", KeyID: "AKIDEXAMPLE1", Secret: "s3_key", Name: "r.yaml"}, []string{"PUT /a/b/r.yaml"}},
 		{NotifyArchive{Type: "github", Repo: "me/cfg", Branch: "main", Path: "home/router.yaml", Token: "gh_tok"}, []string{"GET /repos/me/cfg/contents/home/router.yaml?ref=main", "PUT /repos/me/cfg/contents/home/router.yaml"}},
 	} {
 		hits, code = nil, 201
@@ -114,5 +115,15 @@ func TestArchiveTargets(t *testing.T) {
 		if !strings.Contains(errs, s+":") {
 			t.Errorf("missing %s in\n%s", s, errs)
 		}
+	}
+	// a WebDAV password may contain spaces (Basic auth), not a line break
+	c.Notify.Archive = &NotifyArchive{Type: "webdav", Endpoint: "https://dav.example.com/mr/", User: "me", Password: "dav_sp"}
+	c.secrets["dav_sp"] = "correct horse battery"
+	if errs := strings.Join(c.Validate(), "\n"); strings.Contains(errs, "password_secret") {
+		t.Errorf("a password with spaces: %s", errs)
+	}
+	c.secrets["dav_sp"] = "two\nlines"
+	if errs := strings.Join(c.Validate(), "\n"); !strings.Contains(errs, "archive.password_secret:") {
+		t.Errorf("a two-line password passed: %s", errs)
 	}
 }

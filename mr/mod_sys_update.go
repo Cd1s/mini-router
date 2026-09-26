@@ -192,6 +192,9 @@ func apiSysHeal(r apiReq) apiResp {
 // doctorHeal restarts the wanted, installed services that do not run (not mr-network / mr-firewall:
 // a restart of those is an outage; mr routes / mr fw repair them). Each at most once per healEvery.
 func doctorHeal(c *Config, e *docEnv) []string {
+	if lk := flock(healFile+".lock", true); lk != nil { // the web UI's 修复 and the background run at once
+		defer lk.Close()
+	}
 	want := enabledServices(c)
 	st := e.running(want)
 	last := map[string]int64{}

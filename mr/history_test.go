@@ -113,7 +113,7 @@ func TestRevisions(t *testing.T) {
 	if len(rs) != 4 || rs[3].Rev != 4 || rs[3].Result != "confirmed" || rs[0].Result != "applying" || rs[3].From != "192.0.2.5" {
 		t.Fatalf("revisions: %+v", rs)
 	}
-	pruneHistory(2)
+	pruneHistory(2, "")
 	rs = readRevisions()
 	if len(rs) != 2 || rs[0].Rev != 3 {
 		t.Errorf("after prune: %+v", rs)

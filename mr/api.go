@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -159,13 +160,9 @@ func apiAction(r apiReq, secrets map[string]string) apiResp {
 		if r.method != "POST" {
 			return errResp(405, "POST required")
 		}
-		p, err := readPending()
-		if err != nil || p.State != statePending {
+		p, ok := startRevert("") // the timer leaves it alone; the rollback removes the marker when done
+		if !ok {
 			return errResp(409, "nothing pending")
-		}
-		p.State = stateReverting // the timer leaves it alone; the rollback removes the marker when done
-		if err := setPending(*p); err != nil {
-			return errResp(500, "%v", err)
 		}
 		self, _ := os.Executable()
 		startDetached(self, "rollback", filepath.Base(p.Snapshot))
@@ -511,11 +508,8 @@ func apiValidate(r apiReq) apiResp {
 		return apiResp{body: map[string]any{"errors": []string{err.Error()}}}
 	}
 	changes, known := changesSinceApplied(c)
-	if changes == nil {
-		changes = []string{}
-	}
 	return apiResp{body: map[string]any{"errors": []string{}, "plan": p.String(), "empty": p.Empty(),
-		"changes": changes, "changes_known": known, "risk": classifyRisk(p, changes, findAdminPath(r.remote))}}
+		"changes": orEmpty(changes), "changes_known": known, "risk": planRisk(c, p, r.remote)}}
 }
 
 type jobState struct {
@@ -528,12 +522,14 @@ type jobState struct {
 	From    string `json:"from,omitempty"`
 	Comment string `json:"comment,omitempty"`
 	BaseRev string `json:"base_rev,omitempty"` // the router.yaml the candidate was built from (#68)
+	Pid     int    `json:"pid,omitempty"`      // the apply-job process (written when it starts)
 }
 
 func apiApply(r apiReq) apiResp {
 	if r.method != "POST" {
 		return errResp(405, "POST required")
 	}
+	defer lockJob()()
 	if j := readJob(); j.State == "running" {
 		return errResp(409, "another apply is running")
 	}
@@ -587,6 +583,8 @@ func runApplyJob(confirmSecs int) error {
 	logFile, _ := os.OpenFile(JobLog, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 	os.Stdout, os.Stderr = logFile, logFile
 	j0 := readJob()
+	j0.Pid = os.Getpid()
+	writeJob(j0)
 	o := applyOpts{Via: j0.Via, From: j0.From, Comment: j0.Comment, BaseRev: j0.BaseRev}
 	if o.Via == "" {
 		o.Via = "web UI"
@@ -607,10 +605,29 @@ func runApplyJob(confirmSecs int) error {
 	return err
 }
 
+// lockJob: checking that no job runs, writing the candidate and starting the job are one step —
+// two requests at once would otherwise both start a job, the second's candidate replacing the first's.
+func lockJob() func() {
+	os.MkdirAll(filepath.Dir(JobFile), 0700)
+	f, err := os.OpenFile(JobFile+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return func() {}
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	return func() { f.Close() }
+}
+
 func readJob() jobState {
 	var j jobState
 	if b, err := os.ReadFile(JobFile); err == nil {
 		json.Unmarshal(b, &j)
+	}
+	// a job whose process is gone (killed, out of memory), or that never started, ended without a
+	// result: failed, so the web UI can apply again (the pending marker, if any, still blocks)
+	if j.State == "running" && (j.Pid > 0 && syscall.Kill(j.Pid, 0) == syscall.ESRCH ||
+		j.Pid == 0 && time.Now().Unix()-j.Started > 60) {
+		j.State = "failed"
+		j.Output += "\nthe apply job ended without a result"
 	}
 	return j
 }
@@ -705,6 +722,7 @@ func apiRollback(r apiReq) apiResp {
 	if r.method != "POST" {
 		return errResp(405, "POST required")
 	}
+	defer lockJob()()
 	if j := readJob(); j.State == "running" {
 		return errResp(409, "another apply is running")
 	}

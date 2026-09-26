@@ -36,7 +36,7 @@ system:
   ntp: [ntp.tencent.com, ntp1.aliyun.com]   # host names or IPs, max 8; empty = pool.ntp.org
   ntp_server: false          # also answer NTP (udp/123) — only the LAN zone gets through the firewall
   sysctl: {net.ipv4.tcp_congestion_control: bbr}   # added to / overriding 90-mini-router.conf
-  zram: true              # zram swap (1/4 of RAM, zstd); also MGLRU min_ttl_ms=1000: OOM kill instead of thrashing
+  zram: true              # zram swap (1/4 of RAM, zstd); MGLRU min_ttl_ms=1000 is set at boot either way
   history: 20             # config snapshots / change records kept (5-200)
 
 services:

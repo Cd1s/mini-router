@@ -1,13 +1,11 @@
 #!/sbin/openrc-run
-# compressed swap in RAM (zstd); sized at 1/4 of memory. With MGLRU, the working set of the last
-# second is never evicted: when memory cannot hold it, the OOM killer acts instead of thrashing.
+# compressed swap in RAM (zstd); sized at 1/4 of memory (MGLRU min_ttl_ms: mr-network)
 description="zram swap"
 depend() {
 	need localmount
 }
 start() {
 	ebegin "Enabling zram swap"
-	[ ! -w /sys/kernel/mm/lru_gen/min_ttl_ms ] || echo 1000 > /sys/kernel/mm/lru_gen/min_ttl_ms
 	modprobe -q zram 2>/dev/null
 	[ -e /sys/block/zram0 ] || { eend 1 "no zram"; return 1; }
 	if ! grep -q '^/dev/zram0 ' /proc/swaps; then

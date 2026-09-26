@@ -72,7 +72,7 @@ dhcp-leasefile=/tmp/dhcp.leases
 dhcp-range=set:lan,192.168.1.100,192.168.1.249,255.255.255.0,12h
 dhcp-option=tag:lan,option:router,192.168.1.6
 dhcp-option=tag:lan,option:dns-server,192.168.1.6
-dhcp-range=::,constructor:br-lan,ra-only,12h
+dhcp-range=::,constructor:br-lan,ra-only,45m
 ra-param=br-lan,60,1800
 dhcp-host=02:98:67:90:62:47,192.168.1.166,nas
 dhcp-host=02:bb:dd:96:49:e2,192.168.1.241,server
@@ -271,12 +271,12 @@ func TestDHCPOptionsHostLeasesAndRA(t *testing.T) {
 		"dhcp-option=tag:lan,252,http://wpad.lan/wpad.dat\n",
 		"dhcp-host=02:c3:06:d6:7f:8a,192.168.1.66,desktop,infinite\n",
 		"dhcp-host=02:bb:dd:96:49:e2,192.168.1.241,server\n",
-		"dhcp-range=::1000,::ffff,constructor:br-lan,slaac,64,12h\n",
+		"dhcp-range=::1000,::ffff,constructor:br-lan,slaac,64,45m\n",
 		"ra-param=br-lan,mtu:1492,high,30,900\n",
 		"dhcp-option=tag:br-lan,option6:dns-server,[::],[2606:4700:4700::1111]\n",
 		"dhcp-option=tag:guest,option:dns-server,1.1.1.1\n",
-		"dhcp-range=::,constructor:br-guest,ra-stateless,12h\nra-param=br-guest,60,1800\n",
-		"dhcp-range=::,constructor:br-iot,ra-only,12h\nra-param=br-iot,60,1800\n",
+		"dhcp-range=::,constructor:br-guest,ra-stateless,45m\nra-param=br-guest,60,1800\n",
+		"dhcp-range=::,constructor:br-iot,ra-only,45m\nra-param=br-iot,60,1800\n",
 		"enable-ra\n",
 	} {
 		if !strings.Contains(conf, s) {
@@ -352,6 +352,9 @@ func TestDHCPValidation(t *testing.T) {
 		`"aa:bb:cc:dd:ee:ff" is not the MAC of a dhcp.hosts entry`, `dhcp.host_leases[02:c3:06:d6:7f:8a]`,
 		"dhcp.ipv6.mode", "dhcp.ipv6.start/end", "dhcp.ipv6.lease", `dhcp.ipv6.dns: IPv6 address required`,
 		"dhcp.ipv6.ra_interval", "dhcp.ipv6.ra_lifetime", "dhcp.ipv6.ra_priority", "dhcp.ipv6.ra_mtu")
+	c = testConfig(t)
+	c.DHCP.IPv6.Interval = 901 // dnsmasq would advertise lifetimes >= 2703 s, above the RFC 9096 cap
+	wantErrs(t, c, "dhcp.ipv6.ra_interval: 4-900 seconds, got 901")
 	c = testConfig(t)
 	c.DHCP.IPv6 = RA{Mode: "stateful", Start: "::ffff", End: "::1000"}
 	wantErrs(t, c, "dhcp.ipv6: start must not be above end")

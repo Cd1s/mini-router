@@ -189,8 +189,13 @@ func classifyRisk(p *Plan, changes []string, admin adminPath) riskInfo {
 
 // planRisk: the risk of applying c now, for an administrator at addr.
 func planRisk(c *Config, p *Plan, addr string) riskInfo {
-	changes, _ := changesSinceApplied(c)
-	return classifyRisk(p, changes, findAdminPath(addr))
+	changes, known := changesSinceApplied(c)
+	r := classifyRisk(p, changes, findAdminPath(addr))
+	if !known { // no record of the applied config: nothing above could see what the change touches
+		r.Level = "high"
+		r.Reasons = append(r.Reasons, "无法判断改动了什么")
+	}
+	return r
 }
 
 func printRisk(r riskInfo, explain bool) {
@@ -218,7 +223,7 @@ func waitConfirm(secs int) error {
 		return err
 	}
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGHUP, syscall.SIGTERM)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGPIPE)
 	defer signal.Stop(sig)
 	line := make(chan string, 1)
 	go func() {
@@ -261,12 +266,10 @@ func waitConfirm(secs int) error {
 
 // revertNow rolls the pending change back in this process (what the timer would do later).
 func revertNow(why string) error {
-	p, err := readPending()
-	if err != nil || p.State != statePending {
+	p, ok := startRevert("")
+	if !ok {
 		return nil
 	}
-	p.State = stateReverting
-	setPending(*p)
 	fmt.Println("rolling back: " + why)
 	return rollback(p.Snapshot, errors.New(why))
 }

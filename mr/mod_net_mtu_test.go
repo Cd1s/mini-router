@@ -58,3 +58,22 @@ func TestWANLinkMTUHome(t *testing.T) {
 		}
 	}
 }
+
+// A PPPoE WAN at mtu 1500 left its port at 1508; after it becomes DHCP (mtu unset) network.sh must
+// put the port back to 1500, or 1508 stays the DHCP WAN's IP MTU (oversized frames to the ISP).
+func TestWANLinkMTUAfterPPPoE(t *testing.T) {
+	c := testConfig(t)
+	c.WAN = c.WAN[:1]
+	c.WAN[0].Proto, c.WAN[0].Username, c.WAN[0].Password, c.WAN[0].MTU = "dhcp", "", "", 0
+	dev := c.WAN[0].Device
+	if got := wanLinkMTUs(c)[dev]; got != 1500 {
+		t.Errorf("DHCP WAN without mtu: link MTU %d, want 1500", got)
+	}
+	if sh := renderNetwork(c); !strings.Contains(sh, "ip link set dev "+dev+" mtu 1500\n") {
+		t.Errorf("network.sh does not reset %s to 1500:\n%s", dev, sh)
+	}
+	c.WAN[0].MTU = 1400
+	if got := wanLinkMTUs(c)[dev]; got != 1400 {
+		t.Errorf("DHCP WAN mtu 1400: link MTU %d", got)
+	}
+}

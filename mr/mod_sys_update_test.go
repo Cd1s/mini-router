@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -138,6 +139,26 @@ func TestDoctorUpgradeHealGuard(t *testing.T) {
 	}
 	if ev := eventsRead(0, 0); len(ev) != 1 || ev[0].Key != "heal.ntpd" || ev[0].Sev != "warn" {
 		t.Errorf("heal events: %+v", ev)
+	}
+	// the web UI's heal during the background one: still one restart
+	os.Remove(healFile)
+	var mu sync.Mutex
+	restarted = nil
+	e.restart = func(s string) error {
+		time.Sleep(50 * time.Millisecond)
+		mu.Lock()
+		restarted = append(restarted, s)
+		mu.Unlock()
+		return nil
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); doctorHeal(c, e) }()
+	}
+	wg.Wait()
+	if len(restarted) != 1 {
+		t.Errorf("concurrent heal restarted %v", restarted)
 	}
 }
 

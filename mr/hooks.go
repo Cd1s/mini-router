@@ -421,7 +421,7 @@ func writeResolv(c *Config) {
 // hookDhcpcd is called from /etc/dhcpcd.exit-hook with dhcpcd's environment.
 func hookDhcpcd(c *Config) error {
 	// every event — a WAN's, or a LAN bridge's that gets the delegated prefix — records the RA bridges'
-	// prefixes; the first one after a reboot announces those that did not come back (RFC 9096,
+	// prefixes; after a reboot, the first one that finds a prefix there announces those that did not come back (RFC 9096,
 	// mod_net_renumber.go)
 	defer lan6Renumber(c)
 	iface, reason := os.Getenv("interface"), os.Getenv("reason")

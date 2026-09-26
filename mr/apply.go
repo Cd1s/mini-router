@@ -11,12 +11,15 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -219,49 +222,39 @@ func printPlan(c *Config, p *Plan, verbose bool) {
 }
 
 // snapshot saves every file the plan will touch (plus router.yaml) so a failed apply can be undone.
+// It is on disk (fsync) before the pending marker: a power cut after the marker must find it whole.
 func snapshot(paths []string, keep int) (string, error) {
-	os.MkdirAll(HistoryDir, 0700)
-	name := filepath.Join(HistoryDir, time.Now().Format("20060102-150405")+".tar.gz")
-	f, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
-	if err != nil {
+	// a second snapshot in the same second gets a letter (sorting after the first), never its name
+	base := filepath.Join(HistoryDir, time.Now().Format("20060102-150405"))
+	name := base + ".tar.gz"
+	for c := 'b'; ; c++ {
+		if _, err := os.Stat(name); err != nil || c > 'z' {
+			break
+		}
+		name = base + string(c) + ".tar.gz"
+	}
+	if err := writeSnapshot(name, paths); err != nil {
 		return "", err
 	}
-	defer f.Close()
-	gz := gzip.NewWriter(f)
-	tw := tar.NewWriter(gz)
-	for _, p := range paths {
-		st, err := os.Stat(p)
-		if err != nil {
-			continue // file did not exist before; restore will remove it
-		}
-		data, err := os.ReadFile(p)
-		if err != nil {
-			return "", err
-		}
-		tw.WriteHeader(&tar.Header{Name: strings.TrimPrefix(p, "/"), Mode: int64(st.Mode().Perm()), Size: int64(len(data)), ModTime: st.ModTime()})
-		tw.Write(data)
-	}
-	// list of paths covered, so restore knows which ones to delete
-	list := []byte(strings.Join(paths, "\n") + "\n")
-	tw.WriteHeader(&tar.Header{Name: ".mr-paths", Mode: 0600, Size: int64(len(list))})
-	tw.Write(list)
-	tw.Close()
-	gz.Close()
-	pruneHistory(keep)
+	pruneHistory(keep, filepath.Base(name))
 	return name, nil
 }
 
-// pruneHistory keeps the newest keep snapshots (and their revision records).
-func pruneHistory(keep int) {
+// pruneHistory keeps the newest keep snapshots (and their revision records), always counting and
+// keeping the one just written (keepName): after the clock went back it sorts first.
+func pruneHistory(keep int, keepName string) {
 	ents, _ := os.ReadDir(HistoryDir)
 	var names []string
 	for _, e := range ents {
-		if strings.HasSuffix(e.Name(), ".tar.gz") {
+		if strings.HasSuffix(e.Name(), ".tar.gz") && e.Name() != keepName {
 			names = append(names, e.Name())
 		}
 	}
+	if keepName != "" {
+		keep--
+	}
 	sort.Strings(names)
-	for len(names) > keep {
+	for len(names) > keep && len(names) > 0 {
 		os.Remove(filepath.Join(HistoryDir, names[0]))
 		os.Remove(filepath.Join(HistoryDir, revFile(names[0])))
 		names = names[1:]
@@ -297,6 +290,9 @@ func restore(snap string) ([]string, error) {
 		}
 		p := "/" + h.Name
 		present[p] = true
+		if p == sysSecretsPath {
+			data = keepPassword(data)
+		}
 		if err := writeAtomic(p, data, os.FileMode(h.Mode)); err != nil {
 			return nil, err
 		}
@@ -318,16 +314,49 @@ func restore(snap string) ([]string, error) {
 	return out, nil
 }
 
+// keepPassword: secrets.yaml data with the web UI password as it is now. A password set while a change
+// was pending (web UI, `mr passwd` on the console) must survive that change's rollback.
+func keepPassword(data []byte) []byte {
+	cur, ok := readSecretsFile(sysSecretsPath)[pwSecretKey]
+	old := map[string]string{}
+	if !ok || yaml.Unmarshal(data, &old) != nil || old[pwSecretKey] == cur {
+		return data
+	}
+	old[pwSecretKey] = cur
+	b, err := yaml.Marshal(old)
+	if err != nil {
+		return data
+	}
+	return b
+}
+
 func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	tmp := path + ".mr-tmp"
-	if err := os.WriteFile(tmp, data, mode); err != nil {
+	// a temp file of its own (two writers of one path must not share one) whose data is on flash
+	// before the rename (UBIFS: a rename can reach the disk before unsynced data — an empty file)
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.mr-tmp")
+	if err != nil {
 		return err
 	}
-	os.Chmod(tmp, mode)
-	return os.Rename(tmp, path)
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Chmod(mode)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), path)
+	}
+	if err != nil {
+		os.Remove(f.Name())
+	}
+	return err
 }
 
 func restartAll(svcs []string) []string {
@@ -419,6 +448,7 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 		paths = append(paths, f.Path)
 	}
 	paths = append(paths, ConfigPath, SecretsPath, GenDir+"/nftables.nft")
+	defer shieldSignals()()
 	snap, err := snapshot(paths, historyKeep(c))
 	if err != nil {
 		return fmt.Errorf("snapshot: %w", err)
@@ -426,7 +456,7 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 	// on disk before the first new file: if the router goes down from here until the change is
 	// accepted, the next boot rolls it back. Claimed atomically: of two applies started at once, one
 	// is refused here.
-	if err := claimPending(pendingApply{Snapshot: snap, State: stateApplying, Via: o.Via}); err != nil {
+	if err := claimPending(pendingApply{Snapshot: snap, State: stateApplying, Via: o.Via, Pid: os.Getpid()}); err != nil {
 		os.Remove(snap)
 		return err
 	}
@@ -575,6 +605,22 @@ type pendingApply struct {
 	State    string `json:"state"`              // stateApplying | statePending | stateReverting
 	Deadline int64  `json:"deadline,omitempty"` // unix time the confirm timer rolls back at (statePending)
 	Via      string `json:"via"`                // origin: mr apply | web UI | restore
+	Pid      int    `json:"pid,omitempty"`      // the applying process (stateApplying)
+}
+
+// interrupted: an apply whose process is gone (killed, out of memory). Nothing finishes or undoes it
+// but `mr rollback` (or a reboot).
+func (p *pendingApply) interrupted() bool {
+	return p.State == stateApplying && p.Pid > 0 && syscall.Kill(p.Pid, 0) == syscall.ESRCH
+}
+
+// shieldSignals keeps a dropped SSH session (SIGHUP, SIGPIPE on the next write to it) or Ctrl-C from
+// killing an apply halfway — before its confirm timer runs, with the marker stuck at "applying".
+// The returned func restores the defaults.
+func shieldSignals() func() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGPIPE)
+	return func() { signal.Stop(ch) }
 }
 
 const (
@@ -607,6 +653,9 @@ func pendingBlocks() error {
 	}
 	switch p.State {
 	case stateApplying:
+		if p.interrupted() {
+			return fmt.Errorf("an apply (%s) was interrupted: `mr rollback` puts the config from before it back", p.Via)
+		}
 		return fmt.Errorf("another apply (%s) is running", p.Via)
 	case stateReverting:
 		return fmt.Errorf("a change (%s) is being rolled back", p.Via)
@@ -683,26 +732,7 @@ func clearPending(snap string) {
 
 // writeDurable is writeAtomic that returns only when the data and the rename are on disk.
 func writeDurable(path string, data []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	tmp := path + ".mr-tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(data)
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := writeAtomic(path, data, mode); err != nil {
 		return err
 	}
 	syncDir(filepath.Dir(path))
@@ -716,6 +746,32 @@ func syncDir(dir string) {
 	}
 }
 
+// lockPending serializes the processes that settle a pending change (confirm, the timer, a revert,
+// mr rollback): of a confirm and a rollback racing at the deadline exactly one wins.
+func lockPending() func() {
+	f, err := os.OpenFile(ConfirmFile+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return func() {}
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	return func() { f.Close() }
+}
+
+// startRevert marks the pending change of snapshot snap ("" = whichever) as being rolled back, if it
+// is still waiting for confirmation; false: confirmed, being reverted, or another change.
+func startRevert(snap string) (*pendingApply, bool) {
+	defer lockPending()()
+	p, err := readPending()
+	if err != nil || snap != "" && p.Snapshot != snap || p.State != statePending {
+		return nil, false
+	}
+	p.State = stateReverting // the timer and `mr confirm` leave it alone now
+	if setPending(*p) != nil {
+		return nil, false
+	}
+	return p, true
+}
+
 func armConfirm(snap string, secs int, via string) {
 	setPending(pendingApply{Snapshot: snap, State: statePending, Deadline: time.Now().Unix() + int64(secs), Via: via})
 	self, _ := os.Executable()
@@ -724,17 +780,16 @@ func armConfirm(snap string, secs int, via string) {
 
 func rollbackIfUnconfirmed(snap string, secs int) error {
 	time.Sleep(time.Duration(secs) * time.Second)
-	p, err := readPending()
-	if err != nil || p.Snapshot != snap || p.State != statePending {
+	if _, ok := startRevert(snap); !ok {
 		return nil // confirmed, being reverted, or superseded by a newer apply
 	}
-	p.State = stateReverting
-	setPending(*p)
 	return rollback(snap, fmt.Errorf("not confirmed within %ds", secs))
 }
 
 // confirm keeps the pending change; false: there was none.
 func confirm() (bool, error) {
+	unlock := lockPending()
+	defer unlock()
 	p, err := readPending()
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
@@ -746,6 +801,7 @@ func confirm() (bool, error) {
 		return false, errors.New("the change is being rolled back")
 	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
+	unlock()
 	if err == nil {
 		setResult(p.Snapshot, "confirmed")
 	}
@@ -768,8 +824,10 @@ func rollbackCommand(args []string, cfgPath, secPath string) error {
 			return rollbackToRev(n, *secs) // the config from before change N, as a new change
 		}
 	}
+	unlock := lockPending()
+	defer unlock()
 	p, err := readPending()
-	if err == nil && p.State == stateApplying {
+	if err == nil && p.State == stateApplying && !p.interrupted() {
 		return fmt.Errorf("an apply (%s) is running: roll back when it has finished", p.Via)
 	}
 	var snap string
@@ -785,16 +843,21 @@ func rollbackCommand(args []string, cfgPath, secPath string) error {
 		}
 		snap = filepath.Join(HistoryDir, ents[len(ents)-1].Name())
 	}
-	// pending, or marked reverting by the web UI's revert that started this rollback
-	reverting := err == nil && (p.State == statePending || p.State == stateReverting)
-	if reverting && p.State == statePending {
+	// pending, an interrupted apply, or marked reverting by the web UI's revert that started this rollback
+	reverting := err == nil
+	orig := statePending
+	if reverting && p.State == stateApplying {
+		orig = stateApplying
+	}
+	if reverting && p.State != stateReverting {
 		p.State = stateReverting // the confirm timer leaves it alone now
 		setPending(*p)
 	}
+	unlock()
 	svcs, err := restore(snap)
 	if err != nil {
 		if reverting { // still pending: the timer, `mr confirm` or another rollback decide
-			p.State = statePending
+			p.State = orig
 			setPending(*p)
 		}
 		return err

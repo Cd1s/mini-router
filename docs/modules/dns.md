@@ -109,15 +109,15 @@ the bridge has (`constructor:`), i.e. the prefix dhcpcd delegated.
 |---|---|---|
 | `mode` | `slaac` | `slaac` → `ra-only`; `stateless` → `ra-stateless` (SLAAC + DNS via DHCPv6); `stateful` → DHCPv6 addresses from `start`–`end` **plus** SLAAC (`slaac` keyword, so Android still gets an address) |
 | `start`, `end` | `::1000`, `::ffff` | stateful only: interface ids (upper 64 bits must be zero) |
-| `lease` | `12h` | prefix / DHCPv6 lifetime; unit required (`3600` alone would read as a prefix length) |
+| `lease` | `45m` | prefix / DHCPv6 lifetime, at most 45m: dnsmasq advertises it as both preferred and valid lifetime, RFC 9096 wants preferred ≤ 2700 s, valid ≤ 5400 s; unit required (`3600` alone would read as a prefix length) |
 | `dns` | router | RDNSS + DHCPv6 DNS servers, IPv6 only; `"::"` = the router's global address |
-| `ra_interval` | 60 | seconds, 4–1800 |
+| `ra_interval` | 60 | seconds, 4–900 (dnsmasq keeps lifetimes ≥ 3 × the interval; the RFC 9096 cap is 2700 s) |
 | `ra_lifetime` | 1800 | router lifetime, 60–9000, ≥ interval |
 | `ra_priority` | medium | `high` / `low` |
 | `ra_mtu` | 0 | advertised MTU, 0 = not advertised (1280–9000) |
 
-The home config (`ipv6_ra: true`, no `ipv6` block) renders exactly the previous
-`dhcp-range=::,constructor:br-lan,ra-only,12h` + `ra-param=br-lan,60,1800`.
+The home config (`ipv6_ra: true`, no `ipv6` block) renders
+`dhcp-range=::,constructor:br-lan,ra-only,45m` + `ra-param=br-lan,60,1800`.
 An extra network with `ipv6_ra: true` now gets RA even when its DHCPv4 pool is off (before, RA was
 only emitted together with a pool).
 

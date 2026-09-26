@@ -23,7 +23,8 @@ for s in \
 	'tcp dport 3390 dnat ip to 192.168.1.70:3389 comment "office-rdp"' \
 	'ether saddr { aa:bb:cc:dd:ee:06, aa:bb:cc:00:00:21, aa:bb:cc:00:00:22, aa:bb:cc:00:00:23 } update @ac_4' \
 	'ether saddr 02:00:00:00:10:01 ip daddr != { 192.168.1.0/24, 192.168.20.0/24, 192.168.30.0/24 } ct state new ct mark set 0x102' \
-	'ether saddr 02:00:00:00:10:01 oifname { "pppoe-wan", "pppoe-isp3", "wan.20", "wan.30" } counter drop comment "fallback:office-wan2-only"' \
+	'ether saddr 02:00:00:00:10:01 meta nfproto ipv4 oifname { "pppoe-wan", "pppoe-isp3", "wan.20", "wan.30" } counter drop comment "fallback:office-wan2-only"' \
+	'ether saddr 02:00:00:00:10:01 ip6 saddr @pd6_1 oifname { "pppoe-wan", "pppoe-isp3", "wan.20", "wan.30" } counter drop comment "fallback:office-wan2-only"' \
 	'ether saddr { aa:bb:cc:00:00:21, aa:bb:cc:00:00:22, aa:bb:cc:00:00:23 } ip daddr != { 192.168.1.0/24'; do
 	grep -qF -- "$s" "$N" || fail "lab ruleset lacks: $s"
 done

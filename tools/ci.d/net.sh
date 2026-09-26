@@ -372,7 +372,13 @@ echo 2001:db8:2::/64 > /run/mini-router/wan/wan2.pd6
 inD mr fw
 has "wan2's prefix set" "$(inD nft list set inet mr pd6_1)" "2001:db8:2::/64"
 sleep 0.5
-seen6() { ip netns exec "$DL" python3 "$D/echo6.py" "$1" "$2"; }
+seen6() { # up to 3 tries: a busy CI runner may take longer than one 2 s timeout for the first neighbour discovery
+	for _ in 1 2 3; do
+		r6=$(ip netns exec "$DL" python3 "$D/echo6.py" "$1" "$2")
+		[ "$r6" = "$1" ] && break
+	done
+	echo "$r6"
+}
 r=$(seen6 2001:db8:2::50 2001:db8:80::1)
 [ "$r" = 2001:db8:2::50 ] || fail "IPv6 from wan2's prefix to video.example did not work: $r"
 r=$(seen6 2001:db8:1::50 2001:db8:80::1)
@@ -407,7 +413,7 @@ wan:
   - {name: wan, device: wan, proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, mtu: 1500, metric: 10}
   - {name: tv, device: wan, vlan: 20, proto: dhcp, metric: 20}
 firewall: {offload: software}
-dhcp: {start: 100, end: 200, lease: 12h, domain: lan, ipv6: {mode: slaac, lease: 30m}}
+dhcp: {start: 100, end: 200, lease: 12h, domain: lan, ipv6: {mode: slaac, lease: 1d}}
 EOF
 echo 'pppoe_password: "x"' > "$M4/secrets.yaml"
 "$MRH" -c "$M4/router.yaml" -s "$M4/secrets.yaml" render "$M4/r" > /dev/null
@@ -433,7 +439,8 @@ for l in br-lan vr; do ip -n "$RR" link set "$l" up; done
 ip -n "$RC" link set vc up
 ip -n "$RR" -6 addr add 2001:db8:2::1/64 dev br-lan noprefixroute nodad
 mkdir -p /etc/mini-router/state
-printf '{"boot":"an-earlier-boot","addrs":{"br-lan":["2001:db8:1::1/64","2001:db8:2::1/64"]}}' > /etc/mini-router/state/lan6-prefixes.json
+printf '{"boot":"an-earlier-boot","addrs":{"wan br-lan":["2001:db8:1::1/64","2001:db8:2::1/64"]}}' > /etc/mini-router/state/lan6-prefixes.json
+mkdir -p /run/mini-router/wan && echo 2001:db8::/32 > /run/mini-router/wan/wan.pd6 # the WAN has delegated again (hook record)
 ip netns exec "$RR" env interface=br-lan reason=DELEGATED6 "$MRH" -c "$M4/router.yaml" -s "$M4/secrets.yaml" hook dhcpcd || true
 ip -n "$RR" -6 addr show dev br-lan | grep -q '2001:db8:1::1/64' || fail "the hook did not put the stale prefix back: $(ip -n "$RR" -6 addr show dev br-lan)"
 if grep -q 'an-earlier-boot' /etc/mini-router/state/lan6-prefixes.json; then
@@ -443,7 +450,7 @@ cat > "$T/ra-dnsmasq.conf" << EOF
 port=0
 interface=br-lan
 enable-ra
-dhcp-range=::,constructor:br-lan,ra-only,30m
+$(grep '^dhcp-range=::,constructor:br-lan,' "$M4/r/etc/dnsmasq.conf")
 ra-param=br-lan,4,1800
 pid-file=$T/ra-dnsmasq.pid
 EOF
@@ -478,8 +485,9 @@ while time.time() < deadline:
             i += l
     old, cur = seen.get("2001:db8:1::"), seen.get("2001:db8:2::")
     if old and cur and old[1] == 0 and old[0] > 0 and cur[1] > 0:
-        print("old prefix valid %d preferred %d; current preferred %d" % (old[0], old[1], cur[1]))
-        sys.exit(0)
+        print("old prefix valid %d preferred %d; current valid %d preferred %d" % (old[0], old[1], cur[0], cur[1]))
+        # RFC 9096 caps (lease 1d rendered as 45m; the bridge address itself never expires)
+        sys.exit(0 if max(old[0], cur[0], cur[1]) <= 2700 else 2)
 print("RA prefixes seen: %r" % seen)
 sys.exit(1)
 PY
