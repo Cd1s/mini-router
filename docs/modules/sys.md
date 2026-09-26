@@ -1,4 +1,4 @@
-# sys — time, SSH, add-on services, DDNS, schedules, backup / restore, firmware, logs, diagnostics
+# sys — time, SSH, add-on services, DDNS, schedules, backup / restore, firmware, logs, diagnostics, health checks, events, notifications
 
 Everything that is "the router itself" rather than a network feature. Like the other modules it is
 on-demand work inside `mr` (CGI for the web UI, `mr sys …` for SSH / agents); the only daemons are the
@@ -6,11 +6,11 @@ ones the config switches on (ntpd always, crond only while schedules or the DDNS
 
 | | |
 |---|---|
-| Go | `mr/mod_sys.go` (module, types, validation, render), `mod_sys_time.go` (POSIX TZ parser, TZif writer, NTP, `sys.time`), `mod_sys_ssh.go` (dropbear, managed `authorized_keys`), `mod_sys_cron.go` (schedules, `mr sys run`), `mod_sys_ddns.go` (DDNS: addresses, state, Cloudflare client, `mr ddns`), `mod_sys_wol.go` (Wake-on-LAN: `mr wol`, `sys.wol`), `mod_sys_backup.go` (backup / restore), `mod_sys_fw.go` (firmware upload, sysupgrade / factory-reset hooks), `mod_sys_api.go` (diag, service, services, logs, `mr sys`), `mod_sys_linux.go` / `mod_sys_other.go` (adjtimex) |
-| UI | `rootfs/www/ui/sys.js` — 服务 (group 服务, with the DDNS card); 系统设置, 管理与 SSH, 计划任务, 备份与升级, 日志, 网络诊断 (group 系统). The 唤醒 (WOL) buttons sit on the dns module's pages (`dns.js`: 终端设备, DHCP 静态分配) |
-| rootfs | `rootfs/etc/init.d/{tailscale,mr-panel,mr-zram,lucky,lucky-dns-inotify,dstatus-agent}` (tailscale and mr-panel now read their conf.d) |
-| Checks | `mr/mod_sys_test.go`, `mr/mod_sys_ddns_test.go` (fake Cloudflare API), `mr/mod_sys_wol_test.go`, `tools/ci.d/sys.sh` (incl. WOL through a bridge in network namespaces), lab fragment `examples/lab.d/70-sys.yaml` (+ `mr/testdata/secrets.d/sys.yaml`) |
-| Mock | `tools/mock/fixtures/sys.*.json` (incl. `sys.ddns.json`, `sys.ddnsupdate.post.json`, `sys.wol.post.json`), `service.post.json`, `diag.post.json`, `config.d/sys.json` |
+| Go | `mr/mod_sys.go` (module, types, validation, render), `mod_sys_time.go` (POSIX TZ parser, TZif writer, NTP, `sys.time`), `mod_sys_ssh.go` (dropbear, managed `authorized_keys`), `mod_sys_cron.go` (schedules, `mr sys run`), `mod_sys_ddns.go` (DDNS: addresses, state, Cloudflare client, `mr ddns`), `mod_sys_wol.go` (Wake-on-LAN: `mr wol`, `sys.wol`), `mod_sys_backup.go` (backup / restore), `mod_sys_fw.go` (firmware upload, sysupgrade / factory-reset hooks), `mod_sys_api.go` (diag, service, services, logs, `mr sys`), `mod_sys_doctor.go` (`mr doctor`, `sys.doctor`), `mod_sys_event.go` (event log, `mr event`, `sys.events`), `mod_sys_notify.go` (`notify:`, Telegram / webhooks, `mr notify`, `sys.notifytest`), `mod_sys_linux.go` / `mod_sys_other.go` (NTP sync state) |
+| UI | `rootfs/www/ui/sys.js` — 服务 (group 服务, with the DDNS card); 系统设置, 管理与 SSH, 计划任务, 备份与升级, 日志, 网络诊断 (group 系统); 体检与事件 (group 状态: 体检 / 事件 / 通知). The overview (`core.js`) shows the last health check's problems and the newest events. The 唤醒 (WOL) buttons sit on the dns module's pages (`dns.js`: 终端设备, DHCP 静态分配) |
+| rootfs | `rootfs/etc/init.d/{tailscale,mr-panel,mr-zram,lucky,lucky-dns-inotify,dstatus-agent}` (tailscale and mr-panel now read their conf.d); events: `mr-bootlog` (`mr event boot` / `shutdown`), `usr/libexec/mr/mon-collect` (the mon module's sampler starts `mr event tick`), NTP sync marker: `mr-clock` + `usr/libexec/mr/clock-save` |
+| Checks | `mr/mod_sys_test.go`, `mr/mod_sys_ddns_test.go` (fake Cloudflare API), `mr/mod_sys_wol_test.go`, `mr/mod_sys_{doctor,event,notify}_test.go` (fake system, fake Telegram / webhook; `TestMain` keeps every test's events off the host), `tools/ci.d/sys.sh` (incl. WOL through a bridge in network namespaces; events and a local webhook with real processes; `mr doctor` on the build host), `tools/ci.d/mon.sh` (the sampler's tick trigger), `tools/ci.d/net.sh` (WAN / failover events from the real hooks), lab fragment `examples/lab.d/70-sys.yaml` (+ `mr/testdata/secrets.d/sys.yaml`) |
+| Mock | `tools/mock/fixtures/sys.*.json` (incl. `sys.ddns.json`, `sys.ddnsupdate.post.json`, `sys.wol.post.json`, `sys.doctor.json`, `sys.events.json`, `sys.notifytest.post.json`), `service.post.json`, `diag.post.json`, `config.d/sys.json`; `status.json` has `doctor` and `events` |
 
 ## Cost
 
@@ -23,6 +23,7 @@ ones the config switches on (ntpd always, crond only while schedules or the DDNS
 | RAM, on demand | CGI runs of `mr` while a page is open; during a restore a `mr sys restore-watch` process sleeps until the confirm window is over (≈4 MB for at most ~12 min); a firmware upload sits in `/tmp` (RAM) until it is flashed or deleted |
 | WOL | nothing resident, no config; `mr` +≈18 KiB of code and data (arm64, stripped; ≈6 KB xz) — plain socket syscalls, not the net package's listener (that was +30 KiB) |
 | CPU | nothing periodic. Services page: one `rc-service status` per service (in parallel) and one `tailscale status --json` |
+| Doctor, events, notifications | nothing resident. `mr` +128 KiB (arm64, stripped: 8,978,592 → 9,109,664 bytes, segment padding; +48.6 KB xz); `sys.js` +10 KB, `core.js` +1 KB. Runs: one short `mr event tick` per DHCP lease change and when `event.due` comes (a retry, the background doctor: every 30 min by default with channels, ~0.5 s CPU and a few `rc-service status` / one DNS lookup); a detached `mr notify flush` per burst of wanted events. Flash: see "Health checks, events, notifications" (a few lines a day; bounded to ~100 short appends an hour) |
 
 ## router.yaml
 
@@ -69,6 +70,16 @@ schedules:                   # busybox crond; fixed actions only
   - {name: redial-wan2, cron: "0 */6 * * *", action: reconnect, target: wan2}
   - {name: wake-nas, cron: "0 7 * * 1-5", action: wol, target: nas}   # dhcp.hosts name (or a MAC)
   - {name: paused, enabled: false, cron: "0 3 1 * *", action: reboot}
+
+notify:                      # events pushed to the phone; no daemon (see "Health checks, events, notifications")
+  channels:                  # at most 4
+    - {name: phone, type: telegram, token_secret: notify_tg_token, chat_id: "123456789"}   # or -100… (group), @channel
+    - {name: ntfy, type: webhook, url_secret: notify_ntfy_url, format: text}              # ntfy: plain text + Title header
+    - {name: ha, type: webhook, url_secret: notify_ha_url}                                # json (default): Gotify, Bark, HA, Slack …
+  events: [wan_down, wan_up, failover, rollback, login_lock, new_device, boot, upgrade, doctor]   # default: all but apply
+  rate: 10                   # messages per channel and hour (1-60); the rest goes out together later
+  quiet_hours: "23:00-07:00" # router time: only warn / risk events then, the others wait
+  doctor_interval: 30        # minutes between background `mr doctor` runs (5-1440, 0 = off); default 30 with channels
 ```
 
 Validation (the security boundary — everything below ends up in a file, a crontab or a command line):
@@ -95,6 +106,12 @@ Validation (the security boundary — everything below ends up in a file, a cron
   that exists, whose value looks like an API token (20–256 of `A-Za-z0-9 - _ . ~ + / =`: it goes into an HTTP
   header); `ipv4` `active`, `off` or a configured WAN; `ipv6` `off`, `router` or `::IID` (upper 64 bits zero,
   lower 64 not); not both off; `ttl` 0 or 60–86400; `interval` 0 or 5–60; `enabled` needs records.
+* `notify`: at most 4 channels; `name` `[a-z][a-z0-9_-]{0,14}` and unique; `telegram` needs `token_secret` (a secret
+  that exists and looks like a bot token, `digits:[A-Za-z0-9_-]{20,80}`) and `chat_id` (a number, `-100…`, or `@name`),
+  no `url_secret` / `format`; `webhook` needs `url_secret` (one line, no spaces, ≤ 2048 characters, `http://` or
+  `https://` with a host) and `format` `json` | `text`, no `token_secret` / `chat_id`. Messages never repeat a secret.
+  `events` known types without duplicates; `rate` 1–60; `quiet_hours` `HH:MM-HH:MM` (not empty); `doctor_interval` 0 or
+  5–1440. API tokens and agents can never change `notify` (they must not silence or redirect the owner's alerts).
 
 ## Generated files
 
@@ -202,6 +219,78 @@ resident:
 Waking from outside works through the web UI (e.g. over Tailscale); there is deliberately no WOL listener on the WAN.
 The device must have Wake-on-LAN enabled (BIOS / NIC driver) and usually needs a wired connection.
 
+## Health checks, events, notifications
+
+Nothing resident: the checks run when asked, events are appended by the code that sees them, and notifications go out
+from short `mr` runs.
+
+**`mr doctor`** (`sys.doctor`, web UI 状态 › 体检与事件 › 体检, MCP `mon_query` view `doctor`) — a fixed list of read-only
+checks, each finding `ok | warn | risk | skip` with a one-line fix: `config` (validates, guard kept, edits not applied),
+`pending` (a change waiting for confirmation, a failed boot rollback), `wan` (IPv4 address, multi-WAN health, CGNAT /
+private address behind port forwards, a WAN address inside a LAN subnet — a hotel network on the same range), `routes`
+(main default route, every WAN's table), `dns` (an A lookup through
+dnsmasq on 127.0.0.1: the first NTP host name), `ipv6` (delegated prefix on the LAN), `offload` (flowtable loaded,
+hardware flag, PPE entries), `services` (every service the config wants: installed and running), `wifi` (radios / BSSes
+up), `clock` (after the image's build time, NTP synced within 30 min), `storage` (config flash, `/tmp`), `memory`,
+`conntrack` (75 / 90 %), `temp` (90 / 105 °C), `crash` (pstore records, oops / BUG / OOM / lockup lines in this boot's
+kernel log), `ssh` (password logins). The only programs run are `ip -j`, `nft list flowtable inet mr ft` and
+`rc-service NAME status`; the rest is `/proc`, `/sys`, `/run` and the config. The result is kept in
+`/run/mini-router/doctor.json`; `mr status` has its problems (`doctor: {time, risk, warn, ok, problems[]}`), the overview
+shows them as 问题 (N).
+
+"NTP synced" comes from a marker: busybox ntpd never lowers the kernel's maxerror, so `adjtimex` says "not synchronized"
+while the clock is right (seen on the router: offset 0.4 ms, status UNSYNC). `mr-clock` creates `/run/mr-clock` for ntpd's
+user, `clock-save` (ntpd `-S`, every 11 minutes while synced) touches `synced` in it and removes it on `unsync`; synced
+= touched within 30 minutes. `sys.time` uses the same marker (adjtimex only where the directory does not exist).
+
+**Event log** — `/etc/mini-router/state/events.log`, JSON lines `{seq, t, type, sev, key, msg}`, newest 200 kept
+(rewritten at 250 lines or 96 KiB). On flash because the events that matter most (a crash, a power cut, a rollback at
+boot) are the ones a RAM log loses. Types and where they come from:
+
+| Type | Source | Severity |
+|---|---|---|
+| `wan_down` / `wan_up` | the net hooks' `OnWAN` (pppd ip-up / ip-down, udhcpc): a WAN that was up lost its address; it came back (with the downtime). The first up after boot, DHCP renewals and udhcpc's initial deconfig are not events. Expected ones are `info` with the reason: during an apply / rollback, or when the change log of the last 2 minutes names a redial / reconnect / restart of that WAN or its service (web UI, schedule, agent); while the system goes down (a fresh shutdown mark of this boot) they are not events at all | warn / info |
+| `failover` | `OnWAN health` (net-wanmon): a WAN fails its health check (and where traffic goes) or passes again; the checker's first view only records | warn / info |
+| `apply` / `rollback` | `history.go` `setResult`: a change applied / confirmed, rolled back (and why) | info / warn |
+| `login_lock` | the login throttle (`api_login.go`, web UI passwords and API tokens) locked a source | warn |
+| `new_device` | `mr event tick`: a DHCPv4 client whose MAC was never seen (`dhcp.hosts` count as known). The list of seen MACs is on flash (`devices.seen`, newest 2048, appended; a reboot reports nothing); the first day after it is created only learns (the lease file is in RAM, the house's devices come back one by one). At most 5 per scan one by one, the rest in one line. Host names come from the network: cleaned, capped | info |
+| `boot` / `upgrade` | `mr event boot` (mr-bootlog, the last boot service): clean restart (a mark written by `mr event shutdown` when OpenRC stops the system — reboot and power-off both run the shutdown runlevel; a restart of the service writes none, and a mark of the running boot is dropped; the reason from the change log, e.g. `schedule: reboot`; the downtime once NTP agrees), kernel crash (a new ramoops record in `/sys/fs/pstore`), new firmware (the kexec upgrade leaves no mark), otherwise unexpected restart (power cut, hang, hardware watchdog). A mark left by an older boot is ignored | info / warn |
+| `doctor` | the background `mr doctor` run: a finding that is new or worse since the last run, and "fine again". Standing choices and moments of an apply (`ssh` password logins, `offload: off`, `config.unapplied`, a change waiting for confirmation) are left out; the state is in `/run` (a reboot reports what is still wrong once more) | warn / risk / info |
+
+Flash writes are bounded: at most 10 lines of one type are kept per hour (a flapping WAN, a DHCP flood with random
+MACs, a password-guessing botnet only reach syslog after that), so the worst case is ~100 appends of ≤ 300 bytes and two
+rewrites of ≤ 96 KiB an hour (≈ 4 MB a day, UBIFS wear-levels it); a normal day writes a few lines. `devices.seen` gets
+18 bytes per new MAC, rewritten (≤ 37 KiB) every 256; the notification cursor (`notify.json`, a few bytes) only after a
+message went out; `boot.json` / `shutdown.json` once per boot. Everything else is in `/run/mini-router` (tmpfs):
+`events.json` (what the hooks saw, the background doctor's findings), `event.due`, `leases.seen`, `notify.json`
+(backoff, rate), `doctor.json`.
+
+**`mr event tick`** is started by the mon module's sampler (`mon-collect`, already running once a minute) — in the
+background, only when dnsmasq's lease file is newer than `/run/mini-router/leases.seen` or the uptime in
+`/run/mini-router/event.due` has come; any other minute costs two `stat()`s and a `read` in the shell. The tick scans the
+leases, runs the background doctor when due, rewrites `event.due` (the earlier of the next doctor run and a notification
+retry) and flushes notifications. A tick that is still running makes the next one exit (flock).
+
+**Notifications** (`mod_sys_notify.go`) — an event whose type a channel wants starts `mr notify flush --hook` detached;
+it waits 5 s (one waiter at a time, so a burst — a PPPoE reconnect is a down and an up — is one message). Every channel
+has a cursor, the last event it got, written only after a message went out: nothing is lost to a failed send, a WAN
+outage or a reboot, and the next message carries everything after the cursor (30 lines at most, repeats folded
+`(x3, last 15:02)`). A new channel starts at the end of the log (an apply that adds it: `Verify`); a removed one loses
+its cursor. A failed send backs off 1, 2, 4 … 30 minutes (the retry is `event.due`); a new event tries at once. `rate`
+per channel and hour; `quiet_hours` holds `info` events (a warning takes them along). The events sent while a WAN is
+down simply wait for the next working send.
+
+* Telegram: Bot API `sendMessage`, plain text (no parse mode: nothing in an event becomes markup), title line + lines.
+* Webhook `json`: `{title, message, body, text, content, priority (5 | 8), severity, host, events[]}` — the keys Gotify,
+  Bark, Slack / Mattermost and Discord read; Home Assistant and custom receivers get the events. `text`: the lines as
+  the body with `Title` / `Priority` headers (ntfy).
+* HTTPS against the system CA bundle, no proxy from the environment, no redirects, answers capped at 64 KiB, 30 s per
+  send. The bot token (in the API URL) and the webhook URL (usually a key in it) live only in secrets.yaml: error texts
+  drop the request URL and every form of the secret before they are shortened, and nothing of them reaches a state file,
+  a log, `mr notify status`, `sys.events` or the web UI (tested with a local receiver in CI).
+* The router's own traffic does not use the proxy; a Telegram API that is blocked where the router is needs a webhook
+  relay for now.
+
 ### Boot order for `net.netfilter.*`
 
 `nf_conntrack` is a module; before this change the firewall loaded it (via the ct rules) only after the
@@ -220,7 +309,10 @@ ruleset uses conntrack), so there is no cost before the firewall. The mon module
 |---|---|---|
 | `service` | POST | `{name, op: start\|stop\|restart}` — a service the config enables (not `mr-network`); used by several modules' pages |
 | `diag` | POST | `{tool: ping\|ping6\|traceroute\|traceroute6\|nslookup, host}` (old `{ipv6: true}` still works) → `{output, command}`; 25 s timeout, argv only |
-| `sys.time` | GET | `{now, tz, offset, local, ntp, ntp_server, synced}` (`synced` from adjtimex, `null` if unknown) |
+| `sys.time` | GET | `{now, tz, offset, local, ntp, ntp_server, synced}` (`synced` from the ntpd marker in `/run/mr-clock`, else adjtimex; `null` if unknown) |
+| `sys.doctor` | GET | runs `mr doctor` now (a few seconds) → `{time, risk, warn, ok, checks[] {id, check, sev, title, detail, fix}}`; a router.yaml that does not load is itself the finding (`config.load`). API tokens: read |
+| `sys.events` | GET | `{events[] (newest first, ≤ 200) {seq, t, type, sev, key, msg}, types[], notify[] {name, type, pending, last_ok, error, error_at, retry_in, held: retry \| rate \| quiet_hours}}` — never a secret. API tokens: read |
+| `sys.notifytest` | POST | `{name (optional)}` → `{results[] {name, ok, error}}`: a test message now to that channel (or all) of the applied config, ignoring rate, quiet hours and backoff; 409 without channels. Web UI session only |
 | `sys.sshkeys` | GET | keys in root's authorized_keys: `managed[]`, `other[]` `{type, comment, fingerprint}`, `other_unparsed`, `root_password: set\|locked\|empty` (never the hash) |
 | `sys.services` | GET | `services[]` `{name, label, cfg, wanted, installed, running}`, `others[]`, ports, `tailscale` `{state, self, peers[], peers_online, tailnet, auth_url (only while NeedsLogin)}` |
 | `sys.logs` | GET / POST | `{level 0-7, tag, q, limit ≤ 5000}` → `lines[]` `[time, level, facility, tag, message]` newest first, `total`, `tags{}` (source `/var/log/messages{.0,}`, `logread` if absent) |
@@ -271,9 +363,16 @@ mr sys keys                                              # authorized_keys: mana
 mr ddns status                                           # records: local / published address, last result (offline)
 mr ddns update [--force] [NAME...]                       # update now (ignores backoff); --force also re-checks at the provider
 mr ddns sync [--hook|--cron]                             # what the WAN hooks (5 s debounce) / crond run
+mr doctor [--json]                                       # health and security checks, problems first with their fix
+mr event list [--json] [N]                               # the newest N events (default 50, at most 200)
+mr event tick | boot | shutdown                          # what mr-mon's sampler / mr-bootlog run
+mr notify status                                         # channels: pending, last success, last error, retry, held
+mr notify test [NAME]                                    # a test message now (JSON: name, ok, error)
+mr notify flush [--hook]                                 # send what is pending (--hook: the 5 s wait the events start)
 ```
 
-`mr status` has `ddns: {records, ok, errors[]}` while DDNS is on (the overview shows failing records).
+`mr status` has `ddns: {records, ok, errors[]}` while DDNS is on (the overview shows failing records), `doctor` (the last
+`mr doctor` run's counts and problems) and `events` (the newest 8).
 
 ## Platform interface
 
@@ -293,6 +392,10 @@ mr ddns sync [--hook|--cron]                             # what the WAN hooks (5
 * No crontab, no authorized_keys change (no schedules, no managed keys), crond stays off.
 * Log timestamps, the change log and snapshot names switch from UTC to the router's zone (daemons now
   see `/etc/localtime`).
+* Health checks / events (no rendered file changes; `notify` is not in the home config, so nothing is pushed and no
+  background doctor runs): with the new image, `mr-bootlog` records why the router started and marks clean stops,
+  mr-mon's sampler starts `mr event tick` when the lease file changes (new devices are logged after a day of learning),
+  and `clock-save` keeps `/run/mr-clock/synced`, so 系统设置 shows "NTP 已同步" where it used to say 未同步.
 
 ## 怎么用
 
@@ -335,6 +438,18 @@ mr ddns sync [--hook|--cron]                             # what the WAN hooks (5
 - **日志**：按级别（错误及以上、警告及以上……）、服务（下拉里有每个服务的行数）、关键字过滤，
   可选 300–5000 行、自动刷新。时间是路由器时区。
 - **网络诊断**：Ping / Ping6 / Traceroute / Traceroute6 / nslookup，有几个常用目标的快捷按钮。
+- **体检与事件**（状态分组）：
+  - 体检：打开就跑一次 `mr doctor`（几秒），风险 / 警告排在前面，每条下面是处理办法；“重新体检”再跑一次。
+    总览页顶部的“问题 (N)”卡片显示最近一次体检（网页或后台）发现的问题。
+  - 事件：最近 200 条事件（WAN 断线 / 恢复、线路切换、配置更改 / 回滚、登录锁定、新设备、开机原因、固件升级、
+    体检），可按类型筛选。总览页的“最近事件”显示最新 8 条。设备名来自网络，只作显示。
+  - 通知：添加渠道（Telegram 机器人或 Webhook），Token / URL 只写入 secrets.yaml；勾选推送哪些事件、每小时上限、
+    免打扰时段、后台体检间隔，“保存并应用”。应用后点渠道的“发送测试”确认能收到；下面“发送状态”显示待发送条数、
+    上次成功、最近错误和重试时间。
+
+  Telegram：找 @BotFather 发 `/newbot` 拿到 Token；给机器人发一条消息，打开
+  `https://api.telegram.org/bot<Token>/getUpdates` 找 `chat.id`（群组是 `-100…`）。ntfy：URL 填
+  `https://ntfy.sh/<难猜的主题名>`，格式选“纯文本”。Bark / Gotify / Home Assistant：URL 填它们给的完整推送地址，格式 JSON。
 
 ### router.yaml / agent
 
@@ -370,6 +485,17 @@ services:
 
 应用后 `mr ddns status` 看结果（几秒后 `published` 应等于 `local`）。
 
+通知：先把 Token / URL 写进 secrets.yaml（不要回显到终端），然后
+
+```yaml
+notify:
+  channels:
+    - {name: phone, type: telegram, token_secret: notify_tg_token, chat_id: "123456789"}
+  quiet_hours: "23:00-07:00"
+```
+
+应用后 `mr notify test` 发一条测试消息，`mr notify status` 看状态，`mr event list` 看事件，`mr doctor` 体检。
+
 备份 / 恢复：`mr sys backup -secrets /tmp/b.tgz`，拷走；恢复 `mr sys restore /tmp/b.tgz` 然后
 `mr confirm`。手动试跑计划任务的动作：`mr sys run restart dnsmasq`。唤醒一台设备：`mr wol nas`（静态分配里的
 名字）或 `mr wol aa:bb:cc:dd:ee:ff [网络名]`。
@@ -384,3 +510,10 @@ services:
   Token 被拒绝（`stopped`）：检查 Token 权限（Zone › DNS › Edit，覆盖这个 zone），改 secrets.yaml 后应用即恢复。
 - SSH 连不上：`cat /etc/conf.d/dropbear`（`lan_only` 时只监听 LAN 地址）；`mr sys keys` 看公钥。
 - 开机后 `sysctl net.netfilter.nf_conntrack_max` 应为 100000（或 `system.sysctl` 里的值）。
+- 出了问题先 `mr doctor`（每条问题带处理办法），再看 `mr event list`（断线、切换、回滚、重启原因的先后）。
+- 收不到通知：`mr notify status`（`error` 是服务的回答或连接错误，`held`：retry 退避中 / rate 超过每小时上限 /
+  quiet_hours 免打扰）；`mr notify test` 立即试发；`grep notify /var/log/messages`。断网期间的事件恢复后自动补发。
+  `mr event list` 里没有的事件不会推送：同一类型每小时最多记 10 条，其余只进系统日志。
+- 重启原因：`mr event list | grep boot`——“clean restart”是正常关机 / 重启（括号里是计划任务或网页），
+  “kernel crash”看 `cat /sys/fs/pstore/dmesg-*`（留一份后删掉它，体检里的警告就消失），“unexpected restart”是断电、
+  死机或硬件看门狗。

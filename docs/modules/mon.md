@@ -20,9 +20,18 @@ agents). The only resident piece is a busybox-sh loop that writes one line per m
 | RAM, always | sampler: busybox ash, 1.2 MB RSS of which 76 KB private (the rest is the shared busybox binary), plus its supervise-daemon; history file ≈ 1440 lines × ~70 B ≈ 100 KB in `/run/mr-mon` |
 | RAM, conntrack accounting | +32 B per connection (1 000 connections ≈ 32 KB) |
 | RAM, only after 流量统计 was opened | `/run/mr-mon/flows`: 24 B per connection |
-| CPU | sampler: a few shell builtins per minute (the only forks are `sleep` and an hourly `tail`); pages: one `mr` CGI run per refresh while a page is open (2 s realtime, 3 s devices/processes, 5 s connections if auto refresh is on, 60 s history) |
+| CPU | sampler: a few shell builtins per minute (the only forks are `sleep`, an hourly `tail` and, when due, the event tick below); pages: one `mr` CGI run per refresh while a page is open (2 s realtime, 3 s devices/processes, 5 s connections if auto refresh is on, 60 s history) |
 
 No exec in the CGI: `/proc`, `/sys`, rtnetlink and `syslog(2)` are read directly.
+
+The sampler is also the clock of the sys module's event log (`docs/modules/sys.md`, "Health checks, events,
+notifications"): after each sample it starts `mr event tick` in the background — detached, so a slow notification never
+delays the next sample — but only when dnsmasq's lease file (`/tmp/dhcp.leases`) is newer than
+`/run/mini-router/leases.seen` (a new device?) or the uptime in `/run/mini-router/event.due` has come (a notification
+retry, events held back, the next background `mr doctor`). Every other minute that is two `stat()`s and a `read`. In a
+house that means a tick for each DHCP renewal (a few an hour) plus one per background doctor run (every 30 minutes by
+default with notification channels). `MON_EVENT_DIR`, `MON_LEASES`, `MON_MR` exist for CI (`tools/ci.d/mon.sh` runs
+the sampler with a stub `mr`).
 
 ## router.yaml
 

@@ -78,9 +78,21 @@
     "cron": "0 2 1 * *",
     "action": "reboot"
    }
-  ]
+  ],
+  "notify": {
+   "channels": [
+    {"name": "phone", "type": "telegram", "token_secret": "notify_tg_token", "chat_id": "-1001234567890"},
+    {"name": "ha", "type": "webhook", "url_secret": "notify_ha_url", "format": "json"}
+   ],
+   "events": ["wan_down", "wan_up", "failover", "rollback", "login_lock", "new_device", "boot", "upgrade", "doctor"],
+   "rate": 10,
+   "quiet_hours": "23:00-07:00",
+   "doctor_interval": 30
+  }
  },
  "secrets_set": {
-  "cf_ddns_token": true
+  "cf_ddns_token": true,
+  "notify_tg_token": true,
+  "notify_ha_url": true
  }
 }

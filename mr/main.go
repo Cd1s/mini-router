@@ -63,6 +63,10 @@ module commands (JSON output unless noted):
   mr sys run ACTION [TARGET] | backup [-secrets] FILE|- | restore [-confirm SECS] FILE | keys
   mr ddns status | update [--force] [NAME...]   DDNS records; update now (sync --hook|--cron: WAN hooks / crond)
   mr wol MAC|HOST [NETWORK]   Wake-on-LAN magic packet (HOST: a dhcp.hosts name) to the LAN's broadcast
+  mr doctor [--json]          health and security checks: every finding ok / warn / risk / skip with its fix
+  mr event list [--json] [N]  the event log: WAN down / up, failover, changes, login locks, new devices, boots
+                              (tick: mr-mon's sampler; boot | shutdown: mr-bootlog)
+  mr notify status | test [NAME]   notification channels: what waits, last error; send a test message now
   mr led                      set the status LEDs from the WAN state
 `
 

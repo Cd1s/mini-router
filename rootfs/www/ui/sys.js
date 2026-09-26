@@ -1,6 +1,6 @@
 // mini-router web UI — sys module pages: 服务 (group services); 系统设置, 管理与 SSH, 计划任务,
-// 备份与升级, 日志, 网络诊断 (group system). Uses only the helpers in ui/core.js; see docs/MODULES.md
-// and docs/modules/sys.md.
+// 备份与升级, 日志, 网络诊断 (group system); 体检与事件 (group status: mr doctor, the event log,
+// notifications). Uses only the helpers in ui/core.js; see docs/MODULES.md and docs/modules/sys.md.
 "use strict";
 (()=>{
 addCSS(`
@@ -31,6 +31,11 @@ addCSS(`
 .sys-clock{font-variant-numeric:tabular-nums}
 .sys-file{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .sys-file input[type=file]{max-width:100%;font-size:13px}
+.sys-chan{border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin:10px 16px}
+.sys-fix{font-size:12px;white-space:pre-wrap;word-break:break-word}
+.sys-ev{padding:8px 16px;border-top:1px solid var(--line)}
+.sys-ev .row{gap:8px}
+.sys-ev .m{margin-top:3px;word-break:break-word}
 `);
 
 // ---------- shared bits ----------
@@ -736,4 +741,127 @@ registerPage("system", "diag", "网络诊断", 50, ()=>{
     h("span"), presets),
     h("div",{style:"margin-top:14px"}, cmd, out)]);
 });
+
+// ---------- 体检与事件: mr doctor, the event log, notifications (router.yaml notify) ----------
+const EVT = {wan_down:"WAN 断线", wan_up:"WAN 恢复", failover:"线路切换", apply:"配置更改", rollback:"回滚",
+  login_lock:"登录锁定", new_device:"新设备", boot:"开机", upgrade:"固件升级", doctor:"体检"};
+const EVT_ALL = Object.keys(EVT);
+const SEV = {risk:["风险","bad"], warn:["警告","warn"], ok:["正常","ok"], skip:["跳过",""], info:["信息",""]};
+const sevTag = s=>{ const m = SEV[s]||[s,""]; return h("span",{class:"tag "+m[1], style:"white-space:nowrap"}, m[0]); };
+const CHECKS = {config:"配置", pending:"待确认更改", wan:"WAN", routes:"路由", dns:"DNS", ipv6:"IPv6", offload:"流量加速",
+  services:"服务", wifi:"无线", clock:"时间", storage:"存储", memory:"内存", conntrack:"连接数", temp:"温度", crash:"内核", ssh:"SSH"};
+const when = t => t ? new Date(t*1000).toLocaleString() : "—";
+const stamp = t=>{ const d = new Date(t*1000), p = n=>String(n).padStart(2,"0");
+  return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds()); };
+
+async function pageDoctor(){
+  const box = h("div");
+  const again = h("button",{class:"btn sm"},"重新体检");
+  const run = async ()=>{
+    again.disabled = true;
+    box.replaceChildren(h("div",{class:"mut",style:"padding:10px 16px"},"正在体检…（几秒）"));
+    try {
+      const r = await api("sys.doctor");
+      const rank = {risk:0, warn:1, ok:2, skip:3};
+      const fs = (r.checks||[]).slice().sort((a,b)=>(rank[a.sev]??4)-(rank[b.sev]??4));
+      box.replaceChildren(
+        h("div",{class:"row",style:"padding:10px 16px"}, sevTag("risk"), " "+r.risk, sevTag("warn"), " "+r.warn, sevTag("ok"), " "+r.ok,
+          h("span",{class:"mut",style:"flex:1;text-align:right"}, when(r.time))),
+        ...fs.map(f=>h("div",{class:"sys-ev"},
+          h("div",{class:"row"}, sevTag(f.sev), h("b",{}, CHECKS[f.check]||f.check), f.id!==f.check ? h("span",{class:"mut mono"}, f.id) : null),
+          h("div",{class:"m"}, h("b",{}, f.title), " ", f.detail),
+          f.fix && f.sev!=="ok" && f.sev!=="skip" ? h("div",{class:"m mono sys-fix"}, "→ "+f.fix) : null)));
+    } catch(e){ box.replaceChildren(h("div",{class:"err",style:"padding:10px 16px"}, e.message)); }
+    again.disabled = false;
+  };
+  again.onclick = run;
+  run();
+  return h("div",{},
+    card("体检（mr doctor）", box, again, true),
+    h("div",{class:"sys-note"}, "只读检查：配置与 guard、待确认的更改、WAN / 路由 / DNS / IPv6、流量加速、服务、无线、时间、存储、内存、连接数、温度、内核崩溃、SSH。",
+      "“通知”里设了体检间隔时，后台定期体检，新出现或变严重的问题记为事件并推送。命令行：mr doctor。"));
+}
+
+const evFilter = {type:""};
+async function pageEvents(){
+  const j = await api("sys.events");
+  const box = h("div");
+  const draw = ()=>{
+    const rows = (j.events||[]).filter(e=>!evFilter.type || e.type===evFilter.type);
+    box.replaceChildren(...(rows.length ? rows.map(e=>h("div",{class:"sys-ev"},
+      h("div",{class:"row"}, h("span",{class:"mono mut"}, stamp(e.t)), sevTag(e.sev), h("b",{}, EVT[e.type]||e.type)),
+      h("div",{class:"m"}, e.msg))) : [h("div",{class:"mut sys-ev"},"（没有事件）")]));
+  };
+  draw();
+  const types = [["","全部类型"], ...(j.types||EVT_ALL).map(t=>[t, EVT[t]||t])];
+  return h("div",{},
+    card("事件（最近 "+(j.events||[]).length+" 条，新的在上）", [
+      h("div",{class:"sys-filters",style:"padding:10px 16px;margin:0"}, inSel(evFilter,"type",types,draw)), box],
+      h("button",{class:"btn sm",onclick:()=>show("doctor")},"刷新"), true),
+    h("div",{class:"sys-note"}, "存在闪存 /etc/mini-router/state/events.log（最多 200 条；同一类型每小时最多记 10 条，其余只进系统日志）。",
+      "设备名、地址来自网络，只作显示。命令行：mr event list。"));
+}
+
+const NOTIFY_BLANK = used=>({name:["phone","tg","hook","ntfy","ha"].find(n=>!used.includes(n))||"ch"+(used.length+1),
+  type:"telegram", token_secret:"notify_tg_token", chat_id:""});
+async function pageNotify(){
+  const c = C();
+  const n = c.notify || {};
+  const chans = n.channels || [];
+  // the section appears in router.yaml on the first edit, not by opening this page
+  const attach = ()=>{ if (!n.channels) n.channels = chans; if (!c.notify) c.notify = n; touch(); };
+  let st = [];
+  try { st = (await api("sys.events")).notify || []; } catch(e){}
+  const list = h("div");
+  const test = name=>h("button",{class:"btn sm",onclick:async e=>{
+    e.target.disabled = true;
+    try {
+      const r = await api("sys.notifytest",{name});
+      for (const x of r.results||[]) toast(x.ok ? x.name+"：测试消息已发送" : x.name+"：发送失败 — "+x.error, x.ok?3000:7000);
+    } catch(err){ toast(err.message, 6000); } finally { e.target.disabled = false; } }}, "发送测试");
+  const draw = ()=>{
+    list.replaceChildren(...(chans.length ? chans.map((ch,i)=>{
+      const type = inSel(ch,"type",[["telegram","Telegram 机器人"],["webhook","Webhook（ntfy、Bark、Gotify、HA …）"]], v=>{
+        if (v==="webhook"){ delete ch.token_secret; delete ch.chat_id; ch.url_secret ||= "notify_webhook_url"; ch.format ||= "json"; }
+        else { delete ch.url_secret; delete ch.format; ch.token_secret ||= "notify_tg_token"; ch.chat_id ||= ""; }
+        attach(); draw(); });
+      const rows = [...field("名称", inText(ch,"name",{maxlength:15, class:"mono"})), ...field("类型", type)];
+      if (ch.type==="webhook") rows.push(
+        ...field("URL 引用名", inText(ch,"url_secret",{class:"mono"}), "secrets.yaml 里的名字"),
+        ...field("URL", inSecret(ch,"url_secret"), "完整地址（通常带密钥），只写入 secrets.yaml，页面不会显示"),
+        ...field("格式", inSel(ch,"format",[["json","JSON（Gotify、Bark、Home Assistant、Slack …）"],["text","纯文本 + Title 头（ntfy）"]])));
+      else rows.push(
+        ...field("Token 引用名", inText(ch,"token_secret",{class:"mono"}), "secrets.yaml 里的名字"),
+        ...field("Bot Token", inSecret(ch,"token_secret"), "@BotFather 给的 123456789:AA…，只写入 secrets.yaml"),
+        ...field("Chat ID", inText(ch,"chat_id",{class:"mono", placeholder:"123456789 / -1001234567890 / @频道名"}), "先给机器人发一条消息，再从 getUpdates 里找 chat.id"));
+      return h("div",{class:"sys-chan"}, form(...rows), h("div",{class:"row",style:"margin-top:8px;justify-content:flex-end"}, test(ch.name),
+        h("button",{class:"btn sm d",onclick:()=>{ chans.splice(i,1); attach(); draw(); }},"删除")));
+    }) : [h("div",{class:"mut",style:"padding:10px 16px"},"还没有通知渠道。")]));
+  };
+  draw();
+  const add = h("button",{class:"btn sm p",onclick:()=>{ if (chans.length>=4) return toast("最多 4 个渠道"); chans.push(NOTIFY_BLANK(chans.map(x=>x.name))); attach(); draw(); }},"+ 添加渠道");
+  const cur = new Set(n.events && n.events.length ? n.events : EVT_ALL.filter(t=>t!=="apply"));
+  const evBoxes = h("div",{class:"row"}, EVT_ALL.map(t=>h("label",{}, h("input",{type:"checkbox", checked:cur.has(t), onchange:e=>{
+    e.target.checked ? cur.add(t) : cur.delete(t); n.events = EVT_ALL.filter(x=>cur.has(x)); attach(); }}), " "+EVT[t])));
+  const num = (key, def, attrs)=>h("input",Object.assign({type:"number", value:n[key]??"", placeholder:String(def), style:"max-width:110px",
+    oninput:e=>{ if (e.target.value==="") delete n[key]; else n[key]=Number(e.target.value); attach(); }}, attrs));
+  const quiet = h("input",{type:"text", class:"mono", value:n.quiet_hours||"", placeholder:"23:00-07:00", style:"max-width:140px",
+    oninput:e=>{ if (e.target.value.trim()) n.quiet_hours=e.target.value.trim(); else delete n.quiet_hours; attach(); }});
+  const status = st.length ? roTable(["渠道","类型","待发送","上次成功","错误","状态"], st.map(x=>[mono(x.name), x.type, String(x.pending),
+    when(x.last_ok), x.error ? h("span",{class:"err",title:x.error}, when(x.error_at)+"：", x.error) : dash(""),
+    x.held==="retry" ? "等待重试"+(x.retry_in?"（"+fmtDur(x.retry_in)+"后）":"") : x.held==="rate" ? "超过每小时上限，稍后合并发送" :
+      x.held==="quiet_hours" ? "免打扰时段，结束后发送" : x.pending ? "发送中" : h("span",{class:"tag ok"},"正常")])) :
+    h("div",{class:"mut",style:"padding:10px 16px"},"（保存并应用后显示状态）");
+  return h("div",{},
+    card("通知渠道", [h("div",{class:"sys-note",style:"padding:0 16px"},
+      "事件推送到手机：Telegram 机器人，或任何接受 POST 的地址（ntfy、Bark、Gotify、Home Assistant 等）。没有常驻进程：事件发生时发送，",
+      "失败后按 1、2、4 … 30 分钟重试，断网期间的事件恢复后合并成一条补发。“发送测试”用已应用的配置。"), list], add, true),
+    card("推送哪些事件", form(
+      ...field("事件类型", evBoxes, "默认除“配置更改”外全部（自己改的配置一般不用提醒）"),
+      ...field("每小时上限", num("rate", 10, {min:1, max:60}), "每个渠道每小时最多几条消息，多出的稍后合并发送"),
+      ...field("免打扰时段", quiet, "路由器时间，例如 23:00-07:00：期间只发警告 / 风险，其余等结束后发送"),
+      ...field("后台体检（分钟）", num("doctor_interval", chans.length?30:0, {min:0, max:1440}), "每隔多久后台跑一次 mr doctor，新问题记为事件；0 = 关闭。有渠道时默认 30"))),
+    card("发送状态", status, null, true));
+}
+registerPage("status", "doctor", "体检与事件", 60, ()=>tabs([["doctor","体检",pageDoctor], ["events","事件",pageEvents], ["notify","通知",pageNotify]]));
 })();

@@ -1,0 +1,21 @@
+{
+ "events": [
+  {"seq": 42, "t": 1790248930, "type": "new_device", "sev": "info", "key": "02:00:00:00:00:31", "msg": "tablet (02:00:00:00:00:31, private MAC) got 192.168.1.131 on lan"},
+  {"seq": 41, "t": 1790248800, "type": "doctor", "sev": "warn", "key": "clock", "msg": "Clock: NTP last synced 2h05m ago: time-based rules, logs and certificates drift"},
+  {"seq": 40, "t": 1790246100, "type": "wan_up", "sev": "info", "key": "wan", "msg": "wan is connected again after 42s down"},
+  {"seq": 39, "t": 1790246058, "type": "wan_down", "sev": "warn", "key": "wan", "msg": "wan lost its connection (pppoe on pppoe-wan)"},
+  {"seq": 38, "t": 1790244600, "type": "boot", "sev": "info", "msg": "booted after a clean restart (schedule: reboot)"},
+  {"seq": 37, "t": 1790244480, "type": "apply", "sev": "info", "key": "12", "msg": "change #12 (web UI: guest WiFi) confirmed"},
+  {"seq": 36, "t": 1790161200, "type": "login_lock", "sev": "warn", "key": "192.168.1.150", "msg": "5 failed web UI logins from 192.168.1.150: locked for 30s"},
+  {"seq": 35, "t": 1790158000, "type": "rollback", "sev": "warn", "key": "11", "msg": "change #11 (mr apply) rolled back: not confirmed within 120s"},
+  {"seq": 34, "t": 1790150090, "type": "failover", "sev": "info", "key": "wan", "msg": "wan passes its health check again"},
+  {"seq": 33, "t": 1790150000, "type": "failover", "sev": "warn", "key": "wan", "msg": "wan fails its health check; traffic moves to wan2"},
+  {"seq": 32, "t": 1790070000, "type": "upgrade", "sev": "info", "msg": "mr m3-20260920-1a2b3c4 → m3-20260925-5d6e7f8"},
+  {"seq": 31, "t": 1790069990, "type": "boot", "sev": "info", "msg": "booted the new firmware"}
+ ],
+ "types": ["wan_down", "wan_up", "failover", "apply", "rollback", "login_lock", "new_device", "boot", "upgrade", "doctor"],
+ "notify": [
+  {"name": "phone", "type": "telegram", "pending": 0, "last_ok": 1790248935},
+  {"name": "ha", "type": "webhook", "pending": 2, "last_ok": 1790161210, "error": "webhook: dial tcp 192.168.1.20:8123: connect: connection refused", "error_at": 1790248935, "retry_in": 240, "held": "retry"}
+ ]
+}

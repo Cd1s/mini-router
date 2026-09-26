@@ -9,17 +9,20 @@ package main
 //   - the net hooks call OnWAN inside pppd / udhcpc / the health checker: a line is appended and, when a
 //     notification channel wants the type, a detached `mr notify flush --hook` is started;
 //   - apply / rollback results (history.go setResult) and the login throttle (api_login.go) add theirs;
-//   - mr-mon's per-minute sampler (rootfs/usr/libexec/mr/mon-collect) runs `mr event tick` only when
-//     dnsmasq's lease file changed (new devices) or the uptime in /run/mini-router/event.due has come
-//     (a notification retry, held events, the next background `mr doctor`); any other minute costs a
-//     few shell builtins;
-//   - mr-bootlog runs `mr event boot` at boot (why the router restarted: clean reboot, kernel crash in
+//   - mr-mon's per-minute sampler (rootfs/usr/libexec/mr/mon-collect) starts `mr event tick` only when
+//     dnsmasq's lease file is newer than /run/mini-router/leases.seen (new devices) or the uptime in
+//     /run/mini-router/event.due has come (a notification retry, held events, the next background
+//     `mr doctor`); any other minute costs a few shell builtins;
+//   - mr-bootlog runs `mr event boot` at boot (why the router restarted: clean restart, kernel crash in
 //     pstore, power cut / hang, new firmware) and `mr event shutdown` when OpenRC takes the system down.
 //
 // Log: /etc/mini-router/state/events.log — JSON lines {seq, t, type, sev, key, msg}, the newest 200
 // kept (rewritten when it passes 250 lines or 96 KiB). On flash, because the events that matter most (a
-// crash, a power cut, a rollback at boot) are the ones a RAM log loses; a few lines a day. Text that
-// comes from the network (DHCP host names, addresses) is cleaned of control characters and capped.
+// crash, a power cut, a rollback at boot) are the ones a RAM log loses. Flash writes are bounded: at
+// most eventTypeHour lines of one type per hour are kept (a flapping WAN, a DHCP flood with random MACs
+// or a password-guessing botnet only reach syslog after that), so the worst case is ~100 short appends
+// and two rewrites an hour; a normal day writes a few lines. Text that comes from the network (DHCP host
+// names, addresses) is cleaned of control characters and capped.
 
 import (
 	"bufio"
@@ -60,9 +63,15 @@ const (
 	eventTrimLines = 250
 	eventTrimBytes = 96 << 10
 	eventMsgMax    = 300
-	eventSeenMax   = 2048
-	eventBootQuiet = 300 // s after boot before the first background health check (WANs dial, radios start)
+	eventTypeHour  = 10   // lines of one type kept per hour (flash wear, floods); the rest goes to syslog only
+	eventSeenMax   = 2048 // MACs remembered for new-device detection
+	eventSeenSlack = 256  // appended before the list is rewritten to its newest eventSeenMax
+	eventScanMax   = 5    // new devices reported one by one per scan; the rest as one line
+	eventBootQuiet = 300  // s after boot before the first background health check (WANs dial, radios start)
 )
+
+// errEventCapped: the type already has eventTypeHour lines in the last hour.
+var errEventCapped = errors.New("rate cap")
 
 // paths and clocks (variables so tests can use a temp dir and fake time)
 var (
@@ -72,8 +81,8 @@ var (
 	eventBootFile     = "/etc/mini-router/state/boot.json"
 	eventShutdownFile = "/etc/mini-router/state/shutdown.json"
 	eventRunFile      = RunDir + "/events.json" // what the hooks saw: WANs up / down, health, when the next calls are due
-	eventDueFile      = RunDir + "/event.due"   // uptime (s) at which mon-collect runs `mr event tick`
-	eventSeenFile     = RunDir + "/leases.seen" // mtime = the lease file last scanned
+	eventDueFile      = RunDir + "/event.due"   // uptime (s) at which mon-collect starts `mr event tick`
+	eventSeenFile     = RunDir + "/leases.seen" // mtime: just before the lease file was last scanned
 	eventTickLock     = RunDir + "/event.tick"
 	eventLeaseFile    = LeaseFile
 	pstoreDir         = "/sys/fs/pstore"
@@ -120,20 +129,30 @@ func flock(path string, wait bool) *os.File {
 	return f
 }
 
-// eventAdd appends one event. kick: start a background flush when a notification channel wants
-// this type (false at boot before OpenRC, where nothing may be started: the boot event sends it).
-// c may be nil (the config is loaded only when a flush could be needed).
-func eventAdd(c *Config, typ, sev, key, msg string, kick bool) {
+// eventAdd appends one event and reports whether it was kept. kick: start a background flush when a
+// notification channel wants this type (false at boot before OpenRC, where nothing may be started —
+// the boot event sends it — and for batches, which call eventKick once). c may be nil (the config is
+// loaded only when a flush could be needed).
+func eventAdd(c *Config, typ, sev, key, msg string, kick bool) bool {
 	e := event{Time: eventNow().Unix(), Type: typ, Sev: sev, Key: eventClean(key, 64), Msg: eventClean(msg, eventMsgMax)}
 	if err := eventAppend(&e); err != nil {
-		logf("event %s: %v", typ, err)
-		return
+		if err == errEventCapped {
+			logf("event %s (not kept, %d in the last hour): %s", typ, eventTypeHour, e.Msg)
+		} else {
+			logf("event %s: %v", typ, err)
+		}
+		return false
 	}
-	if !kick {
-		return
+	if kick {
+		eventKick(c, typ)
 	}
+	return true
+}
+
+// eventKick starts a background flush when some channel wants events of type typ.
+func eventKick(c *Config, typ string) {
 	if c == nil {
-		lc, err := loadConfig(ConfigPath, SecretsPath)
+		lc, err := loadConfig(sysConfigPath, sysSecretsPath)
 		if err != nil {
 			return
 		}
@@ -156,13 +175,21 @@ func eventAppend(e *event) error {
 		return err
 	}
 	lines := eventLines(data)
-	if len(lines) > 0 {
-		var last event
-		if json.Unmarshal(lines[len(lines)-1], &last) == nil {
-			e.Seq = last.Seq
+	seq, n := int64(0), 0
+	for _, l := range lines { // the highest seq, not the last line's: a power cut can tear the last line
+		var x event
+		if json.Unmarshal(l, &x) != nil {
+			continue
+		}
+		seq = max(seq, x.Seq)
+		if x.Type == e.Type && x.Time > e.Time-3600 && x.Time <= e.Time {
+			n++
 		}
 	}
-	e.Seq++
+	if n >= eventTypeHour {
+		return errEventCapped
+	}
+	e.Seq = seq + 1
 	b, _ := json.Marshal(e)
 	b = append(b, '\n')
 	if len(lines)+1 > eventTrimLines || len(data)+len(b) > eventTrimBytes {
@@ -204,15 +231,16 @@ func eventLines(data []byte) [][]byte {
 // eventsRead returns the events with seq > after, oldest first (at most max, the newest; 0 = all).
 func eventsRead(after int64, max int) []event {
 	data, _ := os.ReadFile(eventLog)
+	lines := eventLines(data)
 	out := []event{}
-	for _, l := range eventLines(data) {
+	for i := len(lines) - 1; i >= 0 && (max <= 0 || len(out) < max); i-- { // newest first: `mr status` wants 8
 		var e event
-		if json.Unmarshal(l, &e) == nil && e.Seq > after && e.Type != "" {
+		if json.Unmarshal(lines[i], &e) == nil && e.Seq > after && e.Type != "" {
 			out = append(out, e)
 		}
 	}
-	if max > 0 && len(out) > max {
-		out = out[len(out)-max:]
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
 	}
 	return out
 }
@@ -244,9 +272,7 @@ func eventRunUpdate(f func(s *eventRun)) {
 		defer lk.Close()
 	}
 	var s eventRun
-	if b, err := os.ReadFile(eventRunFile); err == nil {
-		json.Unmarshal(b, &s)
-	}
+	readJSONFile(eventRunFile, &s)
 	if s.Up == nil {
 		s.Up = map[string]int64{}
 	}
@@ -273,16 +299,85 @@ func eventRunUpdate(f func(s *eventRun)) {
 
 func eventRunRead() eventRun {
 	var s eventRun
-	if b, err := os.ReadFile(eventRunFile); err == nil {
-		json.Unmarshal(b, &s)
-	}
+	readJSONFile(eventRunFile, &s)
 	return s
 }
 
 // ---- WAN events (OnWAN) ----
 
+// changeLogTail: the last lines of the change log (its last 4 KiB).
+func changeLogTail() []string {
+	f, err := os.Open(ChangeLog)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err == nil && fi.Size() > 4096 {
+		f.Seek(-4096, 2)
+	}
+	b := make([]byte, 4096)
+	n, _ := f.Read(b)
+	return strings.Split(strings.TrimSpace(string(b[:n])), "\n")
+}
+
+// changeLogRecent: the text of change-log lines of the last d, newest first ("2006-01-02 15:04:05 text").
+func changeLogRecent(d time.Duration) []string {
+	var out []string
+	lines := changeLogTail()
+	for i := len(lines) - 1; i >= 0; i-- {
+		l := lines[i]
+		if len(l) < 21 {
+			continue
+		}
+		t, err := time.ParseInLocation("2006-01-02 15:04:05", l[:19], time.Local)
+		if err != nil {
+			continue
+		}
+		if eventNow().Sub(t) > d {
+			break
+		}
+		out = append(out, l[20:])
+	}
+	return out
+}
+
+// eventWANExpected: why a WAN going down or up now is no surprise. quiet: the system is going down
+// (a clean stop marked by `mr event shutdown`): not an event at all. why: an apply or a rollback is
+// running, or the change log of the last two minutes names a redial / reconnect / restart of this
+// WAN or its service (web UI, schedule, agent) — then the events are info, with the reason.
+func eventWANExpected(wan string) (why string, quiet bool) {
+	var m shutdownMark
+	if readJSONFile(eventShutdownFile, &m); m.Time > 0 && m.BootID == eventBootID() && eventNow().Unix()-m.Time < 600 {
+		return "", true
+	}
+	if p, err := readPending(); err == nil && (p.State == stateApplying || p.State == stateReverting) {
+		return "a change was being applied", false
+	}
+	for _, l := range changeLogRecent(2 * time.Minute) {
+		f := strings.Fields(l)
+		if len(f) < 2 {
+			continue
+		}
+		target := f[len(f)-1] // "webui: redial wan NAME", "schedule: reconnect NAME", "…: restart mr-pppoe.NAME"
+		if i := strings.LastIndexByte(target, '.'); i >= 0 {
+			target = target[i+1:]
+		}
+		if target == wan {
+			return eventClean(l, 60), false
+		}
+	}
+	return "", false
+}
+
 func eventOnWAN(c *Config, wan, ev string) {
 	now := eventNow().Unix()
+	sev, note, quiet := "warn", "", false
+	if ev == "up" || ev == "down" {
+		var why string
+		if why, quiet = eventWANExpected(wan); why != "" {
+			sev, note = "info", " ("+why+")"
+		}
+	}
 	switch ev {
 	case "up":
 		var down int64
@@ -293,8 +388,8 @@ func eventOnWAN(c *Config, wan, ev string) {
 			down = s.Down[wan]
 			delete(s.Down, wan)
 		})
-		if down > 0 { // only a recovery: the first "up" after boot and DHCP renewals are not events
-			eventAdd(c, "wan_up", "info", wan, fmt.Sprintf("%s is connected again after %s down", wan, fmtSecs(now-down)), true)
+		if down > 0 && !quiet { // only a recovery: the first "up" after boot and DHCP renewals are not events
+			eventAdd(c, "wan_up", "info", wan, fmt.Sprintf("%s is connected again after %s down%s", wan, fmtSecs(now-down), note), true)
 		}
 	case "down":
 		was := false
@@ -305,12 +400,12 @@ func eventOnWAN(c *Config, wan, ev string) {
 				s.Down[wan] = now
 			}
 		})
-		if was { // udhcpc starts with "deconfig": not a loss
+		if was && !quiet { // udhcpc starts with "deconfig": not a loss
 			how := "lost its connection"
 			if w := c.WANByName(wan); w != nil {
 				how += " (" + w.Proto + " on " + w.Ifname() + ")"
 			}
-			eventAdd(c, "wan_down", "warn", wan, wan+" "+how, true)
+			eventAdd(c, "wan_down", sev, wan, wan+" "+how+note, true)
 		}
 	case "health":
 		eventHealth(c)
@@ -330,14 +425,12 @@ func eventHealth(c *Config) {
 	}
 	var prev map[string]string
 	eventRunUpdate(func(s *eventRun) { prev, s.Health = s.Health, now })
-	if len(now) == 0 {
-		return
-	}
 	names := make([]string, 0, len(now))
 	for n := range now {
 		names = append(names, n)
 	}
 	sort.Strings(names)
+	added := false
 	for _, n := range names {
 		old, ok := prev[n]
 		if !ok || old == now[n] {
@@ -351,10 +444,13 @@ func eventHealth(c *Config) {
 					break
 				}
 			}
-			eventAdd(c, "failover", "warn", n, fmt.Sprintf("%s fails its health check; %s", n, to), true)
+			added = eventAdd(c, "failover", "warn", n, fmt.Sprintf("%s fails its health check; %s", n, to), false) || added
 		} else {
-			eventAdd(c, "failover", "info", n, n+" passes its health check again", true)
+			added = eventAdd(c, "failover", "info", n, n+" passes its health check again", false) || added
 		}
+	}
+	if added {
+		eventKick(c, "failover")
 	}
 }
 
@@ -388,20 +484,24 @@ func eventLoginLock(remote, what string, locked time.Duration) {
 // dnsmasq's lease file is in RAM, so the devices of the house come back one by one as they renew.
 const eventLearn = 24 * 3600
 
-// eventScanLeases reports DHCP clients whose MAC was never seen (dhcp.hosts count as known). The
-// list of seen MACs is on flash (a reboot reports nothing); for a day after it is created it only
-// learns.
+// eventScanLeases reports DHCP clients whose MAC was never seen (dhcp.hosts count as known). The list
+// of seen MACs is on flash (a reboot reports nothing); for a day after it is created it only learns.
+// New MACs are appended (18 bytes each); the list is rewritten to its newest eventSeenMax only when it
+// has grown eventSeenSlack past that. At most eventScanMax devices are reported one by one per scan.
 func eventScanLeases(c *Config) {
 	now := eventNow()
 	os.MkdirAll(filepath.Dir(eventSeenFile), 0755)
 	if f, err := os.OpenFile(eventSeenFile, os.O_CREATE|os.O_WRONLY, 0644); err == nil {
 		f.Close()
 	}
-	os.Chtimes(eventSeenFile, now, now) // before reading: a change from here on triggers the next scan
+	// before reading, and a second early: a lease written later (even within this second) is newer,
+	// so mon-collect's `[ leases -nt seen ]` never misses one (at worst one scan too many)
+	os.Chtimes(eventSeenFile, now.Add(-time.Second), now.Add(-time.Second))
 	v4, _ := parseLeases(readFile(eventLeaseFile))
 	seenData, err := os.ReadFile(eventDevices)
+	fresh := os.IsNotExist(err)
 	learnUntil := int64(0)
-	if os.IsNotExist(err) {
+	if fresh {
 		learnUntil = now.Unix() + eventLearn
 	}
 	var order []string
@@ -419,17 +519,24 @@ func eventScanLeases(c *Config) {
 	for _, h := range c.DHCP.Hosts {
 		known[strings.ToLower(h.MAC)] = true
 	}
-	added := false
+	var added []string
+	var report []lease
 	for _, l := range v4 {
 		mac := strings.ToLower(l.MAC)
 		if !reMAC.MatchString(mac) || known[mac] {
 			continue
 		}
 		known[mac] = true
-		order = append(order, mac)
-		added = true
-		if learning {
-			continue
+		added = append(added, mac)
+		if !learning {
+			report = append(report, l)
+		}
+	}
+	kept := false
+	for i, l := range report {
+		if i == eventScanMax {
+			kept = eventAdd(c, "new_device", "info", "", fmt.Sprintf("%d more new devices (mr dns leases)", len(report)-i), false) || kept
+			break
 		}
 		name := l.Name
 		if name == "*" || name == "" {
@@ -439,23 +546,45 @@ func eventScanLeases(c *Config) {
 		if n := lanNetFor(c, net.ParseIP(l.IP)); n != nil {
 			where = " on " + n.Name
 		}
+		mac := strings.ToLower(l.MAC)
 		priv := ""
-		if b := mac[1]; b == '2' || b == '6' || b == 'a' || b == 'e' {
+		if b := mac[1]; b == '2' || b == '6' || b == 'a' || b == 'e' { // locally administered: randomized
 			priv = ", private MAC"
 		}
-		eventAdd(c, "new_device", "info", mac, fmt.Sprintf("%s (%s%s) got %s%s", eventClean(name, 64), mac, priv, l.IP, where), true)
+		kept = eventAdd(c, "new_device", "info", mac, fmt.Sprintf("%s (%s%s) got %s%s", eventClean(name, 64), mac, priv, l.IP, where), false) || kept
 	}
-	if seenData == nil || added {
-		if len(order) > eventSeenMax {
-			order = order[len(order)-eventSeenMax:]
+	if kept {
+		eventKick(c, "new_device")
+	}
+	all := append(order, added...)
+	switch {
+	case fresh || len(all) > eventSeenMax+eventSeenSlack:
+		if len(all) > eventSeenMax {
+			all = all[len(all)-eventSeenMax:]
 		}
 		head := ""
 		if learning {
 			head = fmt.Sprintf("# learning until %d\n", learnUntil)
 		}
-		if err := writeAtomic(eventDevices, []byte(head+strings.Join(order, "\n")+"\n"), 0600); err != nil {
+		body := strings.Join(all, "\n")
+		if body != "" {
+			body += "\n"
+		}
+		if err := writeAtomic(eventDevices, []byte(head+body), 0600); err != nil {
 			logf("event: %v", err)
 		}
+	case len(added) > 0:
+		f, err := os.OpenFile(eventDevices, os.O_WRONLY|os.O_APPEND, 0600)
+		if err != nil {
+			logf("event: %v", err)
+			return
+		}
+		b := strings.Join(added, "\n") + "\n"
+		if len(seenData) > 0 && seenData[len(seenData)-1] != '\n' {
+			b = "\n" + b
+		}
+		f.WriteString(b)
+		f.Close()
 	}
 }
 
@@ -468,10 +597,12 @@ type bootState struct {
 	Pstore  []string `json:"pstore,omitempty"` // crash records already reported (name@mtime)
 }
 
+// shutdownMark: written by `mr event shutdown` while OpenRC stops the system (reboot and power-off
+// both run the "shutdown" runlevel: Alpine's inittab), read by the next `mr event boot`.
 type shutdownMark struct {
-	Time     int64  `json:"time"`
-	Runlevel string `json:"runlevel,omitempty"`
-	Why      string `json:"why,omitempty"`
+	Time   int64  `json:"time"`
+	BootID string `json:"boot_id,omitempty"` // the boot that ended cleanly (a mark left by an older boot is stale)
+	Why    string `json:"why,omitempty"`
 }
 
 // pstoreRecords: crash records the kernel kept over the reboot (ramoops), with the first line that
@@ -497,9 +628,11 @@ func pstoreRecords() (ids []string, first string) {
 	return ids, first
 }
 
-// crashMarks: kernel log text that means something went badly wrong.
-var crashMarks = []string{"Kernel panic", "Internal error:", "Unable to handle kernel", "BUG:", "Oops", "Out of memory:",
-	"soft lockup", "hard LOCKUP", "rcu_sched self-detected stall", "hung_task", "blocked for more than", "watchdog: "}
+// crashMarks: kernel log text that means something went badly wrong. Not "watchdog: " — the watchdog
+// driver announces itself with it at every boot ("1001c000.watchdog: Watchdog enabled"); the lockup
+// detectors' lines are matched by "soft lockup" / "hard LOCKUP".
+var crashMarks = []string{"Kernel panic", "Internal error:", "Unable to handle kernel", "BUG:", "Oops:", "Out of memory:",
+	"soft lockup", "hard LOCKUP", "self-detected stall", "detected stalls on CPU", "blocked for more than"}
 
 // crashLine: the first kernel log line with a crash mark (timestamp and level stripped).
 func crashLine(s string) string {
@@ -519,23 +652,24 @@ func crashLine(s string) string {
 	return ""
 }
 
-// eventBoot records why the router (re)started, once per boot.
+// eventBoot records why the router (re)started, once per boot. mr-bootlog runs it as the last boot
+// service, before NTP may have synced: the clock is then mr-clock's last saved time, so the downtime
+// is only given when NTP already agrees.
 func eventBoot(c *Config) error {
 	id := eventBootID()
 	var prev bootState
-	if b, err := os.ReadFile(eventBootFile); err == nil {
-		json.Unmarshal(b, &prev)
-	}
-	if id != "" && prev.BootID == id {
-		return nil
-	}
+	readJSONFile(eventBootFile, &prev)
 	var mark *shutdownMark
 	if b, err := os.ReadFile(eventShutdownFile); err == nil {
 		var m shutdownMark
-		if json.Unmarshal(b, &m) == nil {
+		if json.Unmarshal(b, &m) == nil && m.BootID != id && (prev.BootID == "" || m.BootID == "" || m.BootID == prev.BootID) {
 			mark = &m
 		}
+		// consumed; a mark of this very boot came from a restart of mr-bootlog, not a shutdown
 		os.Remove(eventShutdownFile)
+	}
+	if id != "" && prev.BootID == id {
+		return nil
 	}
 	ids, first := pstoreRecords()
 	reported := map[string]bool{}
@@ -552,11 +686,11 @@ func eventBoot(c *Config) error {
 	case crash:
 		sev, msg = "warn", "booted after a kernel crash: "+first
 	case mark != nil:
-		msg = "booted after a clean " + map[bool]string{true: "shutdown", false: "reboot"}[mark.Runlevel == "shutdown"]
+		msg = "booted after a clean restart"
 		if mark.Why != "" {
 			msg += " (" + mark.Why + ")"
 		}
-		if mark.Time > 0 {
+		if synced, _, _ := ntpMarker(); synced && mark.Time > 0 && eventNow().Unix() > mark.Time {
 			msg += ", down " + fmtSecs(eventNow().Unix()-mark.Time)
 		}
 	case upgraded:
@@ -564,9 +698,9 @@ func eventBoot(c *Config) error {
 	case prev.BootID != "":
 		sev, msg = "warn", "booted after an unexpected restart (power cut, hang or hardware watchdog)"
 	}
-	eventAdd(c, "boot", sev, "", msg, true)
+	eventAdd(c, "boot", sev, "", msg, false)
 	if upgraded {
-		eventAdd(c, "upgrade", "info", "", "mr "+prev.Version+" → "+version, true)
+		eventAdd(c, "upgrade", "info", "", "mr "+prev.Version+" → "+version, false)
 	}
 	st := bootState{BootID: id, Version: version, Time: eventNow().Unix(), Pstore: ids}
 	b, _ := json.Marshal(st)
@@ -574,18 +708,18 @@ func eventBoot(c *Config) error {
 		return err
 	}
 	eventSchedule(c)
+	if len(c.Notify.Channels) > 0 { // the boot event and what was logged before OpenRC (a rollback at boot)
+		notifyKick()
+	}
 	return nil
 }
 
 // eventShutdown marks a clean stop (mr-bootlog's stop while OpenRC goes down), with the reason the
 // change log gives for a reboot of the last 15 minutes (schedule, web UI).
 func eventShutdown() error {
-	m := shutdownMark{Time: eventNow().Unix(), Runlevel: os.Getenv("RC_RUNLEVEL")}
-	lines := strings.Split(strings.TrimSpace(readFile(ChangeLog)), "\n")
-	if l := lines[len(lines)-1]; strings.Contains(l, "reboot") && len(l) > 20 {
-		if t, err := time.ParseInLocation("2006-01-02 15:04:05", l[:19], time.Local); err == nil && eventNow().Sub(t) < 15*time.Minute {
-			m.Why = eventClean(l[20:], 80)
-		}
+	m := shutdownMark{Time: eventNow().Unix(), BootID: eventBootID()}
+	if r := changeLogRecent(15 * time.Minute); len(r) > 0 && strings.Contains(r[0], "reboot") {
+		m.Why = eventClean(r[0], 80)
 	}
 	b, _ := json.Marshal(m)
 	return writeAtomic(eventShutdownFile, b, 0600)
@@ -593,7 +727,8 @@ func eventShutdown() error {
 
 // ---- tick (mon-collect) ----
 
-// eventSchedule sets when the next background health check is due (none without an interval).
+// eventSchedule sets when the next background health check is due (none without an interval) and
+// drops a notification retry when no channel is left.
 func eventSchedule(c *Config) {
 	iv := notifyDoctorInterval(c)
 	up := eventUptime()
@@ -604,10 +739,13 @@ func eventSchedule(c *Config) {
 		case s.DoctorNext == 0 || s.DoctorNext > up+float64(iv*60):
 			s.DoctorNext = max(up, eventBootQuiet)
 		}
+		if len(c.Notify.Channels) == 0 {
+			s.NotifyDue = 0
+		}
 	})
 }
 
-// eventTick: called by mr-mon's sampler when the lease file changed or event.due has come.
+// eventTick: started by mr-mon's sampler when the lease file changed or event.due has come.
 func eventTick(c *Config) error {
 	lk := flock(eventTickLock, false)
 	if lk == nil {
@@ -615,7 +753,7 @@ func eventTick(c *Config) error {
 	}
 	defer lk.Close()
 	if fi, err := os.Stat(eventLeaseFile); err == nil {
-		if st, err := os.Stat(eventSeenFile); err != nil || fi.ModTime().After(st.ModTime()) || fi.ModTime().Equal(st.ModTime()) {
+		if st, err := os.Stat(eventSeenFile); err != nil || fi.ModTime().After(st.ModTime()) {
 			eventScanLeases(c)
 		}
 	}
@@ -627,6 +765,9 @@ func eventTick(c *Config) error {
 		}
 	}
 	eventSchedule(c)
+	if len(c.Notify.Channels) == 0 {
+		return nil
+	}
 	_, err := notifyFlush(c, notifyRun{})
 	return err
 }
@@ -659,7 +800,7 @@ func eventCommand(c *Config, args []string) error {
 		}
 		loc := sysLocation(c)
 		for _, e := range ev {
-			fmt.Printf("%s  %-4s %-12s %s\n", time.Unix(e.Time, 0).In(loc).Format("2006-01-02 15:04:05"), e.Sev, e.Type, e.Msg)
+			fmt.Printf("%s  %-4s %-10s %s\n", time.Unix(e.Time, 0).In(loc).Format("2006-01-02 15:04:05"), e.Sev, e.Type, e.Msg)
 		}
 		return nil
 	case "tick":
@@ -674,12 +815,8 @@ func eventCommand(c *Config, args []string) error {
 
 // apiSysEvents: GET → {events (newest first), notify: channel states, types}.
 func apiSysEvents(r apiReq) apiResp {
-	ev := eventsRead(0, eventKeep)
-	for i, j := 0, len(ev)-1; i < j; i, j = i+1, j-1 {
-		ev[i], ev[j] = ev[j], ev[i]
-	}
-	body := map[string]any{"events": ev, "types": eventTypes, "notify": []notifyStatus{}}
-	if c, err := loadConfig(ConfigPath, SecretsPath); err == nil {
+	body := map[string]any{"events": eventRecent(eventKeep), "types": eventTypes, "notify": []notifyStatus{}}
+	if c, err := loadConfig(sysConfigPath, sysSecretsPath); err == nil {
 		body["notify"] = notifyStatuses(c)
 	}
 	return apiResp{body: body}

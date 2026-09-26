@@ -599,9 +599,14 @@ func asciiOnly(s string) string {
 	}, s)
 }
 
-// notifyErr: a send failure as one line without the URL and without any secret of the channel.
+// notifyErr: a send failure as one printable line without the URL (a request error names it) and
+// without any secret of the channel — replaced before the line is shortened, so no part of one is left.
 func notifyErr(err error, secrets ...string) error {
-	s := ddnsErrText(err)
+	s := err.Error()
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		s = strings.Replace(s, ue.Error(), ue.Err.Error(), 1)
+	}
 	for _, x := range secrets {
 		if x == "" {
 			continue
@@ -610,7 +615,7 @@ func notifyErr(err error, secrets ...string) error {
 			s = strings.ReplaceAll(s, v, "***")
 		}
 	}
-	return errors.New(s)
+	return errors.New(eventClean(s, 200))
 }
 
 // notifySend delivers one message to one channel.
@@ -802,7 +807,7 @@ func apiSysNotifyTest(r apiReq) apiResp {
 	if in.Name != "" && !reName.MatchString(in.Name) {
 		return errResp(400, "bad channel name")
 	}
-	c, err := loadConfig(ConfigPath, SecretsPath)
+	c, err := loadConfig(sysConfigPath, sysSecretsPath)
 	if err != nil {
 		return errResp(500, "%v", err)
 	}

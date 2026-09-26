@@ -2,13 +2,17 @@
 # Boot log on flash: 2 minutes after boot, save the kernel log, service states, addresses and the
 # system log to /etc/mini-router/state/bootlog/ (newest 5 kept). /var/log is RAM, so without this a
 # boot that fails (no LAN, a service that never starts, ...) leaves nothing to look at afterwards.
-description="save a snapshot of this boot to flash"
+# Also the event log's boot records (mr/mod_sys_event.go): `mr event boot` says why the router started
+# (clean restart, kernel crash in pstore, power cut / hang, new firmware); `mr event shutdown` marks a
+# clean stop — OpenRC stops this service first (after *), for a reboot and a power-off alike.
+description="save a snapshot of this boot to flash; boot / shutdown events"
 depend() {
 	need localmount
 	after *
 }
 start() {
 	ebegin "Scheduling the boot log snapshot"
+	/usr/sbin/mr event boot > /dev/null 2>&1 || :
 	(
 		sleep 120
 		d=/etc/mini-router/state/bootlog
@@ -27,4 +31,11 @@ start() {
 		ls -1t "$d"/boot-*.txt 2>/dev/null | tail -n +6 | while read -r old; do rm -f "$old"; done
 	) < /dev/null > /dev/null 2>&1 &
 	eend 0
+}
+stop() {
+	# only when the system goes down: a restart of this service must not look like a clean shutdown
+	if [ "${RC_GOINGDOWN:-}" = YES ] || [ "${RC_RUNLEVEL:-}" = shutdown ] || [ "${RC_RUNLEVEL:-}" = reboot ]; then
+		/usr/sbin/mr event shutdown > /dev/null 2>&1 || :
+	fi
+	return 0
 }

@@ -2,11 +2,12 @@ package main
 
 // sys module: `mr doctor` (Cd1s/mini-router#16) — a fixed set of read-only checks, each finding with
 // a severity (ok | warn | risk | skip) and a one-line fix. The first thing to run when something is
-// wrong (agents: `mr doctor --json`); also API sys.doctor (web UI 状态 › 体检与事件) and, with
-// notify.doctor_interval, a background run from `mr event tick` whose new findings become events.
+// wrong (agents: `mr doctor --json`, MCP mon_query view doctor); also API sys.doctor (web UI 状态 ›
+// 体检与事件) and, with notify.doctor_interval, a background run from `mr event tick` whose new
+// findings become events.
 //
 // Checks: config (validates, guard, edits not applied), pending (a change waiting for confirmation, a
-// failed boot rollback), wan (address, health, CGNAT behind port forwards), routes (main default route,
+// failed boot rollback), wan (address, health, CGNAT behind port forwards, overlap with a LAN subnet), routes (main default route,
 // per-WAN tables), dns (a lookup through dnsmasq on 127.0.0.1), ipv6 (delegated prefix on the LAN), offload
 // (flowtable, hardware flag, PPE entries), services (wanted vs running), wifi (radios / BSSes up), clock
 // (plausible, NTP synced), storage (config flash, /tmp), memory, conntrack, temp, crash (pstore records,
@@ -39,6 +40,9 @@ type docFinding struct {
 	Title  string `json:"title"`
 	Detail string `json:"detail"`
 	Fix    string `json:"fix,omitempty"`
+	// NoEvent: a standing choice or a moment of an apply, not a fault — the background run does not
+	// turn it into an event (it would come back after every reboot, or with every change)
+	NoEvent bool `json:"-"`
 }
 
 type docResult struct {
@@ -95,7 +99,8 @@ func ntpMarker() (synced, known bool, age time.Duration) {
 	return age < 30*time.Minute, true, age
 }
 
-func newDocEnv() *docEnv {
+// newDocEnv: the real system (a variable: tests of the background run use a fake one).
+var newDocEnv = func() *docEnv {
 	return &docEnv{
 		now:    time.Now(),
 		uptime: atof(firstField(readFile("/proc/uptime"))),
@@ -224,7 +229,7 @@ func docConfig(c *Config, e *docEnv) []docFinding {
 	if ch, known := e.unapplied(c); known && len(ch) > 0 {
 		out = append(out, docFinding{ID: "config.unapplied", Sev: "warn", Title: "router.yaml",
 			Detail: fmt.Sprintf("%d change(s) not applied yet: %s", len(ch), eventClean(ch[0], 120)),
-			Fix:    "mr plan; mr apply --confirm 120 (or undo the edit)"})
+			Fix:    "mr plan; mr apply --confirm 120 (or undo the edit)", NoEvent: true})
 	}
 	if len(out) == 0 {
 		out = append(out, docOK("router.yaml", "valid, guard kept, nothing unapplied"))
@@ -246,12 +251,12 @@ func docPending(c *Config, e *docEnv) []docFinding {
 	p, err := e.pending()
 	switch {
 	case err == nil && p.State == stateApplying:
-		out = append(out, docFinding{Sev: "warn", Title: "Change", Detail: fmt.Sprintf("an apply (%s) is running", p.Via), Fix: "wait for it: mr history"})
+		out = append(out, docFinding{Sev: "warn", Title: "Change", Detail: fmt.Sprintf("an apply (%s) is running", eventClean(p.Via, 40)), Fix: "wait for it: mr history", NoEvent: true})
 	case err == nil && p.State == stateReverting:
-		out = append(out, docFinding{Sev: "warn", Title: "Change", Detail: fmt.Sprintf("a change (%s) is being rolled back", p.Via), Fix: "wait for it: mr history"})
+		out = append(out, docFinding{Sev: "warn", Title: "Change", Detail: fmt.Sprintf("a change (%s) is being rolled back", eventClean(p.Via, 40)), Fix: "wait for it: mr history", NoEvent: true})
 	case err == nil:
-		out = append(out, docFinding{Sev: "warn", Title: "Change", Detail: fmt.Sprintf("a change (%s) waits for confirmation: rolled back in %ds; no other change can be applied", p.Via, p.left()),
-			Fix: "check it works, then mr confirm (keep) — or mr rollback (undo)"})
+		out = append(out, docFinding{Sev: "warn", Title: "Change", Detail: fmt.Sprintf("a change (%s) waits for confirmation: rolled back in %ds; no other change can be applied", eventClean(p.Via, 40), p.left()),
+			Fix: "check it works, then mr confirm (keep) — or mr rollback (undo)", NoEvent: true})
 	case !errors.Is(err, fs.ErrNotExist):
 		out = append(out, docFinding{Sev: "warn", Title: "Change", Detail: eventClean(err.Error(), 160), Fix: "mr confirm clears an unreadable marker; mr history"})
 	}
@@ -304,7 +309,11 @@ func docWAN(c *Config, e *docEnv) []docFinding {
 		default:
 			usable++
 			f.Sev, f.Detail = "ok", fmt.Sprintf("up on %s, %s", w.Ifname(), ip)
-			if cls := addrClass(ip); cls != "" && len(fwEnabledForwards(c)) > 0 {
+			if n, pfx := docLANOverlap(c, ip); n != "" { // a hotel / upstream router using the LAN's range
+				f.Sev = "risk"
+				f.Detail += fmt.Sprintf(" is inside %s's subnet %s: LAN and WAN overlap, some destinations are unreachable", n, pfx)
+				f.Fix = "move the LAN to another range (lan.ipv4, e.g. 192.168.77.1/24; DHCP clients follow) — or the upstream network"
+			} else if cls := addrClass(ip); cls != "" && len(fwEnabledForwards(c)) > 0 {
 				f.Sev = "warn"
 				f.Detail += fmt.Sprintf(" is a %s address: the port forwards cannot be reached from the internet", cls)
 				f.Fix = "ask the ISP for a public IPv4 address (or bridge mode on its modem); or reach the LAN over IPv6 / Tailscale"
@@ -320,6 +329,17 @@ func docWAN(c *Config, e *docEnv) []docFinding {
 		}
 	}
 	return out
+}
+
+// docLANOverlap: the LAN-side network whose subnet contains the WAN address ip ("" = none).
+func docLANOverlap(c *Config, ip string) (string, string) {
+	a := net.ParseIP(ip)
+	for _, n := range c.LANNets() {
+		if _, pfx, err := net.ParseCIDR(n.IPv4); err == nil && a != nil && pfx.Contains(a) {
+			return n.Name, pfx.String()
+		}
+	}
+	return "", ""
 }
 
 func docRoutes(c *Config, e *docEnv) []docFinding {
@@ -394,7 +414,7 @@ func docOffload(c *Config, e *docEnv) []docFinding {
 	mode := c.Firewall.Offload
 	if mode == "off" {
 		return []docFinding{{Sev: "warn", Title: "Flow offload", Detail: "firewall.offload is off: every packet goes through the CPU",
-			Fix: "mr set firewall.offload=hardware; mr plan; mr apply --confirm 120"}}
+			Fix: "mr set firewall.offload=hardware; mr plan; mr apply --confirm 120", NoEvent: true}}
 	}
 	ft, err := e.flowtable()
 	if err != nil {
@@ -610,7 +630,7 @@ func docSSH(c *Config, e *docEnv) []docFinding {
 	s := c.Services.SSH
 	if s.Enabled && s.PasswordLogin {
 		return []docFinding{{Sev: "warn", Title: "SSH", Detail: "accepts password logins (root)",
-			Fix: "add your key to services.ssh.authorized_keys, check it works, then services.ssh.password_login: false"}}
+			Fix: "add your key to services.ssh.authorized_keys, check it works, then services.ssh.password_login: false", NoEvent: true}}
 	}
 	if !s.Enabled {
 		return []docFinding{docOK("SSH", "off")}
@@ -621,22 +641,24 @@ func docSSH(c *Config, e *docEnv) []docFinding {
 // ---- background runs → events ----
 
 // doctorEvents turns findings that are new or worse since the last background run into doctor events,
-// and findings that went away into "fine again" ones. The state is in /run (a reboot reports again).
+// and findings that went away into "fine again" ones (NoEvent findings are left out). The state is in
+// /run: a reboot reports what is still wrong once more.
 func doctorEvents(c *Config, r docResult) {
 	var prev map[string]string
 	now := map[string]string{}
 	eventRunUpdate(func(s *eventRun) {
 		prev = s.Doctor
 		for _, f := range r.Checks {
-			if f.Sev == "warn" || f.Sev == "risk" {
+			if (f.Sev == "warn" || f.Sev == "risk") && !f.NoEvent {
 				now[f.ID] = f.Sev
 			}
 		}
 		s.Doctor = now
 	})
+	kept := false
 	for _, f := range r.Checks {
-		if (f.Sev == "warn" || f.Sev == "risk") && sevRank[f.Sev] > sevRank[prev[f.ID]] {
-			eventAdd(c, "doctor", f.Sev, f.ID, f.Title+": "+f.Detail, true)
+		if now[f.ID] == f.Sev && sevRank[f.Sev] > sevRank[prev[f.ID]] {
+			kept = eventAdd(c, "doctor", f.Sev, f.ID, f.Title+": "+f.Detail, false) || kept
 		}
 	}
 	var gone []string
@@ -647,7 +669,10 @@ func doctorEvents(c *Config, r docResult) {
 	}
 	sort.Strings(gone)
 	for _, id := range gone {
-		eventAdd(c, "doctor", "info", id, id+" is fine again", true)
+		kept = eventAdd(c, "doctor", "info", id, id+" is fine again", false) || kept
+	}
+	if kept {
+		eventKick(c, "doctor")
 	}
 }
 
@@ -710,7 +735,7 @@ func doctorText(r docResult) string {
 
 // apiSysDoctor: GET → runs the checks now (a few seconds) and returns the result.
 func apiSysDoctor(r apiReq) apiResp {
-	c, err := loadConfig(ConfigPath, SecretsPath)
+	c, err := loadConfig(sysConfigPath, sysSecretsPath)
 	if err != nil {
 		return apiResp{body: docResult{Time: time.Now().Unix(), Risk: 1, Checks: []docFinding{{ID: "config.load", Check: "config", Sev: "risk",
 			Title: "router.yaml", Detail: eventClean(err.Error(), 200), Fix: "mr validate; fix the file or mr rollback"}}}}
