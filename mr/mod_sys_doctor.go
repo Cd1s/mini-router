@@ -2,7 +2,7 @@ package main
 
 // sys module: `mr doctor` (Cd1s/mini-router#16) — a fixed set of read-only checks, each finding with
 // a severity (ok | warn | risk | skip) and a one-line fix. The first thing to run when something is
-// wrong (agents: `mr doctor --json`, MCP mon_query view doctor); also API sys.doctor (web UI 状态 ›
+// wrong (agents: `mr doctor --json`); also API sys.doctor (web UI 状态 ›
 // 体检与事件) and, with notify.doctor_interval, a background run from `mr event tick` whose new
 // findings become events.
 //

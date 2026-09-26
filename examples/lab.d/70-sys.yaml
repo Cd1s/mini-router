@@ -28,8 +28,6 @@ services:
     authorized_keys:                        # managed block in /root/.ssh/authorized_keys; other lines are kept
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDOGJDCePFDR8nNJPCzmDX6zxWpEH/sQ3kBFp/rZ0D2I lab-laptop
       - ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBNv5ls2cMXY7dW6O6Vz2KVjjr95X1TsH3S+tudkbci188YyeFDhEsK8e2dNFxXjUS5IERTFJe/VODdvFE/zB8/I= lab-phone
-    agents:                                 # AI agents: these keys only run `mr mcp` (docs/mcp.md)
-      - {name: claude, scope: apply, key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPZjXb1AVrtuTcXNCKhHw4lGC1nnCSEs8dCKxLatUkH8 lab-agent}
   panel: {enabled: true}
   ddns:                                     # no daemon: WAN hooks + crond run `mr ddns sync` (only calls the API on change)
     enabled: true

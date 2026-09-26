@@ -39,13 +39,6 @@ type adminPath struct {
 	Port string
 }
 
-func (a adminPath) String() string {
-	if a.Port != "" {
-		return a.Dev + "/" + a.Port
-	}
-	return a.Dev
-}
-
 // findAdminPath: addr is the web client's REMOTE_ADDR or the SSH client (SSH_CLIENT's first field).
 var findAdminPath = func(addr string) adminPath {
 	a := adminPath{Addr: addr}

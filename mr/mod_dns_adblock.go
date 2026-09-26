@@ -228,9 +228,6 @@ func adblockParse(r io.Reader, set map[string]bool) (good, total int, err error)
 	return good, total, sc.Err()
 }
 
-// under reports whether d is name or a name below it.
-func under(d, name string) bool { return d == name || strings.HasSuffix(d, "."+name) }
-
 // adblockBuild: the names to block (sorted, none under another), and the allowed names that sit
 // under a blocked one (forwarded as usual). allow also removes everything under it.
 func adblockBuild(set map[string]bool, allow []string) (block, fwd []string) {
