@@ -1,6 +1,6 @@
 package main
 
-// JSON Schema of router.yaml (Cd1s/mini-router#17; MCP input schemas, Cd1s/mini-router#37/#38; editor
+// JSON Schema of router.yaml (Cd1s/mini-router#17, #38; editor
 // completion): generated from the Go types by reflection, so it cannot drift from what the config
 // decoder accepts. Types, nesting and unknown keys (additionalProperties: false) come from the
 // types; value sets (enum) from schemaEnums, which a test checks against validation. `required`
@@ -65,8 +65,6 @@ func schemaEnums() map[string][]string {
 		"Schedule.Action":             e("reboot", "restart", "reconnect", "wol"),
 		"DDNSRecord.Provider":         e("", "cloudflare"),
 		"APIToken.Scope":              e("read", "operate", "apply"),
-		"SSHAgent.Scope":              e("read", "operate", "apply"),
-		"Guard.MaxRiskWithoutTouch":   e("", "low", "medium"),
 
 		"DNSSovereignty.PrivateRelay": e("", "allow", "block"),
 	}

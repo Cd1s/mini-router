@@ -425,7 +425,7 @@ func sysCommand(c *Config, args []string) error {
 				if inside {
 					where = "managed"
 				}
-				if k, err := parseKeyLine(t); err == nil {
+				if k, err := parseAuthKey(t); err == nil {
 					fmt.Printf("%s %s %s %s\n", where, k.FP, k.Type, k.Comment)
 				} else {
 					fmt.Printf("%s (not parsed: %v)\n", where, err)

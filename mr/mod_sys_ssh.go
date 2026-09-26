@@ -106,7 +106,6 @@ func validateSSH(c *Config, v *Validator) {
 		}
 		seen[k.FP] = true
 	}
-	validateAgents(c, v)
 }
 
 // sshListenAddrs: the router's IPv4 address on every LAN-zone network (services.ssh.lan_only).
@@ -189,7 +188,6 @@ func renderAuthKeys(c *Config) (string, bool) {
 			lines = append(lines, k.line)
 		}
 	}
-	lines = append(lines, agentKeyLines(c)...) // keys that only run `mr mcp` (mcp_ssh.go)
 	cur, _ := os.ReadFile(authKeysFile)
 	return mergeManaged(string(cur), akBegin, akEnd, lines)
 }
@@ -213,7 +211,7 @@ func apiSysSSHKeys(r apiReq) apiResp {
 		case t == "" || strings.HasPrefix(t, "#"):
 			continue
 		}
-		k, perr := parseKeyLine(t)
+		k, perr := parseAuthKey(t)
 		if perr != nil {
 			// options-prefixed or unknown lines outside the block still count as "other"
 			invalid++

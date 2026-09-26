@@ -58,12 +58,11 @@ type Lucky struct {
 }
 
 type SSH struct {
-	Enabled       bool       `yaml:"enabled"`
-	Port          int        `yaml:"port"`
-	PasswordLogin bool       `yaml:"password_login"`
-	LANOnly       bool       `yaml:"lan_only,omitempty"`        // listen only on the LAN-zone router addresses (IPv4)
-	Keys          []string   `yaml:"authorized_keys,omitempty"` // managed block in /root/.ssh/authorized_keys
-	Agents        []SSHAgent `yaml:"agents,omitempty"`          // AI agents: keys that only run `mr mcp` (mcp_ssh.go)
+	Enabled       bool     `yaml:"enabled"`
+	Port          int      `yaml:"port"`
+	PasswordLogin bool     `yaml:"password_login"`
+	LANOnly       bool     `yaml:"lan_only,omitempty"`        // listen only on the LAN-zone router addresses (IPv4)
+	Keys          []string `yaml:"authorized_keys,omitempty"` // managed block in /root/.ssh/authorized_keys
 }
 
 // conntrackMax is the default nf_conntrack_max (overridable with system.sysctl).

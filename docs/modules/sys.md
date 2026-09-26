@@ -51,8 +51,6 @@ services:
     lan_only: false          # true: listen only on the IPv4 address of every LAN-zone network
     authorized_keys:         # managed block in /root/.ssh/authorized_keys (other lines are never touched)
       - ssh-ed25519 AAAAC3Nza... me@laptop
-    agents:                  # AI agents: keys that can only run `mr mcp` with this scope (docs/mcp.md)
-      - {name: claude, scope: operate, key: ssh-ed25519 AAAAC3Nza...}
   panel: {enabled: true}     # web UI (busybox httpd on the main LAN address, port 80)
   ddns:                      # dynamic DNS, no daemon (see "DDNS" below)
     enabled: true
@@ -101,10 +99,6 @@ Validation (the security boundary — everything below ends up in a file, a cron
 * `ssh.authorized_keys`: `type base64 [comment]`, type one of ed25519 / rsa / ecdsa / sk-*, the base64
   blob must start with the same key type, no options (`command=`, `from=` …), printable comment, no
   duplicates, at most 32. `ssh.port` must not be 53/67/80/123/547 or the tailscale port.
-* `ssh.agents`: name `[a-z][a-z0-9_-]{0,14}` and unique, `scope` read / operate / apply, `key` validated like
-  `authorized_keys` and neither a login key nor another agent's; at most 8. Rendered into the managed block as
-  `command="/usr/sbin/mr mcp --scope=S --agent=NAME",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty
-  <type> <base64> mr-agent:NAME` (see `docs/mcp.md`).
 * `schedules`: name `[A-Za-z0-9_.-]{1,40}` and unique; `cron` exactly 5 numeric fields (`*`, `n`,
   `a-b`, `*/n`, `a-b/n`, lists; no names, no `@reboot`), minute a single number (every task runs at
   most once per hour), for `reboot` the hour too (at most once per day). `restart` targets must be a
@@ -334,7 +328,7 @@ The device must have Wake-on-LAN enabled (BIOS / NIC driver) and usually needs a
 Nothing resident: the checks run when asked, events are appended by the code that sees them, and notifications go out
 from short `mr` runs.
 
-**`mr doctor`** (`sys.doctor`, web UI 状态 › 体检与事件 › 体检, MCP `mon_query` view `doctor`) — a fixed list of read-only
+**`mr doctor`** (`sys.doctor`, web UI 状态 › 体检与事件 › 体检) — a fixed list of read-only
 checks, each finding `ok | warn | risk | skip` with a one-line fix: `config` (validates, guard kept, edits not applied),
 `pending` (a change waiting for confirmation, a failed boot rollback), `wan` (IPv4 address, multi-WAN health, CGNAT /
 private address behind port forwards, a WAN address inside a LAN subnet — a hotel network on the same range), `routes`
