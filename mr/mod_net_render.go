@@ -323,6 +323,7 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 	case "tail":
 		b.WriteString(perfScript)
 	}
+	modeNetSh(c, phase, b)
 }
 
 func vlanLink(b *strings.Builder, dev string, vid int) {

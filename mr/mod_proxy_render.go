@@ -522,6 +522,10 @@ func proxyNft(c *Config, hook string, n *Nft) {
 	n.W("chain proxy_tp4 {")
 	n.W("\tfib daddr type local return")
 	dnsSkip()
+	if c.bypassReplyRoute() {
+		// mode bypass route-only: the main router sent the request here; its reply goes back that way (mode.go)
+		n.W("\tct mark set ct mark | %s", proxyMark)
+	}
 	n.W("\tmeta l4proto tcp socket transparent 1 meta mark set %s accept", proxyMark)
 	n.W("\tmeta l4proto { tcp, udp } tproxy ip to 127.0.0.1:%d meta mark set %s accept", tp, proxyMark)
 	n.W("\tcounter drop comment \"proxy down: fail closed\"")
@@ -534,6 +538,12 @@ func proxyNft(c *Config, hook string, n *Nft) {
 		n.W("\tmeta l4proto tcp socket transparent 1 meta mark set %s accept", proxyMark)
 		n.W("\tmeta l4proto { tcp, udp } tproxy ip6 to [::1]:%d meta mark set %s accept", tp, proxyMark)
 		n.W("\tcounter drop comment \"proxy down: fail closed\"")
+		n.W("}")
+	}
+
+	if c.bypassReplyRoute() {
+		n.W("chain proxy_reply {\n\t\ttype route hook output priority mangle; policy accept;")
+		n.W("\tct direction reply ct mark & %s == %s meta mark set %s", proxyMark, proxyMark, bypassReplyMark)
 		n.W("}")
 	}
 

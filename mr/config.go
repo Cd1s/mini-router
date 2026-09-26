@@ -12,6 +12,7 @@ import (
 // Config is the single source of truth for the router (/etc/mini-router/router.yaml).
 // Each section's type lives in the module that owns it (mod_*.go); see docs/MODULES.md.
 type Config struct {
+	Mode      string     `yaml:"mode,omitempty"`      // router (default) | bypass | ap (mode.go)
 	System    System     `yaml:"system"`              // sys
 	LAN       LAN        `yaml:"lan"`                 // net
 	Networks  []Network  `yaml:"networks,omitempty"`  // net: extra LAN-side networks (guest, IoT, VLANs)
@@ -30,6 +31,7 @@ type Config struct {
 	Guard     Guard      `yaml:"guard,omitempty"`     // baselines every config must keep (guard.go)
 	API       APIConf    `yaml:"api,omitempty"`       // api: tokens for scripts and agents (api_token.go)
 	Notify    Notify     `yaml:"notify,omitempty"`    // sys: where events are pushed (mod_sys_notify.go)
+	Bypass    Bypass     `yaml:"bypass,omitempty"`    // mode bypass: which clients use this box (mode.go)
 
 	secrets map[string]string
 }
@@ -98,6 +100,7 @@ func (c *Config) Validate() []string {
 			m.Validate(c, v)
 		}
 	}
+	modeValidate(c, v)
 	guardValidate(c, v)
 	return v.errs
 }

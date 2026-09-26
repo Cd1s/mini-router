@@ -66,6 +66,47 @@ lan:
   ipv6_ra: true               # 向 LAN 通告前缀（dnsmasq）
 ```
 
+### mode：旁路由 / 纯 AP（core，`mr/mode.go`）
+
+```yaml
+mode: bypass                  # router（默认）| bypass | ap
+lan:
+  bridge: br-lan
+  ports: [eth0]               # 一个口也行（ap：把所有口都列上，含原来的 WAN 口）
+  ipv4: 192.168.1.2/24        # 固定地址，不要落在主路由的地址池里
+  gateway: 192.168.1.1        # 主路由：本机的默认网关和 DNS 上游（dns.upstream 默认 manual + [gateway]）
+wan: []
+bypass:
+  clients: route-only         # route-only（默认）| all | selected
+  macs: []                    # selected：以本机为网关 + DNS 的设备
+  nat: true                   # all / selected：转发流量伪装成本机地址（默认开）
+```
+
+旁路由（`mode: bypass`）三种拓扑：
+
+| clients | 设备的网关 / DNS | 经过本机的流量 | 本机挂了 |
+|---|---|---|---|
+| `route-only`（推荐） | 网关仍是主路由；主路由的 DHCP 把 DNS 指向本机，并把代理网段（`mr proxy routes` 打印的 fake-ip + 规则 CIDR）静态路由到本机 | 只有被代理的连接 | 只影响被代理的域名；主路由的硬件加速完全不受影响 |
+| `all` | 本机发 DHCP（主路由的 DHCP 关掉），网关和 DNS 都是本机 | 全部 | 全家断网 |
+| `selected` | 本机发 DHCP；只有 `macs` 里的设备拿到本机，其余设备拿到主路由 | 这些设备的全部流量 | 只影响这些设备 |
+
+- **route-only 的回程**：客户端的请求是主路由转过来的，本机的代理（sing-box 的透明 socket）如果直接把回包发给客户端，主路由
+  只看到连接的一个方向，下一个包就被它的连接跟踪当成 invalid 丢掉（OpenWrt 默认就这样）。所以被代理的连接打一个 connmark，
+  回包在 output 的 route 链里打 fwmark `0x2000000`，走路由表 301（`default via lan.gateway`），经主路由回去：两个方向都经过主路由。
+  CI（`tools/ci.d/mode.sh`）在网络命名空间里用一个丢 invalid 的主路由验证了这一点，并验证去掉这条规则连接就断。
+- **all / selected** 默认做 NAT（`iifname br-lan oifname br-lan masquerade`）：不做的话主路由把回包直接交给设备，本机只看到
+  一个方向，同样被当成 invalid。接收入站端口转发的服务器不要把旁路由当网关。
+- 代理必须 `proxy.ipv4_only: true`：设备的 IPv6 路由和 RA / DNS 仍是主路由的。在主路由上关掉 IPv6 DNS 下发，否则设备会绕过
+  本机的 DNS。本机自己用主路由通告的前缀 SLAAC（`accept_ra=2`），不发 RA。
+- 不支持（校验会拒绝）：`wan`、`networks`、`multiwan`、`policy_routes`、`firewall.forwards / open / ipv6_allow / access`、src / dest 为
+  `wan` 的流量规则、`multicast.igmpproxy`、`lan.ipv6_ra`、`services.edge.open`、`dns.upstream: isp`。整个上游网络都算 LAN 区，
+  管理页面靠密码保护。
+
+纯 AP（`mode: ap`）：所有口和 SSID 在一个网桥里，管理地址固定（`lan.ipv4`）+ 主路由做网关；关掉转发（`ip_forward=0`），不做 NAT、
+DHCP、RA、代理和 flowtable（桥接流量本来就不经过路由）；input 防火墙照常。多台 AP 同 SSID 用有线回程。
+
+`install.sh` 问“工作模式”：选 bypass / ap 时不问 WAN，本机地址和主路由地址默认沿用现在的（SSH 安装不会断线）。
+
 ### networks（访客 / IoT / VLAN）
 
 ```yaml
@@ -255,6 +296,8 @@ multicast: {igmp_snooping: false, igmp_proxy: false, upstream: wan2}
   负载均衡时给每条线路设权重，0 = 只做备用。
 - **网络 → LAN 与网络**：改 LAN 地址和 LAN 口；“+ 添加网络”建访客 / IoT 网络：选区域（访客只能上网）、给它整个网口，
   或者填 VLAN ID 并勾选带标签端口（接支持 VLAN 的交换机 / AP）；DHCP 地址池也在这里。WiFi 的 SSID 在“无线设置”里选网络。
+- **网络 → LAN 与网络 → 工作模式**：选旁路由或纯 AP，填主路由地址。旁路由默认“只管代理”：卡片里列出主路由要添加的静态路由；
+  在主路由的 DHCP 里把 DNS 改成本机地址。选“全部设备”或“指定设备”时先关掉主路由的 DHCP。
 - **路由 → 策略路由**：按 MAC / 源地址 / 目标地址 / 域名指定出口 WAN（域名一栏填 `example.com, video.example`，
   含子域名；更长的列表用 router.yaml 的 `domains_file`）；下面是实时 `ip rule`（v4 / v6）。
 - **路由 → 静态路由**：静态路由表格 + 当前所有路由表。

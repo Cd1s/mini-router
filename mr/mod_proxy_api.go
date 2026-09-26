@@ -375,9 +375,41 @@ func proxyCheck(c *Config) []string {
 	return errs
 }
 
+// proxyMainRoutes: mode bypass route-only — the static routes the main router needs: every proxied
+// IPv4 range (fake-ip + rule CIDRs) via this box.
+func proxyMainRoutes(c *Config) ([]string, error) {
+	sets, err := proxyLoad(c, true)
+	if err != nil {
+		return nil, err
+	}
+	v4, _ := proxySets(c, sets)
+	ip, _, _ := net.ParseCIDR(c.LAN.IPv4)
+	out := []string{}
+	for _, p := range v4 {
+		out = append(out, fmt.Sprintf("%s via %s", p, ip))
+	}
+	return out, nil
+}
+
+// apiProxyRoutes: GET — the main router's static routes for mode bypass route-only.
+func apiProxyRoutes(r apiReq) apiResp {
+	c, err := loadConfig(ConfigPath, SecretsPath)
+	if err != nil {
+		return errResp(500, "%v", err)
+	}
+	if !c.bypassMode() || !c.Proxy.Enabled {
+		return apiResp{body: map[string]any{"routes": []string{}}}
+	}
+	rs, err := proxyMainRoutes(c)
+	if err != nil {
+		return errResp(500, "%v", err)
+	}
+	return apiResp{body: map[string]any{"routes": rs}}
+}
+
 // proxyCmd: `mr proxy status|check|delay [NAME]|select GROUP NODE|parse|fetch` for the shell / agent.
 func proxyCmd(c *Config, args []string) error {
-	usage := fmt.Errorf("usage: mr proxy status | check | delay [NODE|GROUP] | select GROUP NODE | parse [--secrets] [FILE] | fetch [--secrets] URL|SUBSCRIPTION")
+	usage := fmt.Errorf("usage: mr proxy status | check | routes | delay [NODE|GROUP] | select GROUP NODE | parse [--secrets] [FILE] | fetch [--secrets] URL|SUBSCRIPTION")
 	if len(args) == 0 {
 		return usage
 	}
@@ -388,6 +420,12 @@ func proxyCmd(c *Config, args []string) error {
 		return proxyImportCmd(c, args[0] == "fetch", args[1:])
 	case "status":
 		return enc.Encode(proxyStatus(c))
+	case "routes":
+		rs, err := proxyMainRoutes(c)
+		for _, r := range rs {
+			fmt.Println(r)
+		}
+		return err
 	case "check":
 		if !c.Proxy.Enabled {
 			return fmt.Errorf("proxy is disabled")
