@@ -39,6 +39,16 @@ services:
       - {name: "*.example.com", zone: example.com, token_secret: cf_ddns_token, ipv4: wan2}
       - {name: nas.example.com, zone: example.com, token_secret: cf_ddns_token, ipv4: "off", ipv6: "::10", ttl: 300}
 
+notify:                                     # events pushed to the phone; no daemon (hooks + mr-mon's sampler)
+  channels:
+    - {name: phone, type: telegram, token_secret: notify_tg_token, chat_id: "-1001234567890"}
+    - {name: ntfy, type: webhook, url_secret: notify_ntfy_url, format: text}    # ntfy: plain text + Title header
+    - {name: ha, type: webhook, url_secret: notify_ha_url}                      # JSON (Home Assistant, Gotify, Bark …)
+  events: [wan_down, wan_up, failover, rollback, login_lock, new_device, boot, upgrade, doctor]
+  rate: 10                                  # messages per channel and hour; the rest goes out together later
+  quiet_hours: "23:00-07:00"                # only warn / risk events then
+  doctor_interval: 30                       # background mr doctor: new findings become events
+
 schedules:                                  # busybox crond, fixed action set
   - {name: weekly-reboot, cron: "30 4 * * 1", action: reboot}
   - {name: wifi-restart, cron: "0 5 * * *", action: restart, target: mr-hostapd}

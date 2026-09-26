@@ -202,6 +202,15 @@ has "new lease in the same subnet" "$a" "inet 10.99.0.78/24"
 hasnt "new lease in the same subnet" "$a" "10.99.0.77/"
 has "new lease: default" "$(ip -n "$C" route show default)" "default via 10.99.0.1 dev wan metric 10"
 
+# the event log (sys module, through OnWAN) saw it: wan2's failover and return, wan's lost lease and
+# the next one; the first lease and renewals are not events
+ev=$(cat /etc/mini-router/state/events.log 2> /dev/null)
+has "event: failover" "$ev" '"type":"failover","sev":"warn","key":"wan2","msg":"wan2 fails its health check; traffic moves to wan"'
+has "event: failover back" "$ev" '"type":"failover","sev":"info","key":"wan2","msg":"wan2 passes its health check again"'
+has "event: lease lost" "$ev" '"type":"wan_down","sev":"warn","key":"wan","msg":"wan lost its connection (dhcp on wan)"'
+has "event: lease again" "$ev" '"type":"wan_up","sev":"info","key":"wan","msg":"wan is connected again after [0-9]*s down"'
+[ "$(printf '%s\n' "$ev" | grep -c '"type":"wan_up"')" = 1 ] || fail "event: a renewal counted as a recovery: $ev"
+
 # the DHCP WAN leaves router.yaml (back home after travelling): its client's deconfig no longer finds
 # the interface, so `mr routes` (run by every apply) removes the address and default route left on it
 grep -v 'name: wan, device: wan,\|^multiwan:' "$T/router.yaml" > "$T/router-b.yaml"

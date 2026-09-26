@@ -352,7 +352,18 @@ registerPage("status", "overview", "总览", 10, async ()=>{
       h("dl",{class:"kv"}, h("dt",{},"接口"),h("dd",{class:"mono"},w.ifname), h("dt",{},"信道"),h("dd",{},(w.channel||"-")+" · "+(w.htmode||"-")),
         h("dt",{},"终端"),h("dd",{},w.clients))));
     const ts = s.tailscale||{};
-    wrap.replaceChildren(
+    // the last mr doctor run (web UI or background) and the event log (sys module: 状态 › 体检与事件)
+    const doc = s.doctor, probs = doc ? (doc.problems||[]) : [];
+    const docCard = probs.length ? card(h("span",{}, h("span",{class:"dot bad"}), "问题 ("+(doc.risk+doc.warn)+")"),
+      h("div",{}, probs.map(p=>h("div",{style:"margin:2px 0"}, h("span",{class:"tag "+(p.sev==="risk"?"bad":"warn")}, p.sev==="risk"?"风险":"警告"), " ", h("b",{},p.title), " ", p.detail)),
+        h("div",{class:"mut",style:"margin-top:6px;font-size:12px"}, "体检时间 "+new Date(doc.time*1000).toLocaleString())),
+      h("a",{class:"btn sm",href:"#doctor"},"体检 →")) : null;
+    const evs = s.events||[];
+    const evCard = evs.length ? card("最近事件", h("div",{}, evs.map(e=>h("div",{style:"margin:2px 0"},
+        h("span",{class:"mut mono"}, new Date(e.t*1000).toLocaleString()), " ", e.sev!=="info" ? h("span",{class:"tag "+(e.sev==="risk"?"bad":"warn")}, e.sev==="risk"?"风险":"警告") : null, " ", e.msg))),
+      h("a",{class:"btn sm",href:"#doctor"},"全部 →"))
+      : card("最近变更", h("pre",{}, (s.changes||[]).slice().reverse().join("\n")||"（无）"));
+    wrap.replaceChildren(docCard||"",
       h("div",{class:"grid gauges"},
         gauge({label:"CPU", pct:busy, value:busy==null ? "…" : busy.toFixed(0)+" %", sub:cores+"负载 "+s.load, extra:spark(OV.h.cpu, null, 100)}),
         gauge({label:"内存", pct:memPct, value:fmtBytes(memUsed*1024), sub:"共 "+fmtBytes(s.mem_total_kb*1024)+" · 可用 "+fmtBytes(s.mem_avail_kb*1024), extra:spark(OV.h.mem, COLORS[4], 100)}),
@@ -362,7 +373,7 @@ registerPage("status", "overview", "总览", 10, async ()=>{
       h("div",{class:"grid",style:"margin-top:14px"}, wanCards, wifiCards,
         card("Tailscale", h("dl",{class:"kv"}, h("dt",{},"状态"),h("dd",{},ts.state||"-"), h("dt",{},"地址"),h("dd",{class:"mono"},ts.ip||"-"), h("dt",{},"在线节点"),h("dd",{},(ts.peers_online??"-")+" / "+(ts.peers_total??"-"))))),
       card("服务", h("div",{class:"row"}, (s.services||[]).map(x=>h("span",{class:"tag "+(x.running?"ok":"bad")}, x.name)))),
-      card("最近变更", h("pre",{}, (s.changes||[]).slice().reverse().join("\n")||"（无）")));
+      evCard);
   };
   await draw();
   const t = setInterval(()=>draw().catch(()=>{}), 3000);

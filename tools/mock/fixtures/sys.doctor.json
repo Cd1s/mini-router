@@ -1,0 +1,26 @@
+{
+ "time": 1790249100,
+ "risk": 1,
+ "warn": 2,
+ "ok": 15,
+ "checks": [
+  {"id": "config", "check": "config", "sev": "ok", "title": "router.yaml", "detail": "valid, guard kept, nothing unapplied"},
+  {"id": "pending", "check": "pending", "sev": "ok", "title": "Change", "detail": "nothing waiting for confirmation"},
+  {"id": "wan.wan", "check": "wan", "sev": "ok", "title": "WAN wan", "detail": "up on pppoe-wan, 203.0.113.45"},
+  {"id": "wan.wan2", "check": "wan", "sev": "warn", "title": "WAN wan2", "detail": "up on pppoe-wan2, 100.64.23.9 is a cgnat address: the port forwards cannot be reached from the internet", "fix": "ask the ISP for a public IPv4 address (or bridge mode on its modem); or reach the LAN over IPv6 / Tailscale"},
+  {"id": "routes", "check": "routes", "sev": "ok", "title": "Routes", "detail": "default route in the main table and in every WAN table"},
+  {"id": "dns", "check": "dns", "sev": "ok", "title": "DNS", "detail": "dnsmasq resolves ntp.example.com"},
+  {"id": "ipv6", "check": "ipv6", "sev": "ok", "title": "IPv6", "detail": "br-lan has 2001:db8:4a1:7700::1"},
+  {"id": "offload", "check": "offload", "sev": "ok", "title": "Flow offload", "detail": "hardware offload on, 31 connections in the PPE now"},
+  {"id": "services.stubby", "check": "services", "sev": "risk", "title": "Service stubby", "detail": "not running", "fix": "rc-service stubby start; grep stubby /var/log/messages | tail"},
+  {"id": "wifi", "check": "wifi", "sev": "ok", "title": "WiFi", "detail": "2 radio(s) up with every SSID"},
+  {"id": "clock", "check": "clock", "sev": "warn", "title": "Clock", "detail": "NTP last synced 2h05m ago: time-based rules, logs and certificates drift", "fix": "rc-service ntpd restart; mr dns query ntp.example.com (system.ntp reachable?)"},
+  {"id": "storage.config", "check": "storage", "sev": "ok", "title": "Storage", "detail": "config storage (flash): 41.2 MiB free of 58.9 MiB (69%)"},
+  {"id": "storage.tmp", "check": "storage", "sev": "ok", "title": "Storage", "detail": "/tmp (RAM): 238.1 MiB free of 241.4 MiB (98%)"},
+  {"id": "memory", "check": "memory", "sev": "ok", "title": "Memory", "detail": "150.0 MiB available of 482.7 MiB (31%)"},
+  {"id": "conntrack", "check": "conntrack", "sev": "ok", "title": "Connections", "detail": "757 of 100000 conntrack entries (0%)"},
+  {"id": "temp", "check": "temp", "sev": "ok", "title": "Temperature", "detail": "SoC 58.2 °C"},
+  {"id": "crash", "check": "crash", "sev": "ok", "title": "Kernel", "detail": "no crash records, no oops / OOM in this boot"},
+  {"id": "ssh", "check": "ssh", "sev": "ok", "title": "SSH", "detail": "keys only"}
+ ]
+}

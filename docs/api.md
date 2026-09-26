@@ -37,19 +37,20 @@ undone by a rollback. Revoking also drops the hash, so a name used again never b
 
 | Scope | Actions |
 |---|---|
-| `read` | `status`, `config`, `schema`, `history`, `history.diff`, `job`, `net`, `net.ports`, `net.routes`, `net.wan`, `wifi.status`, `wifi.stations`, `wifi.survey`, `dns.stats`, `dns.leases`, `fw.stats`, `proxy.status`, `mon.now`, `mon.history`, `mon.devices`, `mon.conns`, `mon.procs`, `mon.dmesg`, `sys.services`, `sys.time` |
+| `read` | `status`, `config`, `schema`, `history`, `history.diff`, `job`, `net`, `net.ports`, `net.routes`, `net.wan`, `wifi.status`, `wifi.stations`, `wifi.survey`, `dns.stats`, `dns.leases`, `fw.stats`, `proxy.status`, `mon.now`, `mon.history`, `mon.devices`, `mon.conns`, `mon.procs`, `mon.dmesg`, `sys.services`, `sys.time`, `sys.doctor` (runs the health checks), `sys.events` (the event log) |
 | `operate` | + `net.redial`, `wifi.kick`, `wifi.scan`, `dns.release`, `proxy.delay`, `proxy.select`, `service` (start / stop / restart), `diag` |
 | `apply` | + `plan`, `validate`, `apply`, `confirm`, `revert`, `rollback` |
 
 Never, whatever the scope: login / sessions, the web UI password, logs (`logs`, `sys.logs`: they can
 hold URLs with access tokens), `dns.querylog`, backup / restore, firmware, factory reset, reboot, SSH
 keys, subscription fetches and share-link parsing (`proxy.fetch`, `proxy.parse`), list files
-(`proxy.lists`), token management. A new module action is refused until it is listed in
+(`proxy.lists`), token management, test notifications (`sys.notifytest`). A new module action is refused until it is listed in
 `tokenActions` (`api_token.go`).
 
 Within `apply`, a token's change is refused (403) when it touches the token list (`api`), SSH
 (`services.ssh`: keys and password logins are a root shell), `system.sysctl` (`kernel.core_pattern`
-runs programs as root), the `guard` (the owner's baselines), points a `*_file` key at a file the config
+runs programs as root), the `guard` (the owner's baselines), `notify` (a token must not silence or
+redirect the owner's alerts), points a `*_file` key at a file the config
 did not reference yet (its content could come back in an error), or **adds or changes any item that
 references a secret** (a proxy node, a PPPoE WAN, an SSID, a DDNS record — pointed at a host of its own,
 the router would send the secret there; removing such an item is allowed). A token cannot set token

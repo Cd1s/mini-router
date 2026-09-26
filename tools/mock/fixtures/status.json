@@ -10,6 +10,16 @@
  "conntrack": 757,
  "conntrack_max": 100000,
  "ddns": {"records": 3, "ok": 1, "errors": [{"name": "home.example.com", "type": "AAAA", "error": "Cloudflare: HTTP 429 (971 Please wait and consider throttling your request speed)"}]},
+ "doctor": {"time": 1790248800, "risk": 1, "warn": 1, "ok": 16, "problems": [
+  {"id": "services.stubby", "sev": "risk", "title": "Service stubby", "detail": "not running"},
+  {"id": "clock", "sev": "warn", "title": "Clock", "detail": "NTP last synced 2h05m ago: time-based rules, logs and certificates drift"}]},
+ "events": [
+  {"seq": 42, "t": 1790248930, "type": "new_device", "sev": "info", "key": "02:00:00:00:00:31", "msg": "tablet (02:00:00:00:00:31, private MAC) got 192.168.1.131 on lan"},
+  {"seq": 41, "t": 1790248800, "type": "doctor", "sev": "warn", "key": "clock", "msg": "Clock: NTP last synced 2h05m ago: time-based rules, logs and certificates drift"},
+  {"seq": 40, "t": 1790246100, "type": "wan_up", "sev": "info", "key": "wan", "msg": "wan is connected again after 42s down"},
+  {"seq": 39, "t": 1790246058, "type": "wan_down", "sev": "warn", "key": "wan", "msg": "wan lost its connection (pppoe on pppoe-wan)"},
+  {"seq": 38, "t": 1790244600, "type": "boot", "sev": "info", "msg": "booted after a clean restart (schedule: reboot)"}
+ ],
  "hnat_bind": 26,
  "host": "mini-router",
  "kernel": "6.18.52",

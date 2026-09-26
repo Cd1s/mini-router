@@ -16,6 +16,9 @@
 #  8. Wake-on-LAN, real sockets (two network namespaces): `mr wol` sends three 102-byte magic packets
 #     from the router's LAN address to the LAN broadcast through br-lan; a host behind the bridge gets
 #     them, a WAN-side netdev with the default route sends nothing; bad targets are refused
+#  9. events and notifications, real processes: boot / shutdown records, login locks pushed to a local
+#     webhook (one message per burst), a failing webhook backed off (event.due), test, recovery, no secret
+# 10. `mr doctor` on this host: every check, JSON and text
 set -eu
 : "${OUT:?}" "${ROOT:?}"
 MR=$OUT/mr-host
@@ -240,3 +243,130 @@ ip netns del "$NA"
 ip netns del "$NB"
 trap - EXIT
 ok "wol: 3 magic packets to 192.168.1.255:9 through br-lan, none through the WAN, bad targets refused"
+
+# 9. events and notifications with real processes (/run/mini-router is a tmpfs of this private mount
+#    namespace; the webhook is a local receiver): boot records (first, same boot, clean restart), the
+#    login throttle's lock event reaching the webhook through the detached `mr notify flush --hook`
+#    (two locks within its 5 s wait = one message), a failing webhook (kept, backed off, event.due),
+#    `mr notify test`, a hook flush after recovery; no secret in any state file or answer
+mkdir -p /run/mini-router && mount -t tmpfs tmpfs /run/mini-router
+E=$OUT/events
+rm -rf "$E" /etc/mini-router/state && mkdir -p "$E"
+python3 - "$E/hook" <<'PY' &
+import http.server, json, os, sys
+base = sys.argv[1]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode()
+        with open(base + ".rx", "a") as f:
+            f.write(json.dumps({"path": self.path, "title": self.headers.get("Title"), "body": body}) + "\n")
+        self.send_response(500 if os.path.exists(base + ".fail") else 204)
+        self.end_headers()
+    def log_message(self, *a):
+        pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(base + ".port", "w").write(str(s.server_port))
+s.serve_forever()
+PY
+RXPID=$!
+# shellcheck disable=SC2064
+trap "kill $RXPID 2>/dev/null; umount /run/mini-router 2>/dev/null" EXIT
+i=0
+while [ ! -s "$E/hook.port" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+HOOK="http://127.0.0.1:$(cat "$E/hook.port")/ci-hook-path-secret?token=ci-query-secret"
+{ cat "$ROOT/examples/router.yaml"; printf '\nnotify:\n  channels:\n    - {name: hook, type: webhook, url_secret: ci_hook}\n  doctor_interval: 0\n'; } > /etc/mini-router/router.yaml
+{ cat "$ROOT/mr/testdata/secrets.yaml"; printf 'ci_hook: "%s"\n' "$HOOK"; } > /etc/mini-router/secrets.yaml
+"$MR" validate > /dev/null || fail "events: config with notify"
+printf 'correct horse\n' | "$MR" passwd > /dev/null
+rx() { if [ -e "$E/hook.rx" ]; then wc -l < "$E/hook.rx"; else echo 0; fi; }
+settle() { # wait until no background flush runs any more
+	i=0
+	while pgrep -f "$MR notify flush" > /dev/null && [ $i -lt 150 ]; do sleep 0.1; i=$((i + 1)); done
+	if pgrep -f "$MR notify flush" > /dev/null; then fail "a background flush did not end"; fi
+}
+login_lock() { # 5 wrong passwords in a row from $1 (CGI runs, like the web UI)
+	body='{"password":"wrong guess"}'
+	for _ in 1 2 3 4 5; do
+		printf '%s' "$body" | REQUEST_METHOD=POST QUERY_STRING=a=login REMOTE_ADDR=$1 HTTP_X_MR=1 CONTENT_LENGTH=${#body} "$MR" api > /dev/null 2>&1
+	done
+}
+L=/etc/mini-router/state/events.log
+"$MR" event boot
+"$MR" event boot
+[ "$(grep -c '"type":"boot"' "$L")" = 1 ] || fail "events: two boot records in one boot"
+"$MR" event shutdown
+[ -s /etc/mini-router/state/shutdown.json ] || fail "events: no shutdown mark"
+sed -i 's/"boot_id":"[^"]*"/"boot_id":"ci-previous-boot"/' /etc/mini-router/state/boot.json /etc/mini-router/state/shutdown.json
+"$MR" event boot
+tail -n 1 "$L" | grep -q '"msg":"booted after a clean restart"' || fail "events: clean restart: $(tail -n 1 "$L")"
+settle
+[ "$(rx)" = 0 ] || fail "events: a new channel got the history"
+login_lock 192.0.2.77
+login_lock 192.0.2.78
+settle
+[ "$(rx)" = 1 ] || fail "events: two locks within the debounce: $(rx) messages, want 1"
+python3 - "$E/hook.rx" <<'PY' || fail "events: webhook message"
+import json, sys
+m = [json.loads(l) for l in open(sys.argv[1])]
+b = json.loads(m[0]["body"])
+assert m[0]["path"] == "/ci-hook-path-secret?token=ci-query-secret", m[0]["path"]
+assert b["title"] == "mini-router: Login locked (+1)", b["title"]
+assert len(b["events"]) == 2 and "192.0.2.77" in b["message"] and "192.0.2.78" in b["message"], b
+assert b["severity"] == "warn" and b["host"] == "mini-router", b
+PY
+touch "$E/hook.fail"
+login_lock 192.0.2.79
+settle
+[ "$(rx)" = 2 ] || fail "events: no attempt with a failing webhook"
+"$MR" notify status > "$E/status.json"
+python3 - "$E/status.json" /run/mini-router/event.due <<'PY' || fail "events: failed send: $(cat "$E/status.json")"
+import json, sys
+s = json.load(open(sys.argv[1]))[0]
+assert s["name"] == "hook" and s["pending"] == 1 and s["error"] == "webhook: HTTP 500" and s["held"] == "retry", s
+assert 50 <= s["retry_in"] <= 60, s
+up = float(open("/proc/uptime").read().split()[0])
+due = int(open(sys.argv[2]).read())
+assert 50 <= due - up <= 61, (due, up)
+PY
+rm -f "$E/hook.fail"
+"$MR" notify flush
+[ "$(rx)" = 2 ] || fail "events: retried before the backoff ended"
+"$MR" notify test hook | grep -q '"ok": true' || fail "events: notify test"
+{ [ "$(rx)" = 3 ] && tail -n 1 "$E/hook.rx" | grep -q 'Test message'; } || fail "events: test message"
+"$MR" notify flush --hook
+{ [ "$(rx)" = 4 ] && tail -n 1 "$E/hook.rx" | grep -q '192.0.2.79'; } || fail "events: pending event after recovery"
+"$MR" notify status | grep -q '"pending": 0' || fail "events: still pending"
+"$MR" event list > "$E/list.txt"
+[ "$(grep -c 'login_lock' "$E/list.txt")" = 3 ] || fail "events: mr event list: $(cat "$E/list.txt")"
+"$MR" event list --json 2 | python3 -c 'import json,sys; e=json.load(sys.stdin); assert len(e)==2 and e[-1]["type"]=="login_lock", e' || fail "events: list --json"
+for f in /etc/mini-router/state/* /run/mini-router/* "$E/status.json" "$E/list.txt"; do
+	[ -f "$f" ] || continue
+	if grep -q 'ci-hook-path-secret\|ci-query-secret' "$f"; then fail "events: the webhook URL is in $f"; fi
+done
+kill "$RXPID" 2> /dev/null
+trap - EXIT
+umount /run/mini-router
+rm -rf /etc/mini-router/router.yaml /etc/mini-router/secrets.yaml /etc/mini-router/state
+ok "events: boot records, lock events pushed (one message per burst), failure backed off with event.due, test, recovery, no secret"
+
+# 10. mr doctor on this host (a real run: nothing here is a router, so the findings vary): valid JSON,
+#     every check present, every finding with a known severity, problems with a fix; the text form works
+mount -t tmpfs tmpfs /run/mini-router # it keeps its last result there
+# shellcheck disable=SC2086
+"$MR" $CFG doctor --json > "$OUT/doctor.json" || fail "mr doctor --json"
+python3 - "$OUT/doctor.json" <<'PY' || fail "mr doctor: $(head -c 600 "$OUT/doctor.json")"
+import json, sys
+r = json.load(open(sys.argv[1]))
+checks = {f["check"] for f in r["checks"]}
+want = {"config", "pending", "wan", "routes", "dns", "ipv6", "offload", "services", "wifi", "clock", "storage", "memory", "conntrack", "temp", "crash", "ssh"}
+assert checks == want, checks ^ want
+assert all(f["sev"] in ("ok", "warn", "risk", "skip") and f["title"] and f["detail"] for f in r["checks"]), r
+assert all(f.get("fix") for f in r["checks"] if f["sev"] in ("warn", "risk")), r
+assert r["risk"] == sum(f["sev"] == "risk" for f in r["checks"]) and r["warn"] == sum(f["sev"] == "warn" for f in r["checks"])
+PY
+# shellcheck disable=SC2086
+"$MR" $CFG doctor | head -n 1 | grep -q '^mr doctor: [0-9]* risk, [0-9]* warning(s), [0-9]* ok$' || fail "mr doctor text"
+if grep -q 'not-real' "$OUT/doctor.json"; then fail "mr doctor shows a secret"; fi
+[ -s /run/mini-router/doctor.json ] || fail "mr doctor: no saved result"
+umount /run/mini-router
+ok "mr doctor: every check, JSON and text"

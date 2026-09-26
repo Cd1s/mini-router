@@ -3,7 +3,14 @@
 # The board has no RTC and mr-clock starts from this file's mtime at boot; saving it only at shutdown
 # put the clock hours back after a power cut or crash. At most one flash write an hour.
 # Runs as ntpd's user (ntp): mr-clock creates the file and makes ntp its owner.
-[ "${1:-}" = unsync ] && exit 0
+# /run/mr-clock/synced (tmpfs; mr-clock creates the directory for ntp) is touched on every call and
+# removed on "unsync": mr reads "NTP synced" from it (ntpMarker in mr/mod_sys_doctor.go) — busybox ntpd
+# never lowers the kernel's maxerror, so adjtimex says "not synchronized" while the clock is right.
+if [ "${1:-}" = unsync ]; then
+	rm -f /run/mr-clock/synced
+	exit 0
+fi
+[ ! -d /run/mr-clock ] || touch /run/mr-clock/synced 2> /dev/null || :
 ref=/etc/mini-router/state/clock
 [ -e "$ref" ] || exit 0
 [ -z "$(find "$ref" -mmin -60 2> /dev/null)" ] || exit 0

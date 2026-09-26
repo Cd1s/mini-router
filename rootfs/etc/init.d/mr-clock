@@ -18,9 +18,10 @@ start() {
 			date -s "@$t" >/dev/null 2>&1 && now=$t
 		fi
 	done
-	# ntpd runs as user ntp and keeps the file current through /usr/libexec/mr/clock-save
-	mkdir -p "${ref%/*}" && { [ -e "$ref" ] || touch "$ref"; } &&
-		{ ! id ntp > /dev/null 2>&1 || chown ntp "$ref"; }
+	# ntpd runs as user ntp and keeps the file current through /usr/libexec/mr/clock-save, which also
+	# keeps the sync marker in /run/mr-clock (mr's "NTP synced": the kernel's flag cannot tell)
+	mkdir -p "${ref%/*}" /run/mr-clock && { [ -e "$ref" ] || touch "$ref"; } &&
+		{ ! id ntp > /dev/null 2>&1 || chown ntp "$ref" /run/mr-clock; }
 	eend 0
 }
 stop() {

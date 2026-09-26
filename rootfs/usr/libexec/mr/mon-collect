@@ -7,10 +7,19 @@
 # Raw cumulative counters + uptime: mr computes rates and wall-clock times when asked.
 # The loop only uses shell builtins; `sleep` and the trim (tail + mv, about once an hour) are the
 # only forks. MON_FILE / MON_INTERVAL / MON_KEEP exist for CI.
+#
+# It is also the clock of the event log (sys module, mr/mod_sys_event.go): `mr event tick` is started
+# in the background when dnsmasq's lease file is newer than leases.seen (a new device?) or when the
+# uptime in event.due has come (a notification retry, events held back, the next background
+# `mr doctor`). Any other minute that costs two stat()s and a read. MON_EVENT_DIR / MON_LEASES / MON_MR
+# exist for CI.
 F=${MON_FILE:-/run/mr-mon/history}
 I=${MON_INTERVAL:-60}
 KEEP=${MON_KEEP:-1440}
 SLACK=$((KEEP / 24 + 1))
+EV=${MON_EVENT_DIR:-/run/mini-router}
+LEASES=${MON_LEASES:-/tmp/dhcp.leases}
+MR=${MON_MR:-/usr/sbin/mr}
 mkdir -p "${F%/*}"
 lines=0
 [ -f "$F" ] && lines=$(wc -l < "$F")
@@ -45,6 +54,15 @@ while :; do
 	if [ "$lines" -gt $((KEEP + SLACK)) ]; then
 		tail -n "$KEEP" "$F" > "$F.tmp" && mv -f "$F.tmp" "$F"
 		lines=$KEEP
+	fi
+	due=
+	[ -r "$EV/event.due" ] && read -r due < "$EV/event.due"
+	case $due in '' | *[!0-9]*) due=$((up + 1)) ;; esac
+	# shellcheck disable=SC3013 # busybox ash has -nt
+	if [ "$up" -ge "$due" ] || { [ -e "$LEASES" ] && { [ ! -e "$EV/leases.seen" ] || [ "$LEASES" -nt "$EV/leases.seen" ]; }; }; then
+		# detached (the subshell exits at once): a slow notification never delays the next sample;
+		# a tick that is still running makes the new one exit (flock in mr)
+		("$MR" event tick < /dev/null > /dev/null 2>&1 &)
 	fi
 	sleep $((I - up % I))
 done

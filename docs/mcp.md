@@ -76,7 +76,7 @@ is refused.
 |---|---|---|---|
 | `status` | read | WANs, WiFi, services, memory, offload, the change waiting for confirmation, the last apply job | read-only |
 | `explain` | read | the router in plain words; for a path: value, JSON Schema (`mr schema`), risk of changing it, whether agents may | read-only |
-| `mon_query` | read | monitor views: `now history devices conns procs dmesg leases stations survey wifi dns wan net ports routes proxy services firewall time` — exactly the API tokens' read actions | read-only |
+| `mon_query` | read | monitor views: `now history devices conns procs dmesg leases stations survey wifi dns wan net ports routes proxy services firewall time events doctor` — exactly the API tokens' read actions (`events`: the event log, `doctor`: runs `mr doctor`) | read-only |
 | `diagnose` | read | fixed check lists `wan` (links, routes, ping 1.1.1.1 / IPv6, DNS through the router), `dns`, `wifi` (hostapd, SSIDs, stations, kernel WiFi lines), `proxy` (sing-box, fake-ip DNS); fixed commands only | read-only |
 | `config_get` | read | the effective router.yaml or a path, its `rev`, which secrets exist (names only) | read-only |
 | `history` | read | the revisions: who, when, comment, result, what changed | read-only |

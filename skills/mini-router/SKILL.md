@@ -1,6 +1,6 @@
 ---
 name: mini-router
-description: Operate a router running mini-router (Alpine Linux + the `mr` tool + /etc/mini-router/router.yaml) over SSH — status and diagnostics, WAN / PPPoE, LAN and DHCP static leases, DNS, WiFi, firewall port forwards and open ports, the selective proxy (sing-box nodes, share links, subscriptions, rules, bypass devices), services, backups, rollback and firmware upgrades. Use when the user asks to check or change their mini-router, mentions router.yaml, `mr apply`, or the Mini-Router web UI.
+description: Operate a router running mini-router (Alpine Linux + the `mr` tool + /etc/mini-router/router.yaml) over SSH — status, health checks (`mr doctor`), the event log and phone notifications, WAN / PPPoE, LAN and DHCP static leases, DNS, WiFi, firewall port forwards and open ports, the selective proxy (sing-box nodes, share links, subscriptions, rules, bypass devices), services, backups, rollback and firmware upgrades. Use when the user asks to check or change their mini-router, mentions router.yaml, `mr apply`, or the Mini-Router web UI.
 ---
 
 # Operating a mini-router
@@ -119,6 +119,13 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
   router | "::10" for a LAN device; `interval`: minutes, default 10). Check: `mr ddns status` (`local` vs `published`,
   `note` explains a missing address, e.g. CGNAT); force a re-check: `mr ddns update --force`. Only changes record content
   (proxied stays); never deletes records.
+- **Notifications to the phone** (Telegram bot or a webhook: ntfy, Bark, Gotify, Home Assistant; no daemon): the bot
+  token / webhook URL into secrets.yaml (e.g. `notify_tg_token`), then `notify: {channels: [{name: phone, type: telegram,
+  token_secret: notify_tg_token, chat_id: "123456789"}], quiet_hours: "23:00-07:00"}` (webhook: `{name: ntfy, type:
+  webhook, url_secret: notify_ntfy_url, format: text}`; `format: json` for the others). Default events: WAN down / up,
+  failover, rollback, login locks, new devices, boots (and why), firmware changes, new `mr doctor` findings (background run
+  every `doctor_interval` minutes, default 30). After apply: `mr notify test`, `mr notify status` (pending, last error,
+  retry). API tokens and agents cannot change `notify` — ask the owner.
 - **Wake a device (WOL)**: `mr wol <dhcp.hosts name>` or `mr wol aa:bb:cc:dd:ee:ff [network]` — magic packet to that
   LAN network's broadcast through its bridge (never a WAN). Scheduled: `schedules: [{name: wake-nas, cron: "0 7 * * 1-5",
   action: wol, target: nas}]`. The device needs WOL enabled in its BIOS / NIC and usually a cable.
@@ -126,13 +133,16 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
 ## Status and diagnostics (read-only)
 
 ```sh
-mr status                      # JSON: WANs, WiFi, services, memory, offload, versions
+mr doctor                      # health and security checks, problems first, each with its fix (--json)
+mr event list                  # what happened: WAN down / up, failover, changes, rollbacks, login locks, new devices, boots and why
+mr status                      # JSON: WANs, WiFi, services, memory, offload, versions, last doctor problems, newest events
 mr wan status | mr wan health
 mr wifi status | mr wifi stations | mr wifi survey
 mr dns leases | mr dns stats | mr dns query example.com AAAA
 mr mon now | mr mon devices | mr mon conns '{"limit":20}'
 mr proxy status | mr proxy check
 mr ddns status                 # DDNS records: local / published address, last error
+mr notify status               # notification channels: pending, last error, retry
 rc-status -c                   # crashed services (should be empty)
 tail -n 100 /var/log/messages  # system log (logread is not used)
 dmesg | tail -n 50
@@ -156,6 +166,9 @@ the user to do those. Never print or store a token in files, logs or chat.
 When the router is connected as an MCP server (tools `status`, `explain`, `mon_query`, `diagnose`, `config_get`,
 `history`, `plan_change`, `operate`, `apply_plan`, `confirm`, `rollback`; `docs/mcp.md` in the repository), use the tools,
 not SSH commands — the agent key runs `mr mcp` and nothing else, with the scope the owner gave it (read / operate / apply).
+
+- **Something is wrong**: `mon_query` view `doctor` (runs the health checks: every finding with its fix) and view `events`
+  (WAN drops, failovers, rollbacks, boots and why, new devices) first, then `diagnose` with a playbook.
 
 - **Change**: `config_get` / `explain PATH` (value, JSON Schema, risk, whether agents may change it) → `plan_change` with a
   patch (`[{"op": "set", "path": "firewall.forwards[nas].enabled", "value": false}]`, a `comment` saying why) → tell the user

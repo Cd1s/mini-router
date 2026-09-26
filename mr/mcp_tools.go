@@ -268,7 +268,7 @@ func humanSecs(s int64) string {
 
 func mcpMonViews() []string {
 	return []string{"now", "history", "devices", "conns", "procs", "dmesg", "leases", "stations", "survey", "wifi",
-		"dns", "wan", "net", "ports", "routes", "proxy", "services", "firewall", "time"}
+		"dns", "wan", "net", "ports", "routes", "proxy", "services", "firewall", "time", "events", "doctor"}
 }
 
 // mcpMonAction: the API action behind a view (all of scope read in tokenActions).
@@ -296,6 +296,8 @@ func mcpMonAction(view string) string {
 		return "fw.stats"
 	case "time":
 		return "sys.time"
+	case "events", "doctor":
+		return "sys." + view
 	}
 	return ""
 }

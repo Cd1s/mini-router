@@ -182,6 +182,14 @@ rev=$(sed -n 's/.*"rev":"\([0-9a-f]\{16\}\)".*/\1/p' "$OUT/api.out")
 sed -n 's/^[a-z0-9_-]*: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' /etc/mini-router/secrets.yaml | while read -r v; do
 	[ ${#v} -lt 6 ] || ! grep -qF -- "$v" "$OUT/api.out" || fail "a secret value is in the answer"
 done
+expect 200 GET sys.events "$RT" 192.0.2.5
+grep -q '"events":\[' "$OUT/api.out" || fail "sys.events for a read token"
+expect 200 GET sys.doctor "$RT" 192.0.2.5
+grep -q '"checks":\[' "$OUT/api.out" || fail "sys.doctor for a read token"
+sed -n 's/^[a-z0-9_-]*: *"\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' /etc/mini-router/secrets.yaml | while read -r v; do
+	[ ${#v} -lt 6 ] || ! grep -qF -- "$v" "$OUT/api.out" || fail "a secret value is in the doctor's answer"
+done
+expect 403 POST sys.notifytest "$AT" 192.0.2.5 '{}'
 expect 403 POST apply "$RT" 192.0.2.5 '{"patch":[]}'
 expect 403 POST password "$AT" 192.0.2.5 '{"old":"x","new":"yyyyyyyy"}'
 expect 403 POST sys.factoryreset "$AT" 192.0.2.5 '{}'

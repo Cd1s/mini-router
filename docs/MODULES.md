@@ -15,9 +15,9 @@ file, applies with snapshot + verify + auto-rollback, and serves the web UI API 
 | wifi  | 20 | `mr/mod_wifi*.go` | `ui/wifi.js` | `wifi` | radios, SSIDs, hostapd, stations |
 | dns   | 30 | `mr/mod_dns*.go` | `ui/dns.js` | `dhcp`, `dns`, `networks[].dhcp` (type `Pool`) | dnsmasq: DNS, DHCP, RA/DHCPv6, split lists, local records, stubby.yml, query log; `rootfs/etc/conf.d/dnsmasq` |
 | fw    | 40 | `mr/mod_fw*.go` | `ui/fw.js` | `firewall` | nftables skeleton + hooks, zones, forwards, rules, NAT, IPv6 pinholes, access control |
-| mon   | 50 | `mr/mod_mon*.go` | `ui/mon.js` | — | realtime graphs, per-device traffic, connections, system load |
+| mon   | 50 | `mr/mod_mon*.go` | `ui/mon.js` | — | realtime graphs, per-device traffic, connections, system load; its per-minute sampler (`mon-collect`) also starts sys's `mr event tick` when due |
 | proxy | 55 | `mr/mod_proxy*.go` | `ui/proxy.js` | `proxy` | selective transparent proxy: sing-box, fake-ip DNS, tproxy, bypass devices |
-| sys   | 70 | `mr/mod_sys*.go` | `ui/sys.js` | `system`, `services`, `schedules` | hostname/time/NTP/sysctl, SSH, add-on services, DDNS, backup/restore, schedules, logs, diagnostics |
+| sys   | 70 | `mr/mod_sys*.go` | `ui/sys.js` | `system`, `services`, `schedules`, `notify` | hostname/time/NTP/sysctl, SSH, add-on services, DDNS, backup/restore, schedules, logs, diagnostics, `mr doctor`, the event log, notifications (`rootfs/etc/init.d/mr-bootlog`, `mr-clock`, `usr/libexec/mr/clock-save`) |
 | api   | 80 | `mr/api_token.go`, `mr/api_plan.go`, `mr/cfgpath.go`, `mr/schema.go` | card in `ui/sys.js` (管理与 SSH) | `api` | API tokens for scripts / agents, `plan` / patches / `base_rev`, config paths (`mr get/set/add/del/export`), JSON Schema (`mr schema`); `docs/api.md` |
 | platform | — | — | — | — | kernel/kmods, sing-box build, image (build/**), preinit, sysupgrade/factory-reset, docs/flash.md |
 | core  | —  | `config.go`, `module.go`, `render.go`, `apply.go`, `api.go`, `status.go`, `main.go` | `ui/core.js`, `index.html` | — | loading, apply/rollback, auth, registry, layout (changes need the integrator) |
@@ -55,7 +55,8 @@ Register exactly one `Module` in `init()`:
 - `Secrets(c)` — names of every secret this module's config references (so the UI can show 已设置).
 - `OnWAN(c, wan, event)` — called by the net hooks (`hooks.go`) when a WAN's addresses may have changed: `up`
   (PPP up, DHCP bound / renew), `ipv6` (dhcpcd RA / delegated prefix), `down`, `health` (multi-WAN failover; wan
-  `""`). It runs inside pppd / udhcpc / dhcpcd: return at once, start slow work detached (sys: DDNS sync).
+  `""`). It runs inside pppd / udhcpc / dhcpcd: return at once, start slow work detached (sys: DDNS sync, the event
+  log's WAN / failover events and their notification).
 
 **Guard and risk.** `guard:` (core, `guard.go`) holds the owner's baselines — `never_expose` (ssh, panel, dns: no
 `firewall.open` or forward to the router reaches their ports from the WAN), `always_bypass` (devices never proxied),
@@ -88,11 +89,19 @@ client carries `X-MR-Pending: {"state","via","left"}`, and the web UI shows a ba
 API clients (`docs/api.md`): `Authorization: Bearer mrt_…` tokens from `api.tokens` (hash in secrets.yaml,
 scopes read / operate / apply, `allow`, `from`, `expires`; bad tokens count in the login throttle) reach the
 actions of `apiAction` that `tokenActions` lists; their changes are recorded as `via: api:<name>` and may not
-touch `api`, `services.ssh`, `system.sysctl` or new `*_file` paths. `GET config` returns `rev` (hash of
+touch `api`, `services.ssh`, `system.sysctl`, `guard`, `notify` or new `*_file` paths. `GET config` returns `rev` (hash of
 router.yaml); `plan` / `validate` / `apply` take a whole `config` or a `patch` (`[{op: set|add|del, path, value}]`,
 paths as `mr get/set` take them: `firewall.forwards[nas].enabled`) and answer 409 when `base_rev` is stale — the
 web UI sends it too. Patches and `mr set/add/del` edit router.yaml as written (no defaults) in its text
 (`editYAML` → `mergeYAML`).
+
+**Events** (sys, `mod_sys_event.go`; `docs/modules/sys.md`): code that sees something the owner wants to know
+afterwards appends it with `eventAdd(c, type, sev, key, msg, kick)` — one line in `/etc/mini-router/state/events.log`
+(flash, bounded: newest 200, at most 10 per type and hour), and with `kick` a detached notification flush when a
+`notify` channel wants the type. Today: the net hooks (`OnWAN`), `setResult` (`history.go`), the login throttle, the
+boot / shutdown records (`mr-bootlog`), new DHCP clients and background `mr doctor` findings (`mr event tick`, started
+by mon's sampler). Messages are English, one line, cleaned (`eventClean`): text from the network is data, never
+markup. A new type needs an entry in `eventTypes` / `eventLabels` and the web UI's `EVT` map (`sys.js`).
 
 Cross-module helpers: `c.LANNets()`, `c.BridgeFor(network)`, `c.LANBridges()`, `c.WANIfnames()`,
 `c.WANTable(name)`, `c.WANByName(name)`, `c.Secret(key)`.
