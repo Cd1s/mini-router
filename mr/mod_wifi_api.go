@@ -51,6 +51,10 @@ type station struct {
 	Connected int     `json:"connected"` // seconds
 	Inactive  int     `json:"inactive_ms"`
 	MFP       bool    `json:"mfp"`
+	// airtime the station used since it associated, µs (mac80211 debugfs, counted by the hardware:
+	// includes WED-offloaded traffic); omitted where the driver does not report it
+	AirtimeTx uint64 `json:"airtime_tx_us,omitempty"`
+	AirtimeRx uint64 `json:"airtime_rx_us,omitempty"`
 }
 
 func parseStations(out, ifname string) []station {
@@ -110,6 +114,7 @@ func atou(s string) uint64 { n, _ := strconv.ParseUint(s, 10, 64); return n }
 func stationsFor(c *Config) []station {
 	st := []station{}
 	for _, r := range c.WiFi.Radios {
+		kphy := kernelPhy(r)
 		for i, ifn := range apIfnames(r) {
 			if !netdevExists(ifn) {
 				continue
@@ -120,6 +125,9 @@ func stationsFor(c *Config) []station {
 			}
 			for _, s := range parseStations(out, ifn) {
 				s.SSID, s.Band, s.Network = r.SSIDs[i].SSID, r.Band, networkName(r.SSIDs[i].Network)
+				if kphy != "" {
+					s.AirtimeTx, s.AirtimeRx = parseAirtime(readFile(fmt.Sprintf("%s/%s/netdev:%s/stations/%s/airtime", wifiDebugfs, kphy, ifn, s.MAC)))
+				}
 				st = append(st, s)
 			}
 		}
@@ -499,11 +507,30 @@ func apiScan(r apiReq) apiResp {
 	return apiResp{body: res}
 }
 
-// ---- CLI: mr wifi stations|survey|scan PHY|kick MAC [IFNAME] (JSON on stdout, for agents) ----
+// ---- CLI: mr wifi status|stations|survey|health|scan PHY|kick MAC [IFNAME]|steer [--dry-run]|tick ----
+// (JSON on stdout, for agents; tick is crond's and prints nothing)
 
 func wifiCommand(c *Config, args []string) error {
 	var v any
 	switch {
+	case len(args) == 1 && args[0] == "tick":
+		return wifiTick(c)
+	case len(args) == 1 && args[0] == "health":
+		v = wifiHealthReport(c)
+	case len(args) >= 1 && args[0] == "steer":
+		dry := len(args) == 2 && args[1] == "--dry-run"
+		if len(args) > 2 || (len(args) == 2 && !dry) {
+			return fmt.Errorf("usage: mr wifi steer [--dry-run]")
+		}
+		if !c.WiFi.Steering.Enabled {
+			return fmt.Errorf("wifi.steering is off (set wifi.steering.enabled: true and apply)")
+		}
+		lk := flock(wifiTickLock, true)
+		if lk == nil {
+			return fmt.Errorf("cannot lock %s", wifiTickLock)
+		}
+		defer lk.Close()
+		v = map[string]any{"decisions": steerPass(c, liveRadios(c), dry), "dry_run": dry}
 	case len(args) == 1 && args[0] == "stations":
 		v = map[string]any{"stations": stationsFor(c)}
 	case len(args) == 1 && args[0] == "status":
@@ -528,7 +555,7 @@ func wifiCommand(c *Config, args []string) error {
 		logf("mr wifi: kick %s from %s", strings.ToLower(args[1]), got)
 		v = map[string]any{"ok": true, "ifname": got}
 	default:
-		return fmt.Errorf("usage: mr wifi status | stations | survey | scan PHY | kick MAC [IFNAME]")
+		return fmt.Errorf("usage: mr wifi status | stations | survey | health | scan PHY | kick MAC [IFNAME] | steer [--dry-run] | tick")
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", " ")

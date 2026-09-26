@@ -2,10 +2,16 @@
 # CI concatenates examples/lab.d/*.yaml into one router.yaml; keep only this module's top-level keys here.
 # Exercises every wifi feature: multi-SSID (4 on 5 GHz), guest/IoT networks, isolation, client limits,
 # MAC allow/deny lists, hidden SSID, WPA2 / WPA3 / mixed / open, every 802.11w (pmf) setting, beacon/DTIM,
-# 802.11b legacy rates. Networks guest + iot come from 10-net.yaml, secrets from mr/testdata/secrets.d/wifi.yaml.
+# 802.11b legacy rates, multicast-to-unicast, 802.11v band steering (MiniRouter-WPA3 is on both bands), radio
+# self-heal. Networks guest + iot come from 10-net.yaml, secrets from mr/testdata/secrets.d/wifi.yaml.
 
 wifi:
   country: PA
+  steering:
+    enabled: true
+    min_signal_2g: -65
+    exclude: ["aa:bb:cc:00:00:09"]  # never asked to move
+  self_heal: true
   radios:
     - phy: phy0
       band: 2g
@@ -25,6 +31,8 @@ wifi:
           hidden: true
           macfilter: allow          # only these devices may join
           maclist: ["aa:bb:cc:00:00:01", "AA:BB:CC:00:00:02"]
+        # same name, encryption, password and network as on 5 GHz: steering pairs them
+        - {ssid: MiniRouter-WPA3, key_secret: wifi_wpa3_key, encryption: sae, pmf: required, multicast_to_unicast: true}
     - phy: phy1
       band: 5g
       channel: "36"
@@ -35,6 +43,7 @@ wifi:
         - ssid: MiniRouter-5G
           key_secret: wifi_key
           encryption: sae-mixed
+          multicast_to_unicast: true  # AirPlay / mDNS / IPTV as unicast per station
           macfilter: deny           # everyone except these
           maclist: ["de:ad:be:ef:00:01"]
         - {ssid: MiniRouter-WPA3, key_secret: wifi_wpa3_key, encryption: sae, pmf: required}

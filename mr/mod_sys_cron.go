@@ -20,6 +20,10 @@ package main
 //
 //	M * * * * /usr/sbin/mr dns adblock update --cron
 //
+// and while wifi.steering or wifi.self_heal is on, the wifi module's per-minute tick (mod_wifi_health.go):
+//
+//	* * * * * /usr/sbin/mr wifi tick
+//
 // `mr sys run` checks the action against the live config again, logs it (syslog + change log) and
 // runs it. The time spec is a strict 5-field cron expression (numbers, *, a-b, /step, lists; no
 // names, no @reboot) with safety limits: every task runs at most once per hour (fixed minute), a
@@ -200,7 +204,7 @@ func validateSchedules(c *Config, v *Validator) {
 }
 
 func cronWanted(c *Config) bool {
-	if ddnsInterval(c) > 0 || edgeOn(c) || c.DNS.Adblock.Enabled {
+	if ddnsInterval(c) > 0 || edgeOn(c) || c.DNS.Adblock.Enabled || len(wifiCronLine(c)) > 0 {
 		return true
 	}
 	for _, s := range c.Schedules {
@@ -234,7 +238,7 @@ func renderCronLines(c *Config) []string {
 	if n := ddnsInterval(c); n > 0 {
 		lines = append(lines, "# ddns (services.ddns)", fmt.Sprintf("*/%d * * * * %s ddns sync --cron", n, mrBin))
 	}
-	return append(append(lines, edgeCronLine(c)...), adblockCronLine(c)...)
+	return append(append(append(lines, edgeCronLine(c)...), adblockCronLine(c)...), wifiCronLine(c)...)
 }
 
 // renderCrontab: /etc/crontabs/root with the managed block (ok=false: leave the file alone).

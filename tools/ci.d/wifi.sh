@@ -11,6 +11,8 @@
 # 3. the real hostapd 2.11 parses every rendered config (our noscan build when this host has it, else
 #    Alpine's package; arm64 under qemu in docker): unknown keys, bad values and hostapd's own consistency
 #    checks fail here. Driver init then fails on purpose — a container has no radio.
+# 1b (between 1 and 2). tuning (#41): home renders none of it; lab keys per BSS, the cron tick, and
+#    `mr wifi tick / health / steer --dry-run` against the lab config with no hostapd running
 set -eu
 ROOT=${ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}
 OUT=${OUT:-$ROOT/out/ci}
@@ -107,6 +109,38 @@ tmp=$OUT/wifi-keys-selftest.conf
 printf 'interface=x\nnot_a_hostapd_key=1\n' > "$tmp"
 if check_keys "$tmp" >/dev/null; then echo "whitelist check does not catch unknown keys"; exit 1; fi
 echo "ok: $(echo "$confs" | wc -l) configs"
+
+# 1b. tuning (#41): off in the home config (no new keys, no tick), on in the lab: multicast-to-unicast per SSID,
+#     bss_transition + rrm_neighbor_report only on the BSSes of the SSID both bands carry, the per-minute tick;
+#     `mr wifi tick / health / steer --dry-run` run without hostapd (nothing answers: no action, exit 0)
+echo "[wifi] tuning: multicast-to-unicast, band steering, self-heal tick"
+if grep -Eq '^(multicast_to_unicast|bss_transition|rrm_neighbor_report)=' "$OUT"/home/etc/hostapd/hostapd-phy*.conf; then
+	echo "home: tuning keys rendered although the home config has none"
+	exit 1
+fi
+if grep -q 'mr wifi tick' "$OUT/home/etc/crontabs/root" 2>/dev/null; then echo "home: wifi tick in the crontab"; exit 1; fi
+L=$OUT/lab/etc/hostapd
+bss_keys() { # bss_keys FILE IFNAME: the tuning keys of one BSS section
+	awk -v ifn="$2" '/^(interface|bss)=/ { cur = substr($0, index($0, "=") + 1) } cur == ifn && /^(multicast_to_unicast|bss_transition|rrm_neighbor_report)=/' "$1" | tr '\n' ' '
+}
+[ "$(bss_keys "$L/hostapd-phy0.conf" phy0-ap0-2)" = "multicast_to_unicast=1 bss_transition=1 rrm_neighbor_report=1 " ] || { echo "lab phy0-ap0-2 (MiniRouter-WPA3): $(bss_keys "$L/hostapd-phy0.conf" phy0-ap0-2)"; exit 1; }
+[ "$(bss_keys "$L/hostapd-phy1.conf" phy1-ap0-1)" = "bss_transition=1 rrm_neighbor_report=1 " ] || { echo "lab phy1-ap0-1 (MiniRouter-WPA3): $(bss_keys "$L/hostapd-phy1.conf" phy1-ap0-1)"; exit 1; }
+[ "$(bss_keys "$L/hostapd-phy1.conf" phy1-ap0)" = "multicast_to_unicast=1 " ] || { echo "lab phy1-ap0: $(bss_keys "$L/hostapd-phy1.conf" phy1-ap0)"; exit 1; }
+for fb in phy0:phy0-ap0 phy0:phy0-ap0-1 phy1:phy1-ap0-2 phy1:phy1-ap0-3; do
+	[ -z "$(bss_keys "$L/hostapd-${fb%%:*}.conf" "${fb#*:}")" ] || { echo "lab ${fb#*:}: unexpected tuning keys"; exit 1; }
+done
+grep -qx '\* \* \* \* \* /usr/sbin/mr wifi tick' "$OUT/lab/etc/crontabs/root" || { echo "lab: no wifi tick in the crontab"; exit 1; }
+MR="$OUT/mr-host -c $OUT/lab.yaml -s $OUT/lab-secrets.yaml"
+mkdir -p /run/mini-router && mount -t tmpfs tmpfs /run/mini-router # private mount namespace (tools/ci.sh)
+# shellcheck disable=SC2086
+{ timeout 20 $MR wifi tick && timeout 20 $MR wifi tick; } || { echo "mr wifi tick failed"; umount /run/mini-router; exit 1; }
+# shellcheck disable=SC2086
+h=$(timeout 20 $MR wifi health) && s=$(timeout 20 $MR wifi steer --dry-run) || { echo "mr wifi health / steer failed"; umount /run/mini-router; exit 1; }
+[ -s /run/mini-router/wifi-health.json ] && [ -s /run/mini-router/wifi-steer.json ] || { echo "tick left no state"; umount /run/mini-router; exit 1; }
+umount /run/mini-router
+echo "$h" | grep -q '"self_heal": true' && echo "$h" | grep -q '"ssid": "MiniRouter-WPA3"' || { echo "health: $h"; exit 1; }
+echo "$s" | grep -q '"dry_run": true' && echo "$s" | grep -q '"why": "hostapd not answering or BSS not up"' || { echo "steer: $s"; exit 1; }
+echo "ok: home untouched; lab keys per BSS, cron line, tick / health / steer without hostapd"
 
 echo "[wifi] whitelist == hostapd 2.11 source"
 if src=$(fetch_source 2>/dev/null); then

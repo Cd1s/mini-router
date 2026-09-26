@@ -73,7 +73,7 @@ grep -qx 'crond' "$L/etc/mini-router/gen/services" || fail "lab: crond not enabl
 if grep -qx 'crond' "$H/etc/mini-router/gen/services"; then fail "home: crond enabled without schedules"; fi
 grep -qx "export TZ='CET-1CEST,M3.5.0,M10.5.0/3'" "$L/etc/conf.d/crond" || fail "lab: crond zone"
 block=$(sed -n '/^# --- begin mini-router schedules/,/^# --- end mini-router schedules/p' "$C" | grep -v '^#')
-[ "$(echo "$block" | wc -l)" = 8 ] || fail "lab crontab: want 5 jobs + the DDNS check + the certificate check + the adblock check, got: $block"
+[ "$(echo "$block" | wc -l)" = 9 ] || fail "lab crontab: want 5 jobs + the DDNS check + the certificate check + the adblock check + the wifi tick, got: $block"
 echo "$block" | grep -qE '^[0-9]+ \* \* \* \* /usr/sbin/mr dns adblock update --cron$' || fail "lab crontab: hourly adblock check missing"
 echo "$block" | while read -r m hr d mo w cmd; do
 	if [ "$cmd" = "/usr/sbin/mr ddns sync --cron" ]; then
@@ -86,6 +86,10 @@ echo "$block" | while read -r m hr d mo w cmd; do
 	fi
 	if [ "$cmd" = "/usr/sbin/mr dns adblock update --cron" ]; then
 		echo "$m $hr $d $mo $w" | grep -Eq '^[0-9]{1,2} \* \* \* \*$' || fail "adblock check time spec: $m $hr $d $mo $w"
+		continue
+	fi
+	if [ "$cmd" = "/usr/sbin/mr wifi tick" ]; then # the wifi module's per-minute tick (tools/ci.d/wifi.sh)
+		[ "$m $hr $d $mo $w" = "* * * * *" ] || fail "wifi tick time spec: $m $hr $d $mo $w"
 		continue
 	fi
 	echo "$m $hr $d $mo $w" | grep -Eq '^[0-9]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$' || fail "bad time spec: $m $hr $d $mo $w"

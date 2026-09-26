@@ -2,7 +2,8 @@ package main
 
 // wifi module: radios, SSIDs (up to 4 per radio), hostapd, AP netdevs, stations, channel analysis.
 // Owns: router.yaml wifi. Files: mod_wifi.go (config, validation, rendering, registration),
-// mod_wifi_ctrl.go (hostapd control socket: status, kick), mod_wifi_api.go (stations, survey, scan).
+// mod_wifi_ctrl.go (hostapd control socket: status, kick), mod_wifi_api.go (stations, survey, scan),
+// mod_wifi_steer.go (802.11v band steering), mod_wifi_health.go (radio health, self-heal, `mr wifi tick`).
 // Channel, width, tx power and country are only ever what the user set: nothing here adjusts them.
 
 import (
@@ -13,8 +14,21 @@ import (
 )
 
 type WiFi struct {
-	Country string  `yaml:"country"`
-	Radios  []Radio `yaml:"radios"`
+	Country string `yaml:"country"`
+	// Steering: 802.11v band steering, 2.4 -> 5 GHz within one SSID (mod_wifi_steer.go). Off by default.
+	Steering Steering `yaml:"steering,omitempty"`
+	// SelfHeal: a radio whose TX stops with stations associated gets the driver's firmware recovery,
+	// then a hostapd restart (mod_wifi_health.go). Off by default.
+	SelfHeal bool    `yaml:"self_heal,omitempty"`
+	Radios   []Radio `yaml:"radios"`
+}
+
+// Steering is wifi.steering: stations on 2.4 GHz with a good signal that support BSS Transition
+// Management are asked (never forced) to move to the 5 GHz BSS of the same SSID.
+type Steering struct {
+	Enabled     bool     `yaml:"enabled"`
+	MinSignal2G int      `yaml:"min_signal_2g,omitempty"` // dBm; default -60 (set while enabled)
+	Exclude     []string `yaml:"exclude,omitempty"`       // MACs never steered
 }
 
 type Radio struct {
@@ -44,6 +58,9 @@ type SSID struct {
 	MACFilter  string   `yaml:"macfilter,omitempty"`   // "" | allow (only maclist) | deny (all but maclist)
 	MACList    []string `yaml:"maclist,omitempty"`
 	Network    string   `yaml:"network,omitempty"` // LAN-side network this SSID bridges into ("" = lan)
+	// MulticastToUnicast: mac80211 sends ARP / IPv4 / IPv6 multicast to each station as unicast
+	// (hostapd multicast_to_unicast): mDNS, AirPlay, IPTV at the station's rate, acknowledged
+	MulticastToUnicast bool `yaml:"multicast_to_unicast,omitempty"`
 }
 
 const maxSSIDs = 4 // per radio: the BSSID block of a radio is 4 addresses (see mr_apmac)
@@ -180,6 +197,7 @@ func renderHostapd(c *Config, r Radio) (string, error) {
 	}
 
 	ifs := apIfnames(r)
+	steer := steerIfnames(c)
 	for i, s := range r.SSIDs {
 		if i == 0 {
 			fmt.Fprintf(&b, "\ninterface=%s\n", ifs[i])
@@ -195,6 +213,14 @@ func renderHostapd(c *Config, r Radio) (string, error) {
 			isolate = 1
 		}
 		fmt.Fprintf(&b, "wmm_enabled=1\nuapsd_advertisement_enabled=1\ndtim_period=%d\ndisassoc_low_ack=1\nap_isolate=%d\n", r.DTIM, isolate)
+		if s.MulticastToUnicast {
+			b.WriteString("multicast_to_unicast=1\n")
+		}
+		if steer[ifs[i]] {
+			// BSS Transition Management advertised (clients honour requests from APs that announce it) and
+			// our own neighbor report, which `mr wifi tick` reads (SHOW_NEIGHBOR) as the steering target
+			b.WriteString("bss_transition=1\nrrm_neighbor_report=1\n")
+		}
 		if s.MaxClients > 0 {
 			fmt.Fprintf(&b, "max_num_sta=%d\n", s.MaxClients)
 		}
@@ -395,6 +421,13 @@ func wifiNetSh(c *Config, phase string, b *strings.Builder) {
 }
 
 func wifiDefaults(c *Config) {
+	st := &c.WiFi.Steering
+	if st.Enabled && st.MinSignal2G == 0 { // only while on: an absent section stays absent
+		st.MinSignal2G = steerMinSignal
+	}
+	for i := range st.Exclude {
+		st.Exclude[i] = strings.ToLower(st.Exclude[i])
+	}
 	for i := range c.WiFi.Radios {
 		r := &c.WiFi.Radios[i]
 		if r.BeaconInt == 0 {
@@ -477,6 +510,7 @@ func init() {
 			"wifi.kick":     apiKick,
 			"wifi.survey":   func(apiReq) apiResp { return apiSurvey() },
 			"wifi.scan":     apiScan,
+			"wifi.health":   func(apiReq) apiResp { return apiWifiHealth() },
 		},
 		Commands: map[string]func(c *Config, args []string) error{"wifi": wifiCommand},
 	})
@@ -499,6 +533,7 @@ func wifiValidate(c *Config, v *Validator) {
 	if c.WiFi.Country != "" && !reCC.MatchString(c.WiFi.Country) {
 		v.Add("wifi.country: two upper-case letters, got %q", c.WiFi.Country)
 	}
+	validateSteering(c, v)
 	phys := map[string]bool{}
 	bands := map[string]bool{}
 	for i, r := range c.WiFi.Radios {
@@ -587,6 +622,46 @@ func wifiValidate(c *Config, v *Validator) {
 				v.Add("%s.macfilter: allow|deny or empty, got %q", q, s.MACFilter)
 			}
 		}
+	}
+}
+
+// validateSteering: wifi.steering. While on, some SSID must exist on both bands with the same
+// encryption, password and network (a client only moves within one network), and no same-named pair
+// may differ in those (a client asked to move could not join).
+func validateSteering(c *Config, v *Validator) {
+	st := c.WiFi.Steering
+	if st.MinSignal2G != 0 && (st.MinSignal2G < -90 || st.MinSignal2G > -30) {
+		v.Add("wifi.steering.min_signal_2g: -90 to -30 dBm, got %d", st.MinSignal2G)
+	}
+	if len(st.Exclude) > 64 {
+		v.Add("wifi.steering.exclude: at most 64 devices")
+	}
+	seen := map[string]bool{}
+	for _, m := range st.Exclude {
+		if !reMAC.MatchString(m) {
+			v.Add("wifi.steering.exclude: invalid MAC %q", m)
+		} else if seen[strings.ToLower(m)] {
+			v.Add("wifi.steering.exclude: %s listed twice", m)
+		}
+		seen[strings.ToLower(m)] = true
+	}
+	if !st.Enabled {
+		return
+	}
+	two, five := bandRadio(c, "2g"), bandRadio(c, "5g")
+	if two == nil || five == nil {
+		v.Add("wifi.steering: needs a 2.4 GHz and a 5 GHz radio")
+		return
+	}
+	for _, a := range two.SSIDs {
+		for _, b := range five.SSIDs {
+			if a.SSID == b.SSID && !steerCompatible(a, b) {
+				v.Add("wifi.steering: SSID %q differs between 2.4 and 5 GHz (encryption, key_secret or network): a client asked to move could not join", a.SSID)
+			}
+		}
+	}
+	if len(steerPairs(c)) == 0 {
+		v.Add("wifi.steering: no SSID is on both 2.4 and 5 GHz with the same encryption, key_secret and network (steering moves clients within one SSID)")
 	}
 }
 

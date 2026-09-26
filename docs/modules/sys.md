@@ -83,7 +83,7 @@ notify:                      # events pushed to the phone; no daemon (see "Healt
     - {name: phone, type: telegram, token_secret: notify_tg_token, chat_id: "123456789"}   # or -100… (group), @channel
     - {name: ntfy, type: webhook, url_secret: notify_ntfy_url, format: text}              # ntfy: plain text + Title header
     - {name: ha, type: webhook, url_secret: notify_ha_url}                                # json (default): Gotify, Bark, HA, Slack …
-  events: [wan_down, wan_up, failover, rollback, login_lock, new_device, boot, upgrade, doctor, cert]   # default: all but apply
+  events: [wan_down, wan_up, failover, rollback, login_lock, new_device, boot, upgrade, doctor, cert, wifi]   # default: all but apply
   rate: 10                   # messages per channel and hour (1-60); the rest goes out together later
   quiet_hours: "23:00-07:00" # router time: only warn / risk events then, the others wait
   doctor_interval: 30        # minutes between background `mr doctor` runs (5-1440, 0 = off); default 30 with channels
@@ -132,7 +132,7 @@ Validation (the security boundary — everything below ends up in a file, a cron
 | `/etc/conf.d/tailscale` (on) | `TS_PORT=` (read by `/etc/init.d/tailscale`) | restart `tailscale` |
 | `/etc/conf.d/mr-panel` (on) | `PANEL_ADDR=` main LAN address (was a `sed` on router.yaml) | restart `mr-panel` |
 | `/etc/conf.d/crond` (schedules) | `CRON_OPTS`, `export TZ=…` | restart `crond` |
-| `/etc/crontabs/root` | managed block between markers (schedules; DDNS on with an interval adds `*/N * * * * /usr/sbin/mr ddns sync --cron`; the reverse proxy adds `M H * * * /usr/sbin/mr edge renew --cron`, M and H fixed per router, H 2–5); Alpine's periodic lines and anything else kept | — (crond rescans the directory) |
+| `/etc/crontabs/root` | managed block between markers (schedules; DDNS on with an interval adds `*/N * * * * /usr/sbin/mr ddns sync --cron`; the reverse proxy adds `M H * * * /usr/sbin/mr edge renew --cron`, M and H fixed per router, H 2–5; dns.adblock adds `M * * * * /usr/sbin/mr dns adblock update --cron`; wifi.steering / wifi.self_heal add `* * * * * /usr/sbin/mr wifi tick`); Alpine's periodic lines and anything else kept | — (crond rescans the directory) |
 | `/etc/mini-router/gen/edge.json` (edge on) | port, WAN port, certificate directory, routes (host, target, certificate name, allow) — nothing secret, 0644 | restart `mr-edge` |
 | `/root/.ssh/authorized_keys` | managed block between markers; every other line kept | — (read per login) |
 
@@ -360,6 +360,7 @@ boot) are the ones a RAM log loses. Types and where they come from:
 | `new_device` | `mr event tick`: a DHCPv4 client whose MAC was never seen (`dhcp.hosts` count as known). The list of seen MACs is on flash (`devices.seen`, newest 2048, appended; a reboot reports nothing); the first day after it is created only learns (the lease file is in RAM, the house's devices come back one by one). At most 5 per scan one by one, the rest in one line. Host names come from the network: cleaned, capped | info |
 | `boot` / `upgrade` | `mr event boot` (mr-bootlog, the last boot service): clean restart (a mark written by `mr event shutdown` when OpenRC stops the system — reboot and power-off both run the shutdown runlevel; a restart of the service writes none, and a mark of the running boot is dropped; the reason from the change log, e.g. `schedule: reboot`; the downtime once NTP agrees), kernel crash (a new ramoops record in `/sys/fs/pstore`), new firmware (the kexec upgrade leaves no mark), otherwise unexpected restart (power cut, hang, hardware watchdog). A mark left by an older boot is ignored | info / warn |
 | `doctor` | the background `mr doctor` run: a finding that is new or worse since the last run, and "fine again". Standing choices and moments of an apply (`ssh` password logins, `offload: off`, `config.unapplied`, a change waiting for confirmation) are left out; the state is in `/run` (a reboot reports what is still wrong once more) | warn / risk / info |
+| `wifi` | the wifi module's self-heal (`wifi.self_heal`, `mr wifi tick`, see `docs/modules/wifi.md`): a radio's TX stalled with stations associated — firmware recovery triggered, hostapd restarted, gave up (no automatic reboot) — and TX moving again | warn / risk / info |
 
 Flash writes are bounded: at most 10 lines of one type are kept per hour (a flapping WAN, a DHCP flood with random
 MACs, a password-guessing botnet only reach syslog after that), so the worst case is ~100 appends of ≤ 300 bytes and two

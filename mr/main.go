@@ -53,7 +53,8 @@ const usage = `mr — mini-router control
 
 module commands (JSON output unless noted):
   mr wan status | health      WAN state; multi-WAN health
-  mr wifi status | stations | survey | scan PHY | kick MAC [IFNAME]
+  mr wifi status | stations | survey | health | scan PHY | kick MAC [IFNAME]
+                              | steer [--dry-run]   802.11v band steering run now (tick: crond, every minute)
   mr dns stats | leases | query NAME [TYPE] [SERVER] | release IP [MAC] | querylog on [MIN]|off|show
                               | adblock status | update   ad blocking lists (dns.adblock)
   mr proxy status | check | delay [NODE|GROUP] | select GROUP NODE | parse [--secrets] [FILE] | fetch [--secrets] URL|SUB
