@@ -61,3 +61,7 @@ dns:
     - name: cloudflare-dot
       domains_file: @REPO@/mr/testdata/split.domains
       server: "127.0.0.1#5453"  # stubby -> Cloudflare DoT
+  sovereignty:                  # keep devices on the router's DNS (firefox_canary is on by default)
+    private_relay: block        # iCloud Private Relay off on this network
+    block_dot: true             # LAN -> port 853 refused
+    doh_blocklist_file: @REPO@/mr/testdata/doh.ips   # LAN -> 443 of these resolvers refused

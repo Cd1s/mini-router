@@ -67,6 +67,8 @@ func schemaEnums() map[string][]string {
 		"APIToken.Scope":              e("read", "operate", "apply"),
 		"SSHAgent.Scope":              e("read", "operate", "apply"),
 		"Guard.MaxRiskWithoutTouch":   e("", "low", "medium"),
+
+		"DNSSovereignty.PrivateRelay": e("", "allow", "block"),
 	}
 }
 

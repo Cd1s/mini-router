@@ -5,7 +5,8 @@
 #     wired to LAN / guest / internet namespaces, and real packets check the security model:
 #     WAN input drop, open port, DNAT with WAN subset + source restriction, guest isolation,
 #     IPv6 pinholes by interface identifier, traffic rules, device access control (incl. cutting a
-#     connection that was established and offloaded before the block), NAT loopback, ICMP policy.
+#     connection that was established and offloaded before the block), NAT loopback, ICMP policy,
+#     DNS sovereignty (LAN -> DoT and listed DoH resolvers refused, before a proxy could take them).
 set -eu
 : "${OUT:?}" "${ROOT:?}"
 MR=$OUT/mr-host
@@ -167,7 +168,7 @@ done
 spawn() { setsid -f ip netns exec "$@" >/dev/null 2>&1 < /dev/null; } # detached: cleanup kills them quietly
 for p in 443 22 80 53; do spawn "$R" python3 "$PY" serve "$p"; done
 for p in 9999 22 9100 443; do spawn "$L1" python3 "$PY" serve "$p"; done
-for p in 8080 25; do spawn "$W" python3 "$PY" serve "$p"; done
+for p in 8080 25 853 443; do spawn "$W" python3 "$PY" serve "$p"; done
 spawn "$W" python3 "$PY" stream 9000
 spawn "$W" python3 "$PY" stream 9004 fast
 # a transparent-proxy-like path on the router: L2's traffic to 198.18.0.0/15 and fc00::/18 (fake-ip ranges)
@@ -181,6 +182,7 @@ ip -n "$R" -6 route add local ::/0 dev lo table 1234
 printf 'table inet ciproxy {\n\tchain pre {\n\t\ttype filter hook prerouting priority mangle - 10; policy accept;\n\t\tip daddr 198.18.0.0/15 meta mark set 0x1ce\n\t\tip6 daddr fc00::/18 meta mark set 0x1ce\n\t}\n}\n' | x "$R" nft -f -
 spawn "$R" python3 "$PY" stream 9001 transparent
 spawn "$R" python3 "$PY" stream 9003 transparent6
+spawn "$R" python3 "$PY" stream 853 transparent # a proxy that would take DoT to a proxied range
 sleep 1
 
 ok() { # ok NS ADDR PORT WHAT [SRC] [EXPECT]
@@ -269,6 +271,16 @@ ok "$G" 192.168.1.50 9100 "guest -> printer allowed by traffic rule guest-printe
 # LAN
 ok "$L1" 203.0.113.2 8080 "LAN -> internet (masqueraded)" "" "ok from 203.0.113.1"
 blocked "$L1" 203.0.113.2 25 "traffic rule no-smtp-out rejects" "" "ConnectionRefusedError"
+# DNS sovereignty (lab: block_dot, doh_blocklist_file lists the "internet" host): refused at once
+blocked "$L1" 203.0.113.2 853 "LAN -> DoT server refused" "" "ConnectionRefusedError"
+blocked "$L1" 2001:db8:ffff::2 853 "LAN -> DoT server (IPv6) refused" "" "ConnectionRefusedError"
+blocked "$G" 203.0.113.2 853 "guest -> DoT server refused" "" "ConnectionRefusedError"
+blocked "$L1" 203.0.113.2 443 "LAN -> listed DoH resolver refused" "" "ConnectionRefusedError"
+blocked "$L1" 2001:db8:ffff::2 443 "LAN -> listed DoH resolver (IPv6) refused" "" "ConnectionRefusedError"
+blocked "$L1" 198.18.0.1 853 "LAN -> DoT inside a proxied range refused, not proxied" "" "ConnectionRefusedError"
+ok "$L1" 192.168.1.6 853 "LAN -> the router's own port 853 not refused"
+ok "$L1" 203.0.113.2 8080 "LAN -> the listed resolver's other ports still reachable"
+ok "$W" 203.0.113.1 443 "WAN -> open port 443 unaffected by the LAN-side refusals"
 # IPv6 pinholes (no NAT): by interface identifier only, only the listed ports
 ok "$W" 2001:db8:1::211:32ff:fe12:3456 443 "IPv6 pinhole nas-https (IID)" "" "ok from 2001:db8:ffff::2"
 blocked "$W" 2001:db8:1::211:32ff:fe12:3456 22 "IPv6 pinhole: other port dropped"
@@ -292,6 +304,7 @@ echo "ok: IPv6 echo to LAN host forwarded"
 x "$R" nft list chain inet mr input | grep 'wan-in-drop' | grep -qv 'packets 0 ' || fail "wan-in-drop counter did not count"
 x "$R" nft list chain inet mr forward | grep '"access:blocked-tv"' | grep -qv 'packets 0 ' || fail "access counter did not count"
 x "$R" nft list set inet mr lan6 | grep -q '2001:db8:1::/64' || fail "@lan6 not refreshed with the LAN prefix"
+x "$R" nft list chain inet mr dns_guard | grep 'DoT refused' | grep -qv 'packets 0 ' || fail "dns_guard DoT counter did not count"
 echo "ok: counters and @lan6"
 rm -f "$OUT/fw-sink" "$OUT/fw-sink-px" "$OUT/fw-sink-px6" "$OUT/fw-sink-fast"
 echo "fw: all packet checks passed"

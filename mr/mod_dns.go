@@ -84,6 +84,9 @@ type DNS struct {
 	Redirect     bool     `yaml:"redirect"` // hijack LAN DNS to the router
 	Records      []Record `yaml:"records"`  // local DNS records (home servers)
 	Split        []Split  `yaml:"split"`    // per-domain upstream (DNS 分流)
+
+	// keep LAN devices on the router's DNS (mod_dns_sovereignty.go)
+	Sovereignty DNSSovereignty `yaml:"sovereignty"`
 }
 
 // DoT is the stubby (DNS-over-TLS) forwarder. It listens on 127.0.0.1:Port only.
@@ -130,6 +133,9 @@ func dnsDefaults(c *Config) {
 	raDefaults(&c.DHCP.IPv6)
 	if c.DNS.Upstream == "" {
 		c.DNS.Upstream = "isp"
+	}
+	if c.DNS.Sovereignty.FirefoxCanary == nil {
+		c.DNS.Sovereignty.FirefoxCanary = boolp(true)
 	}
 	if c.DNS.DoT.Port == 0 {
 		c.DNS.DoT.Port = defaultDoTPrt
@@ -259,6 +265,9 @@ func renderDnsmasq(c *Config) string {
 		w("addn-hosts=%s", h)
 	}
 	for _, l := range recordLines(c) {
+		b.WriteString(l + "\n")
+	}
+	for _, l := range dnsLocalOnly(c) {
 		b.WriteString(l + "\n")
 	}
 	w("dhcp-leasefile=%s", LeaseFile)
@@ -472,6 +481,9 @@ func init() {
 				return err
 			}
 			out.Add(GenDir+"/dns-split.servers", 0644, split)
+			if _, _, err := dohBlocklist(c, true); err != nil {
+				return err
+			}
 			out.Add("/etc/dnsmasq.conf", 0644, renderDnsmasq(c))
 			if c.Services.Stubby.Enabled {
 				out.Add(StubbyConf, 0644, renderStubby(c))
@@ -479,6 +491,9 @@ func init() {
 			return nil
 		},
 		Nft: func(c *Config, hook string, n *Nft) {
+			if hook == "defs" {
+				sovereigntyNft(c, n)
+			}
 			if hook != "dstnat" || !c.DNS.Redirect {
 				return
 			}
@@ -731,6 +746,7 @@ func dnsValidate(c *Config, v *Validator) {
 		}
 	}
 	validRecords(c, v)
+	sovereigntyValidate(c, v)
 	for _, h := range c.DNS.AddnHosts {
 		if !rePath.MatchString(h) {
 			v.Add("dns.addn_hosts: absolute path required, got %q", h)

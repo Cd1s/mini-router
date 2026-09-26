@@ -355,6 +355,9 @@ func proxyDnsmasq(c *Config, sets []proxyRuleSet) (string, error) {
 	for _, h := range d.AddnHosts {
 		w("addn-hosts=%s", h)
 	}
+	for _, l := range dnsLocalOnly(c) {
+		w("%s", l)
+	}
 	w("# local names (DHCP leases, static hosts, the router) come from the main dnsmasq")
 	w("server=/%s/127.0.0.1\nserver=//127.0.0.1", c.DHCP.Domain)
 	for _, n := range c.LANNets() {
