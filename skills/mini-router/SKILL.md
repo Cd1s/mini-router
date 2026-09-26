@@ -126,6 +126,15 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
   failover, rollback, login locks, new devices, boots (and why), firmware changes, new `mr doctor` findings (background run
   every `doctor_interval` minutes, default 30). After apply: `mr notify test`, `mr notify status` (pending, last error,
   retry). API tokens and agents cannot change `notify` — ask the owner.
+- **HTTPS reverse proxy with certificates** (`services.edge`; replaces lucky's 443 proxy; `mr edge serve` runs as
+  service `mr-edge` only while on): same Cloudflare token kind as DDNS (reuse `cf_ddns_token`), then
+  `services: {edge: {enabled: true, open: true, acme: {token_secret: cf_ddns_token, wildcard: [example.com]},
+  routes: [{name: nas, host: nas.example.com, to: "http://192.168.1.10:5000"}, {name: ha, host: ha.example.com,
+  to: "http://192.168.1.20:8123", allow: [lan]}]}}` (`to`: http(s)://LAN-IP:port only; `allow`: `lan` and / or CIDRs,
+  empty = everyone; `open`: reachable from the WANs; try `acme.staging: true` first). A `firewall.open` of the same tcp
+  port is refused while it is on (remove lucky's `lucky-https`, disable lucky in the same apply). Plan risk is high.
+  Check: `mr edge status` (`serving`, certificates `state` / `error`, requests per route); issue now: `mr edge renew`
+  (certificates come from Let's Encrypt via DNS-01 in 1–2 minutes; renewed daily when a third of the lifetime is left).
 - **Wake a device (WOL)**: `mr wol <dhcp.hosts name>` or `mr wol aa:bb:cc:dd:ee:ff [network]` — magic packet to that
   LAN network's broadcast through its bridge (never a WAN). Scheduled: `schedules: [{name: wake-nas, cron: "0 7 * * 1-5",
   action: wol, target: nas}]`. The device needs WOL enabled in its BIOS / NIC and usually a cable.
@@ -143,6 +152,7 @@ mr mon now | mr mon devices | mr mon conns '{"limit":20}'
 mr proxy status | mr proxy check
 mr ddns status                 # DDNS records: local / published address, last error
 mr notify status               # notification channels: pending, last error, retry
+mr edge status                 # reverse proxy: serving, routes (requests), certificates (expiry, last error)
 rc-status -c                   # crashed services (should be empty)
 tail -n 100 /var/log/messages  # system log (logread is not used)
 dmesg | tail -n 50

@@ -118,6 +118,7 @@ func sysServiceRows(c *Config) []svcRow {
 		{Name: "dropbear", Label: "SSH (dropbear)", Cfg: "ssh", Wanted: sv.SSH.Enabled},
 		{Name: "mr-panel", Label: "Web 管理 (httpd)", Cfg: "panel", Wanted: sv.Panel.Enabled},
 		{Name: "ntpd", Label: "NTP (ntpd)", Wanted: true},
+		{Name: "mr-edge", Label: "HTTPS 反向代理 (mr edge)", Cfg: "edge", Wanted: edgeOn(c)},
 		{Name: "crond", Label: "计划任务 (crond)", Cfg: "schedules", Wanted: cronWanted(c)},
 		{Name: "mr-zram", Label: "zram 压缩内存", Cfg: "zram", Wanted: c.System.Zram},
 	}

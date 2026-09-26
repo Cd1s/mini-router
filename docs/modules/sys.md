@@ -1,16 +1,17 @@
-# sys — time, SSH, add-on services, DDNS, schedules, backup / restore, firmware, logs, diagnostics, health checks, events, notifications
+# sys — time, SSH, add-on services, DDNS, HTTPS reverse proxy, schedules, backup / restore, firmware, logs, diagnostics, health checks, events, notifications
 
 Everything that is "the router itself" rather than a network feature. Like the other modules it is
 on-demand work inside `mr` (CGI for the web UI, `mr sys …` for SSH / agents); the only daemons are the
-ones the config switches on (ntpd always, crond only while schedules or the DDNS check exist).
+ones the config switches on (ntpd always, crond only while schedules, the DDNS check or the certificate check
+exist, `mr edge serve` only while the reverse proxy is on).
 
 | | |
 |---|---|
-| Go | `mr/mod_sys.go` (module, types, validation, render), `mod_sys_time.go` (POSIX TZ parser, TZif writer, NTP, `sys.time`), `mod_sys_ssh.go` (dropbear, managed `authorized_keys`), `mod_sys_cron.go` (schedules, `mr sys run`), `mod_sys_ddns.go` (DDNS: addresses, state, Cloudflare client, `mr ddns`), `mod_sys_wol.go` (Wake-on-LAN: `mr wol`, `sys.wol`), `mod_sys_backup.go` (backup / restore), `mod_sys_fw.go` (firmware upload, sysupgrade / factory-reset hooks), `mod_sys_api.go` (diag, service, services, logs, `mr sys`), `mod_sys_doctor.go` (`mr doctor`, `sys.doctor`), `mod_sys_event.go` (event log, `mr event`, `sys.events`), `mod_sys_notify.go` (`notify:`, Telegram / webhooks, `mr notify`, `sys.notifytest`), `mod_sys_linux.go` / `mod_sys_other.go` (NTP sync state) |
-| UI | `rootfs/www/ui/sys.js` — 服务 (group 服务, with the DDNS card); 系统设置, 管理与 SSH, 计划任务, 备份与升级, 日志, 网络诊断 (group 系统); 体检与事件 (group 状态: 体检 / 事件 / 通知). The overview (`core.js`) shows the last health check's problems and the newest events. The 唤醒 (WOL) buttons sit on the dns module's pages (`dns.js`: 终端设备, DHCP 静态分配) |
-| rootfs | `rootfs/etc/init.d/{tailscale,mr-panel,mr-zram,lucky,lucky-dns-inotify,dstatus-agent}` (tailscale and mr-panel now read their conf.d); events: `mr-bootlog` (`mr event boot` / `shutdown`), `usr/libexec/mr/mon-collect` (the mon module's sampler starts `mr event tick`), NTP sync marker: `mr-clock` + `usr/libexec/mr/clock-save` |
-| Checks | `mr/mod_sys_test.go`, `mr/mod_sys_ddns_test.go` (fake Cloudflare API), `mr/mod_sys_wol_test.go`, `mr/mod_sys_{doctor,event,notify}_test.go` (fake system, fake Telegram / webhook; `TestMain` keeps every test's events off the host), `tools/ci.d/sys.sh` (incl. WOL through a bridge in network namespaces; events and a local webhook with real processes; `mr doctor` on the build host), `tools/ci.d/mon.sh` (the sampler's tick trigger), `tools/ci.d/net.sh` (WAN / failover events from the real hooks), lab fragment `examples/lab.d/70-sys.yaml` (+ `mr/testdata/secrets.d/sys.yaml`) |
-| Mock | `tools/mock/fixtures/sys.*.json` (incl. `sys.ddns.json`, `sys.ddnsupdate.post.json`, `sys.wol.post.json`, `sys.doctor.json`, `sys.events.json`, `sys.notifytest.post.json`), `service.post.json`, `diag.post.json`, `config.d/sys.json`; `status.json` has `doctor` and `events` |
+| Go | `mr/mod_sys.go` (module, types, validation, render), `mod_sys_time.go` (POSIX TZ parser, TZif writer, NTP, `sys.time`), `mod_sys_ssh.go` (dropbear, managed `authorized_keys`), `mod_sys_cron.go` (schedules, `mr sys run`), `mod_sys_ddns.go` (DDNS: addresses, state, Cloudflare client, `mr ddns`), `mod_sys_edge.go` (reverse proxy: config, validation, edge.json, firewall / dnsmasq lines, Verify), `mod_sys_edge_acme.go` (ACME client, DNS-01, certificate files, `mr edge renew / status`, API), `mod_sys_edge_serve.go` (`mr edge serve`), `mod_sys_wol.go` (Wake-on-LAN: `mr wol`, `sys.wol`), `mod_sys_backup.go` (backup / restore), `mod_sys_fw.go` (firmware upload, sysupgrade / factory-reset hooks), `mod_sys_api.go` (diag, service, services, logs, `mr sys`), `mod_sys_doctor.go` (`mr doctor`, `sys.doctor`), `mod_sys_event.go` (event log, `mr event`, `sys.events`), `mod_sys_notify.go` (`notify:`, Telegram / webhooks, `mr notify`, `sys.notifytest`), `mod_sys_linux.go` / `mod_sys_other.go` (NTP sync state) |
+| UI | `rootfs/www/ui/sys.js` — 服务 (group 服务, with the DDNS and HTTPS 反向代理 cards); 系统设置, 管理与 SSH, 计划任务, 备份与升级, 日志, 网络诊断 (group 系统); 体检与事件 (group 状态: 体检 / 事件 / 通知). The overview (`core.js`) shows the last health check's problems and the newest events. The 唤醒 (WOL) buttons sit on the dns module's pages (`dns.js`: 终端设备, DHCP 静态分配) |
+| rootfs | `rootfs/etc/init.d/{tailscale,mr-panel,mr-zram,lucky,lucky-dns-inotify,dstatus-agent,mr-edge}` (tailscale and mr-panel now read their conf.d); the image and `install.sh` create the user `mr-edge`; events: `mr-bootlog` (`mr event boot` / `shutdown`), `usr/libexec/mr/mon-collect` (the mon module's sampler starts `mr event tick`), NTP sync marker: `mr-clock` + `usr/libexec/mr/clock-save` |
+| Checks | `mr/mod_sys_test.go`, `mr/mod_sys_ddns_test.go` (fake Cloudflare API), `mr/mod_sys_wol_test.go`, `mr/mod_sys_edge_test.go`, `mod_sys_edge_acme_test.go` (in-process ACME server + fake Cloudflare), `mod_sys_edge_serve_test.go`, `mr/mod_sys_{doctor,event,notify}_test.go` (fake system, fake Telegram / webhook; `TestMain` keeps every test's events off the host), `tools/ci.d/sys.sh` (incl. WOL through a bridge in network namespaces; events and a local webhook with real processes; `mr doctor` on the build host), `tools/ci.d/sys-edge.sh` (the proxy process in network namespaces, WAN side through the rendered nft lines, memory), `tools/ci.d/mon.sh` (the sampler's tick trigger), `tools/ci.d/net.sh` (WAN / failover events from the real hooks), lab fragment `examples/lab.d/70-sys.yaml` (+ `mr/testdata/secrets.d/sys.yaml`) |
+| Mock | `tools/mock/fixtures/sys.*.json` (incl. `sys.ddns.json`, `sys.ddnsupdate.post.json`, `sys.wol.post.json`, `sys.edge.json`, `sys.edgerenew.post.json`, `sys.doctor.json`, `sys.events.json`, `sys.notifytest.post.json`), `service.post.json`, `diag.post.json`, `config.d/sys.json`; `status.json` has `doctor` and `events` |
 
 ## Cost
 
@@ -22,6 +23,7 @@ ones the config switches on (ntpd always, crond only while schedules or the DDNS
 | DDNS | nothing resident: crond (above) plus one short `mr ddns sync` per WAN event / interval; state 1–2 KB in `/run` (tmpfs). `mr` grows by ≈61 KiB of code and data (arm64, stripped; ≈19 KB xz-compressed; the file itself stayed 8.25 MiB thanks to segment padding) — net/http and TLS were already linked for the WAN check. An unchanged address costs no network request |
 | RAM, on demand | CGI runs of `mr` while a page is open; during a restore a `mr sys restore-watch` process sleeps until the confirm window is over (≈4 MB for at most ~12 min); a firmware upload sits in `/tmp` (RAM) until it is flashed or deleted |
 | WOL | nothing resident, no config; `mr` +≈18 KiB of code and data (arm64, stripped; ≈6 KB xz) — plain socket syscalls, not the net package's listener (that was +30 KiB) |
+| Reverse proxy | off: nothing. On: `mr edge serve` resident — idle 17 MB RSS, of which 7 MB anonymous (the rest are pages of the `mr` binary: shared, reclaimable); after 200 concurrent TLS clients × 20 requests 30 MB RSS (18 MB anonymous), peak 38 MB (x86_64 build host, `GOGC=50 GOMEMLIMIT=24MiB` as in the init script, measured by `tools/ci.d/sys-edge.sh` on every CI run); a daily `mr edge renew` that makes no request unless a certificate is due. `mr` +1.13 MiB (arm64, stripped: 9.11 → 10.29 MB): Go's HTTP server, HTTP/2 server, TLS server side and `httputil.ReverseProxy` (the client side was linked already); +57 KiB of it is this feature's own code |
 | CPU | nothing periodic. Services page: one `rc-service status` per service (in parallel) and one `tailscale status --json` |
 | Doctor, events, notifications | nothing resident. `mr` +128 KiB (arm64, stripped: 8,978,592 → 9,109,664 bytes, segment padding; +48.6 KB xz); `sys.js` +10 KB, `core.js` +1 KB. Runs: one short `mr event tick` per DHCP lease change and when `event.due` comes (a retry, the background doctor: every 30 min by default with channels, ~0.5 s CPU and a few `rc-service status` / one DNS lookup); a detached `mr notify flush` per burst of wanted events. Flash: see "Health checks, events, notifications" (a few lines a day; bounded to ~100 short appends an hour) |
 
@@ -63,6 +65,13 @@ services:
         ipv4: active                   # A: active (default) | <wan name> | "off"
         ipv6: router                   # AAAA: "off" (default) | router | "::10" (a LAN device)
         ttl: 0                         # 60-86400; 0 = automatic
+  edge:                      # HTTPS reverse proxy + certificates (see "HTTPS reverse proxy" below)
+    enabled: true
+    port: 443
+    open: true
+    acme: {token_secret: cf_ddns_token, wildcard: [example.com]}
+    routes:
+      - {name: nas, host: nas.example.com, to: "http://192.168.1.10:5000"}
 
 schedules:                   # busybox crond; fixed actions only
   - {name: weekly-reboot, cron: "30 4 * * 1", action: reboot}
@@ -76,7 +85,7 @@ notify:                      # events pushed to the phone; no daemon (see "Healt
     - {name: phone, type: telegram, token_secret: notify_tg_token, chat_id: "123456789"}   # or -100… (group), @channel
     - {name: ntfy, type: webhook, url_secret: notify_ntfy_url, format: text}              # ntfy: plain text + Title header
     - {name: ha, type: webhook, url_secret: notify_ha_url}                                # json (default): Gotify, Bark, HA, Slack …
-  events: [wan_down, wan_up, failover, rollback, login_lock, new_device, boot, upgrade, doctor]   # default: all but apply
+  events: [wan_down, wan_up, failover, rollback, login_lock, new_device, boot, upgrade, doctor, cert]   # default: all but apply
   rate: 10                   # messages per channel and hour (1-60); the rest goes out together later
   quiet_hours: "23:00-07:00" # router time: only warn / risk events then, the others wait
   doctor_interval: 30        # minutes between background `mr doctor` runs (5-1440, 0 = off); default 30 with channels
@@ -112,6 +121,7 @@ Validation (the security boundary — everything below ends up in a file, a cron
   `https://` with a host) and `format` `json` | `text`, no `token_secret` / `chat_id`. Messages never repeat a secret.
   `events` known types without duplicates; `rate` 1–60; `quiet_hours` `HH:MM-HH:MM` (not empty); `doctor_interval` 0 or
   5–1440. API tokens and agents can never change `notify` (they must not silence or redirect the owner's alerts).
+* `edge`: see "HTTPS reverse proxy" below.
 
 ## Generated files
 
@@ -128,7 +138,8 @@ Validation (the security boundary — everything below ends up in a file, a cron
 | `/etc/conf.d/tailscale` (on) | `TS_PORT=` (read by `/etc/init.d/tailscale`) | restart `tailscale` |
 | `/etc/conf.d/mr-panel` (on) | `PANEL_ADDR=` main LAN address (was a `sed` on router.yaml) | restart `mr-panel` |
 | `/etc/conf.d/crond` (schedules) | `CRON_OPTS`, `export TZ=…` | restart `crond` |
-| `/etc/crontabs/root` | managed block between markers (schedules; DDNS on with an interval adds `*/N * * * * /usr/sbin/mr ddns sync --cron`); Alpine's periodic lines and anything else kept | — (crond rescans the directory) |
+| `/etc/crontabs/root` | managed block between markers (schedules; DDNS on with an interval adds `*/N * * * * /usr/sbin/mr ddns sync --cron`; the reverse proxy adds `M H * * * /usr/sbin/mr edge renew --cron`, M and H fixed per router, H 2–5); Alpine's periodic lines and anything else kept | — (crond rescans the directory) |
+| `/etc/mini-router/gen/edge.json` (edge on) | port, WAN port, certificate directory, routes (host, target, certificate name, allow) — nothing secret, 0644 | restart `mr-edge` |
 | `/root/.ssh/authorized_keys` | managed block between markers; every other line kept | — (read per login) |
 
 conf.d files of optional services are only rendered while the service is enabled, so switching a
@@ -200,6 +211,105 @@ it (tested).
 
 **A second provider** is one function (`upsert`: make every record of that name and type hold the address) in
 `ddnsProviders`, plus its name in the validation.
+
+## HTTPS reverse proxy (services.edge)
+
+The built-in replacement for lucky's "443 + SSL" reverse proxy (Cd1s/mini-router#6): HTTPS by host name to
+services in the LAN, certificates from Let's Encrypt without port 80 (DNS-01, so it works behind blocked ports
+and CGNAT as long as the port you use reaches the router). Off by default; lucky stays in the image until you
+migrate (below).
+
+```yaml
+services:
+  edge:
+    enabled: true
+    port: 443                 # HTTPS on every router address (default 443)
+    open: true                # also from the WANs, IPv4 + IPv6 (default false: LAN zone + tailscale only)
+    lan_dns: true             # default: the route hosts resolve to the router's LAN address on the LAN
+    acme:
+      email: admin@example.com          # optional ACME contact
+      provider: cloudflare              # DNS-01 through the Cloudflare API (default; the only one so far)
+      token_secret: cf_ddns_token       # secrets.yaml: API token with Zone › DNS › Edit — the DDNS token works
+      staging: false                    # true: Let's Encrypt's staging CA (untrusted certificates, for trying it out)
+      wildcard: [example.com]           # one certificate example.com + *.example.com for the hosts directly under it
+    routes:
+      - {name: nas, host: nas.example.com, to: "http://192.168.1.10:5000"}                 # everyone
+      - {name: ha,  host: ha.example.com,  to: "http://192.168.1.20:8123", allow: [lan, 198.51.100.0/24]}
+      - {name: cam, host: cam.example.org, to: "https://192.168.1.30", allow: [lan]}         # own certificate
+      - {name: old, host: old.example.com, to: "http://192.168.1.40", enabled: false}
+```
+
+**Processes.** `mr edge serve` (OpenRC `mr-edge`, supervise-daemon, `GOGC=50 GOMEMLIMIT=24MiB`) is the only
+resident part, and only while `enabled`. It reads `gen/edge.json` and its certificate files — never router.yaml or
+secrets.yaml — so it runs as the user `mr-edge` with only `CAP_NET_BIND_SERVICE` when the image has that user (the M3
+image and `install.sh` create it; without it, root). `mr edge renew` is a short run: crond once a day, after an apply
+whose routes need a certificate that is missing or due (in the background; it never fails the apply), and the web
+UI's 立即申请 / 续期.
+
+**Who may connect.** Which side a connection came from is decided by the listener, not by address lists: with
+`open`, nftables redirects the WANs' port (only for the router's own addresses — IPv6 pinholes to LAN hosts on the
+same port are untouched) to the internal WAN listener `44300`, and accepts it there only when it was redirected:
+
+    dstnat: iifname { WANs } fib daddr type local tcp dport 443 redirect to :44300 comment "edge"
+    input:  iifname { WANs } tcp dport 44300 ct status dnat accept comment "edge"
+
+So everything on the main port came through the LAN zone (LAN networks of zone lan, tailscale0; guest networks
+cannot reach the router's ports) — `allow: [lan]` cannot be spoofed from outside, also not by a CGNAT neighbour.
+A LAN client that uses the public address (hairpin) is still LAN. For the same reason a `firewall.open` of the edge's
+tcp port is refused while the proxy is on (it would deliver WAN connections to the LAN listener): remove it and set
+`open: true`. `allow` entries: `lan` and addresses / CIDRs (IPv4 and IPv6, matched against the client on both
+listeners); empty = everyone who reaches the port. A refused client fails already in the TLS handshake.
+
+**Proxying.** TLS 1.2+, HTTP/2 and HTTP/1.1 (Go's net/http). The certificate is picked by SNI; an unknown name (or
+none — a scan of the address) fails the handshake, so no host names leak. The request's Host must equal the SNI name,
+else 421 (with a wildcard certificate browsers may reuse an HTTP/2 connection for another host; 421 makes them open
+one of its own). Each route goes to one upstream with `httputil.ReverseProxy`: the original Host, `X-Forwarded-For` /
+`-Proto` / `-Host` from the connection (a client's own X-Forwarded-* headers are dropped), WebSocket and other
+HTTP/1.1 upgrades passed through (browsers use HTTP/1.1 for WebSockets: extended CONNECT over HTTP/2 is off in Go),
+streaming responses flushed at once, 502 when the upstream is down. `https://` upstreams are LAN addresses with
+self-signed certificates: encrypted, not verified. No caching, no rewriting, nothing logged per request. Limits:
+512 connections, 10 s for the TLS handshake and the request headers, 32 KiB of headers, 2 min idle; no body or
+response timeouts (uploads, long polls, WebSockets). Counters per route (requests, 502s, refused) are in
+`/run/mr-edge/status.json` (written at start and at most once a minute).
+
+**Certificates.** ACME (RFC 8555) with the Go standard library only (ES256 JWS; no `x/crypto/acme` dependency): the
+account key (ECDSA P-256, one per CA, `/etc/mini-router/state/acme/`, 0700 / 0600 root), order, DNS-01 — a TXT record
+`_acme-challenge.<host>` created through the Cloudflare API with the DDNS client's code (the zone is the longest suffix
+of the host the token can see), a wait until every authoritative name server of the zone answers it (asked directly,
+no cache on the way; when they cannot be asked, e.g. port 53 blocked, the CA is asked anyway after 2 minutes), the
+challenge, polling, finalize with a new ECDSA P-256 key, the chain checked (leaf = our key, every domain named, valid
+now), then `/etc/mini-router/state/edge/<cert>.pem` (chain + key) written atomically, 0600, owned by the service user,
+never through a symlink; the TXT records are deleted again in every case. `mr edge serve` reloads on SIGHUP (renew
+sends it; `rc-service mr-edge reload` too) and by itself when a file changed. Certificates: one per host, except hosts
+directly under a `wildcard` domain, which share `<domain>` + `*.<domain>` (file `_.<domain>.pem`); names under a
+wildcard stay out of the certificate transparency logs. A certificate is renewed when it is missing, names other
+domains, comes from the other CA (staging ↔ production) or has less than a third of its lifetime left (30 of 90
+days); otherwise a run makes no request at all. Failures of automatic runs back off 1, 2, 4 … 24 h (or the CA's
+Retry-After); manual runs try at once. Certificates of removed routes are deleted. Results: `/run/mini-router/edge-renew.json`
+(tmpfs), `mr edge status`, the web UI, events of type `cert`. Every URL the CA names must be on the directory's host.
+
+**Secrets.** The API token only goes into the `Authorization` header of Cloudflare requests; the account key and the
+certificate keys stay in their files. None of them is in edge.json, the state file, `mr edge status`, `sys.edge`, events
+or logs (tested). router.yaml's `services.edge.acme` references a secret, so API tokens cannot change it; routes are
+config like any other (a token with apply scope can change them; they can only point at the LAN, below). Every change of
+`services.edge` is a high-risk change (it decides what the internet reaches).
+
+**Validation.** `port` 1–65535, not SSH / 53 / 67 / 80 / 123 / 547 / 44300 / lucky's UI port (while lucky is on);
+`enabled` needs an enabled route and a `token_secret` naming an existing secret that looks like an API token; `provider`
+`cloudflare`; `email` an address or empty; `wildcard` lower-case domains, at most 8; routes: at most 32, `name`
+`[A-Za-z0-9_.-]{1,40}` unique, `host` a lower-case DNS name with a dot (no wildcard, no `_`) unique, `to`
+`http(s)://IP[:port][/]` without user, path or query, the IP the router itself (loopback, a router address), a host
+in a LAN-side network, a tailnet address (100.64/10) or an IPv6 ULA — never the proxy's own ports; `allow` `lan` or
+addresses / CIDRs (at most 32); no enabled `firewall.open` of the tcp port while on; with `open`, no port forward of
+that tcp port. `guard.never_expose`: a route the WAN can use (open, and allow not only `lan`) must not lead to the
+router's own SSH / web UI / DNS port. `mr edge serve` checks its edge.json again (it is the process's only input).
+
+**LAN.** With `lan_dns` (default) dnsmasq answers the route hosts with the main LAN address (`host-record=`, A only),
+so the LAN reaches them without the public address and while the WAN is down. Guest networks get the same answer but
+cannot reach the router's ports.
+
+**Changes to the real home output:** none — `services.edge` is absent there, so no file, service, firewall line,
+dnsmasq line or cron line appears (tested).
 
 ## Wake-on-LAN
 
@@ -319,6 +429,8 @@ ruleset uses conntrack), so there is no cost before the firewall. The mon module
 | `sys.schedulecheck` | POST | `{cron, action}` → `{ok, cron \| error}` (editor feedback, no side effects) |
 | `sys.ddns` | GET | `{enabled, interval, records[]}` — per record and type: `name, type, source, local, published, note, last_ok, changed, checked, error, error_at, retry, stopped, fails` (local addresses as of now; no provider request; never the token or zone id) |
 | `sys.wol` | POST | `{target: MAC \| dhcp.hosts name, network (optional)}` → `{mac, host, network, dev, broadcast}`; 400 for a bad target / network, 500 if sending failed |
+| `sys.edge` | GET | `{enabled, port, open, staging, serving, started, renewing, routes[] {name, host, to, allow, cert, wan, requests, errors, denied}, certs[] {name, domains, state (ok \| due \| missing \| expired \| names changed \| other CA), not_before, not_after, issuer, last_try, last_ok, error, error_at, retry}}` — never a key or the token; token scope `read` |
+| `sys.edgerenew` | POST | `{}` → `{started: true}`: `mr edge renew` in the background (what is due or missing, ignoring the backoff); 409 while off or while a renewal runs; poll `sys.edge` (`renewing`). Session only |
 | `sys.ddnsupdate` | POST | `{name (optional), force}` → same as `sys.ddns` after an update run (ignores backoff and a stop; `force` also asks the provider for records the state calls published). 409 while DDNS is off |
 | `sys.backup` | POST | `{secrets: bool}` → `{name, data (base64 tar.gz), size, files[], restorable}` |
 | `sys.restore` | POST | `{data (base64 tar.gz ≤ 2.9 MB), confirm: 60-600}` → starts the apply job; poll `job`, then `confirm` / `revert` as for any apply |
@@ -369,10 +481,17 @@ mr event tick | boot | shutdown                          # what mr-mon's sampler
 mr notify status                                         # channels: pending, last success, last error, retry, held
 mr notify test [NAME]                                    # a test message now (JSON: name, ok, error)
 mr notify flush [--hook]                                 # send what is pending (--hook: the 5 s wait the events start)
+mr edge status                                           # reverse proxy: routes (requests), certificates, renewal results (offline)
+mr edge renew [--force] [CERT...]                        # issue what is missing / due now (--force: also the others)
+mr edge renew --cron | --hook                            # what crond / an apply run (respect the backoff)
+mr edge serve [-c FILE]                                  # the proxy process (service mr-edge; no router.yaml / secrets.yaml)
+mr edge prepare                                          # the init script: certificate directory owned by the service user
 ```
 
-`mr status` has `ddns: {records, ok, errors[]}` while DDNS is on (the overview shows failing records), `doctor` (the last
-`mr doctor` run's counts and problems) and `events` (the newest 8).
+`mr status` has `ddns: {records, ok, errors[]}` while DDNS is on (the overview shows failing records), `edge: {routes,
+certs, ok, errors[]}` while the reverse proxy is on, `doctor` (the last `mr doctor` run's counts and problems) and `events`
+(the newest 8). `mr doctor` has a `certs` check (missing / expired = risk, less than 14 days left or a failed renewal =
+warn); issued and failed certificates are events of type `cert`.
 
 ## Platform interface
 
@@ -410,6 +529,12 @@ mr notify flush [--hook]                                 # send what is pending 
   `::10` 这样的 LAN 设备后缀）、TTL。改完点“保存并应用”，应用后会立即同步一次。下面的状态表显示每条记录的本机
   地址、已发布地址、上次成功时间和错误；“立即更新”马上向 Cloudflare 核对并更新（忽略退避）。更新失败时总览页有提示。
   Cloudflare Token：My Profile › API Tokens › Create Token › “Edit zone DNS” 模板，Zone Resources 只选这个域。
+- **服务 › HTTPS 反向代理（自动证书）**（同一页下方）：开关、端口、“对外网开放”、“局域网解析”；证书部分填邮箱（可空）、
+  Cloudflare Token 引用名和 Token（和 DDNS 用同一种，可以就用 `cf_ddns_token`）、通配符域名、是否用测试 CA。站点表每行一个
+  域名：名称、域名、转发到（内网服务的 `http://IP:端口` 或 `https://IP:端口`）、允许访问（留空 = 所有人；`lan` = 局域网和
+  Tailscale；或者 IP / 网段）。保存并应用后路由器自动申请证书（1–2 分钟），状态表显示每个站点的请求数和 502 次数、
+  每张证书的剩余天数和上次签发 / 失败原因；“立即申请 / 续期”马上再试（忽略退避）。防火墙 › 常规 / 安全的“对外暴露检查”
+  会列出它开放的端口。
 - **系统设置**：主机名、zram；时间区显示路由器当前时间和 NTP 是否已同步，“立即同步”重启 ntpd；
   时区从列表选（曼谷、北京、东京、柏林、纽约……），列表里没有就选“自定义 POSIX TZ”手填；
   NTP 服务器逗号分隔；“为局域网提供 NTP”打开后 LAN（含 Tailscale）可以把路由器当时间服务器，
@@ -496,6 +621,32 @@ notify:
 
 应用后 `mr notify test` 发一条测试消息，`mr notify status` 看状态，`mr event list` 看事件，`mr doctor` 体检。
 
+HTTPS 反向代理：Token 同上（已经有 DDNS 的 `cf_ddns_token` 就直接用），然后
+
+```yaml
+services:
+  edge:
+    enabled: true
+    open: true                          # 外网可访问（IPv4 + IPv6 的 443）
+    acme: {token_secret: cf_ddns_token, wildcard: [example.com]}
+    routes:
+      - {name: nas, host: nas.example.com, to: "http://192.168.1.10:5000"}
+      - {name: ha, host: ha.example.com, to: "http://192.168.1.20:8123", allow: [lan]}   # 只在家里 / Tailscale 用
+```
+
+`mr apply --confirm 120` 之后 `mr edge status`：`serving: true`，证书 1–2 分钟后 `state: ok`（`mr edge renew` 可以前台跑一次看
+过程）。域名要在 Cloudflare 上指向路由器（DDNS 记录 `*.example.com` 或每个域名一条）。
+
+从 lucky 迁移（一次 apply 完成，lucky 的配置留着以备回退）：
+
+1. 先在 lucky 里记下每个反代站点的域名和后端地址；确认 `services.ddns` 已经接管 DDNS（lucky 的 DDNS 关掉）。
+2. router.yaml：`services.lucky.enabled: false`；删掉 `firewall.open` 里的 `lucky-https`（443 由 `services.edge.open` 打开）；
+   `dns.addn_hosts` 里的 `/etc/lucky/dnsmasq.hosts` 可以去掉（`lan_dns` 接替）；按上面加 `services.edge`，
+   第一次可以先用 `acme.staging: true` 试，确认签发成功后改回 false。
+3. `mr plan`（风险为 high：改了对外开放的站点）→ `mr apply --confirm 120` → `mr edge status` / 外网用手机流量打开一个站点 →
+   `mr confirm`。不行就 `mr rollback`，lucky 原样回来。
+4. 稳定之后，镜像里的 lucky 可以在以后的镜像中去掉（EXTRA_BINS），省下约 50 MB 内存。
+
 备份 / 恢复：`mr sys backup -secrets /tmp/b.tgz`，拷走；恢复 `mr sys restore /tmp/b.tgz` 然后
 `mr confirm`。手动试跑计划任务的动作：`mr sys run restart dnsmasq`。唤醒一台设备：`mr wol nas`（静态分配里的
 名字）或 `mr wol aa:bb:cc:dd:ee:ff [网络名]`。
@@ -508,6 +659,11 @@ notify:
 - DDNS 没更新：`mr ddns status`（`note` 说明为什么没有本机地址，例如 WAN 是 CGNAT / 私网地址、还没有 IPv6 前缀；
   `error` / `stopped` 是 Cloudflare 的回答）；`grep ddns: /var/log/messages`；`mr ddns update --force` 立即重试。
   Token 被拒绝（`stopped`）：检查 Token 权限（Zone › DNS › Edit，覆盖这个 zone），改 secrets.yaml 后应用即恢复。
+- 反向代理打不开：`mr edge status`（`serving` 是否为 true；证书 `state` / `error`）；`rc-service mr-edge status`；
+  `grep edge: /var/log/messages`（证书申请和后端连不上都记在这里）。端口被别的程序占用（例如 lucky 还开着 443）时 mr-edge
+  起不来，apply 会校验失败并回滚。外网不通先看“对外网开放”和 Cloudflare 上的域名是否指向路由器；局域网能开外网不能开，
+  看站点的“允许访问”是不是只有 `lan`。证书一直失败：Token 权限（Zone › DNS › Edit，覆盖这个域）、`mr edge renew` 前台看原因；
+  自动重试按 1、2、4 … 24 小时退避，“立即申请 / 续期”不受限。
 - SSH 连不上：`cat /etc/conf.d/dropbear`（`lan_only` 时只监听 LAN 地址）；`mr sys keys` 看公钥。
 - 开机后 `sysctl net.netfilter.nf_conntrack_max` 应为 100000（或 `system.sysctl` 里的值）。
 - 出了问题先 `mr doctor`（每条问题带处理办法），再看 `mr event list`（断线、切换、回滚、重启原因的先后）。

@@ -64,6 +64,9 @@ mknod -m 0644 "$R/dev/kmsg" c 1 11
 # unprivileged proxy service (docs/modules/proxy.md): no shell, no home
 chroot "$R" addgroup -S sing-box
 chroot "$R" adduser -S -D -H -h /var/empty -s /sbin/nologin -G sing-box -g sing-box sing-box
+# unprivileged HTTPS reverse proxy (services.edge, docs/modules/sys.md): no shell, no home
+chroot "$R" addgroup -S mr-edge
+chroot "$R" adduser -S -D -H -h /var/empty -s /sbin/nologin -G mr-edge -g mr-edge mr-edge
 sed -i 's#^root:[^:]*:#root:*:#' "$R/etc/shadow" # no password: SSH keys only
 
 # serial console: a root shell on Enter (physical access = the U-Boot failsafe anyway); no VT gettys

@@ -64,6 +64,14 @@
    "running": true
   },
   {
+   "name": "mr-edge",
+   "label": "HTTPS 反向代理 (mr edge)",
+   "cfg": "edge",
+   "wanted": true,
+   "installed": true,
+   "running": true
+  },
+  {
    "name": "crond",
    "label": "计划任务 (crond)",
    "cfg": "schedules",

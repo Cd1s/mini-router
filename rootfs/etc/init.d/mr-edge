@@ -1,0 +1,40 @@
+#!/sbin/openrc-run
+# HTTPS reverse proxy of services.edge (docs/modules/sys.md, 反向代理): `mr edge serve` terminates TLS for
+# the route hosts and proxies each to its LAN service. It reads only /etc/mini-router/gen/edge.json
+# (rendered by mr apply, no secrets) and its certificates in /etc/mini-router/state/edge (written by
+# `mr edge renew`, crond once a day). Certificates are reloaded on SIGHUP (`reload`) or by themselves.
+description="HTTPS reverse proxy (mr edge)"
+supervisor=supervise-daemon
+command=/usr/sbin/mr
+command_args="edge serve -c /run/mr-edge/edge.json"
+supervise_daemon_args="--env GOGC=50 --env GOMEMLIMIT=24MiB"
+extra_started_commands="reload"
+respawn_delay=5
+respawn_max=0
+
+# Unprivileged when the image has an `mr-edge` user: it may only bind the ports below 1024.
+if id -u mr-edge >/dev/null 2>&1; then
+	command_user="mr-edge:mr-edge"
+	capabilities="^cap_net_bind_service"
+fi
+
+depend() {
+	need mr-network
+	after mr-firewall
+}
+
+start_pre() {
+	[ -f /etc/mini-router/gen/edge.json ] || { eerror "/etc/mini-router/gen/edge.json missing (run mr apply)"; return 1; }
+	checkpath -d -m 0755 -o "${command_user:-root}" /run/mr-edge || return 1
+	# the process's only config (no secrets in it), readable whatever /etc/mini-router's mode is
+	rm -f /run/mr-edge/edge.json # the directory belongs to the service user: never write through its links
+	cp /etc/mini-router/gen/edge.json /run/mr-edge/edge.json || return 1
+	# the certificate directory and files belong to the service user (0700 / 0600)
+	/usr/sbin/mr edge prepare
+}
+
+reload() {
+	ebegin "Reloading certificates"
+	supervise-daemon "$RC_SVCNAME" --signal HUP
+	eend $?
+}

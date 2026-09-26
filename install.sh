@@ -122,6 +122,8 @@ install -m 0755 "$TMP/mr" /usr/sbin/mr
 tar -xzf "$TMP/rootfs.tgz" -C / --no-same-owner
 chown -R 0:0 /etc/init.d /usr/libexec/mr /www 2> /dev/null || :
 mkdir -p "$CONF/dns" "$CONF/proxy" "$CONF/state"
+# the HTTPS reverse proxy (services.edge) runs as this user when it exists: no shell, no home
+id -u mr-edge > /dev/null 2>&1 || { addgroup -S mr-edge && adduser -S -D -H -h /var/empty -s /sbin/nologin -G mr-edge -g mr-edge mr-edge; } > /dev/null 2>&1 || :
 echo "mr $(/usr/sbin/mr version)"
 
 # ---------------------------------------------------------------- questions

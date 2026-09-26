@@ -38,6 +38,18 @@ services:
       - {name: home.example.com, zone: example.com, token_secret: cf_ddns_token, ipv4: active, ipv6: router}
       - {name: "*.example.com", zone: example.com, token_secret: cf_ddns_token, ipv4: wan2}
       - {name: nas.example.com, zone: example.com, token_secret: cf_ddns_token, ipv4: "off", ipv6: "::10", ttl: 300}
+  edge:                                     # HTTPS reverse proxy: `mr edge serve` (service mr-edge) + Let's Encrypt via DNS-01
+    enabled: true
+    port: 8443                              # the lab keeps firewall.open lucky-https (tcp 443); the home migration uses 443
+    open: true                              # WANs: nft redirects tcp 8443 on the router's addresses to the WAN listener (44300)
+    acme: {email: admin@example.com, token_secret: cf_ddns_token, staging: true, wildcard: [example.com]}
+    routes:                                 # *.example.com: one certificate; cam.lab.example.org: its own
+      - {name: nas, host: nas.example.com, to: "http://192.168.1.10:5000"}
+      - {name: ha, host: ha.example.com, to: "http://192.168.1.20:8123", allow: [lan, 198.51.100.0/24]}
+      - {name: cam, host: cam.lab.example.org, to: "https://192.168.30.40:443", allow: [lan]}
+      - {name: tailnet-app, host: app.example.com, to: "http://100.101.102.103:3000"}
+      - {name: lucky-ui, host: lucky.example.com, to: "http://192.168.1.6:16601", allow: [lan]}
+      - {name: retired, enabled: false, host: old.example.com, to: "http://192.168.1.99:80"}
 
 notify:                                     # events pushed to the phone; no daemon (hooks + mr-mon's sampler)
   channels:

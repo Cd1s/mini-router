@@ -1,0 +1,75 @@
+{
+ "enabled": true,
+ "port": 8443,
+ "open": true,
+ "staging": false,
+ "serving": true,
+ "started": 1790170000,
+ "renewing": false,
+ "routes": [
+  {
+   "name": "nas",
+   "host": "nas.example.com",
+   "to": "http://192.168.1.10:5000",
+   "allow": null,
+   "cert": "_.example.com",
+   "wan": true,
+   "requests": 18342,
+   "errors": 3,
+   "denied": 41
+  },
+  {
+   "name": "ha",
+   "host": "ha.example.com",
+   "to": "http://192.168.1.20:8123",
+   "allow": [
+    "lan",
+    "198.51.100.0/24"
+   ],
+   "cert": "_.example.com",
+   "wan": true,
+   "requests": 5120,
+   "errors": 0,
+   "denied": 7
+  },
+  {
+   "name": "cam",
+   "host": "cam.home.example.org",
+   "to": "https://192.168.1.30",
+   "allow": [
+    "lan"
+   ],
+   "cert": "cam.home.example.org",
+   "wan": false,
+   "requests": 0,
+   "errors": 0,
+   "denied": 0
+  }
+ ],
+ "certs": [
+  {
+   "name": "_.example.com",
+   "domains": [
+    "example.com",
+    "*.example.com"
+   ],
+   "state": "ok",
+   "not_before": 1789490000,
+   "not_after": 1797266000,
+   "issuer": "E7",
+   "last_try": 1789493600,
+   "last_ok": 1789493600
+  },
+  {
+   "name": "cam.home.example.org",
+   "domains": [
+    "cam.home.example.org"
+   ],
+   "state": "missing",
+   "last_try": 1790249000,
+   "error": "Cloudflare: no zone for cam.home.example.org (does the token cover it?)",
+   "error_at": 1790249000,
+   "retry": 1790252600
+  }
+ ]
+}

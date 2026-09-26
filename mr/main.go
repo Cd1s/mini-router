@@ -67,6 +67,8 @@ module commands (JSON output unless noted):
   mr event list [--json] [N]  the event log: WAN down / up, failover, changes, login locks, new devices, boots
                               (tick: mr-mon's sampler; boot | shutdown: mr-bootlog)
   mr notify status | test [NAME]   notification channels: what waits, last error; send a test message now
+  mr edge status | renew [--force] [CERT...]   HTTPS reverse proxy: routes, certificates; renew now
+  mr edge serve [-c FILE]     the proxy itself (service mr-edge; reads only gen/edge.json + certificates)
   mr led                      set the status LEDs from the WAN state
 `
 
@@ -141,6 +143,11 @@ func dispatch(args []string, cfgPath, secPath string) error {
 		return tokenCommand(args[1:], cfgPath, secPath)
 	case "mcp":
 		return mcpCommand(args[1:], cfgPath, secPath)
+	case "edge":
+		// the proxy process runs unprivileged: it must not need router.yaml / secrets.yaml
+		if len(args) > 1 && args[1] == "serve" {
+			return edgeServe(args[2:])
+		}
 	}
 
 	c, err := loadConfig(cfgPath, secPath)

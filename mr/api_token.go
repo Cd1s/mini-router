@@ -70,7 +70,7 @@ var tokenActions = map[string]string{
 	"wifi.status": "read", "wifi.stations": "read", "clients": "read", "wifi.survey": "read",
 	"dns.stats": "read", "dns.leases": "read", "fw.stats": "read", "proxy.status": "read",
 	"mon.now": "read", "mon.history": "read", "mon.devices": "read", "mon.conns": "read", "mon.procs": "read", "mon.dmesg": "read",
-	"sys.services": "read", "sys.time": "read", "sys.doctor": "read", "sys.events": "read",
+	"sys.services": "read", "sys.time": "read", "sys.doctor": "read", "sys.events": "read", "sys.edge": "read",
 	// operate: runtime actions that do not change the config
 	"net.redial": "operate", "wifi.kick": "operate", "wifi.scan": "operate", "dns.release": "operate",
 	"proxy.delay": "operate", "proxy.select": "operate", "service": "operate", "diag": "operate",
