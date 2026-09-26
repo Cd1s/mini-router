@@ -1,0 +1,7 @@
+#!/bin/sh
+# command of mr-pppoe.<wan> (supervise-daemon): waits for the WANs before this one in multiwan.dial_order
+# (at most multiwan.dial_wait seconds; returns at once for WANs not listed), then becomes pppd. The wait
+# runs here, not in start_pre, so OpenRC never blocks on it (a serial boot starts every WAN at once) and a
+# respawn waits the same way. mr failing (no config) never keeps pppd from starting.
+"${MR_BIN:-/usr/sbin/mr}" wan dial-wait "$1" </dev/null
+exec /usr/sbin/pppd call "$1"

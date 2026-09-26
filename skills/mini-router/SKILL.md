@@ -69,6 +69,7 @@ devices:                                              # inventory: other section
 groups: {kids: [kid-tablet]}                          # elsewhere: "group:kids"
 policy_routes:                                        # pick the WAN for NEW connections (selectors are ANDed)
   - {name: nas, device: nas, via: wan2, fallback: drop}  # mac / device / src / dst / domains; drop = never another WAN
+  #   nat6: true = its IPv6 from other WANs' prefixes leaves via too (NPTv6 to via's prefix; software flowtable, not PPE)
   - {name: video, domains: [video.example], via: wan2}  # + subdomains; dnsmasq fills nft set pr_<index>_4/_6
 dhcp:
   start: 100
@@ -123,7 +124,9 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
   mr-hostapd restart, then only a `wifi` event — never a reboot. Check: `mr wifi steer --dry-run` (who would be asked and
   why not), `mr wifi health` (temperature, throttling, airtime fairness `vow_atf`, firmware restarts, stall / heal stage,
   steering counts), `grep 'wifi steer\|wifi self-heal' /var/log/messages`, `mr event list`.
-- **WAN**: `mr wan status`; redial one line at a time: `rc-service mr-pppoe.<name> restart`.
+- **WAN**: `mr wan status`; redial one line at a time: `rc-service mr-pppoe.<name> restart`. With `multiwan.dial_order`
+  (several PPPoE sessions on one account, the ISP follows the newest), redial in that order; `dial_order_ok` in
+  `mr wan status` says whether it holds, `dial_restore` (off | now | HH:MM) repairs it (docs/modules/net.md).
 - **A website via another WAN**: `policy_routes: [{name: …, domains: [site.example], via: wan2}]` (or `domains_file:`).
   Connections stay hardware-offloaded. Check: `mr dns query site.example`, then `nft list set inet mr pr_<index>_4`
   lists the learned addresses. Devices using DoH / their own DNS are not covered (`dns.redirect` catches plain DNS).

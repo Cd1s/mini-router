@@ -42,12 +42,17 @@ wan:
     ipv6_pd: true
     ipv6_srcroute: true
 
+multiwan:                       # no health check / balancing (mode off); only the PPPoE dial order
+  dial_order: [wan2, wan]       # the ISP's DDNS follows the session that connected last: wan
+  dial_restore: "04:30"         # wan2 redialled on its own: redial wan at 04:30 to restore the order
+
 policy_routes:
   - name: desktop-via-wan2
     mac: 02:c3:06:d6:7f:8a
     via: wan2
     table: 102
     mark: "0x102"
+    nat6: true                  # its IPv6 from wan's prefix too leaves wan2 (NPTv6 to wan2's prefix)
 
 firewall:
   offload: hardware

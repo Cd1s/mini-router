@@ -60,6 +60,7 @@ func TestWifiTuneValidate(t *testing.T) {
 func TestWifiTuneDefaults(t *testing.T) {
 	c := testConfig(t)
 	c.Services.DDNS, c.Services.Edge = DDNS{}, Edge{} // their cron lines are not WiFi's
+	c.MultiWAN.DialRestore = ""                       // nor is the dial-order restore
 	if c.WiFi.Steering.MinSignal2G != 0 || c.WiFi.SelfHeal || len(wifiCronLine(c)) != 0 || cronWanted(c) {
 		t.Errorf("home config: steering %+v self_heal %v cron %v", c.WiFi.Steering, c.WiFi.SelfHeal, wifiCronLine(c))
 	}

@@ -462,6 +462,23 @@ func TestDDNSSourceMAC(t *testing.T) {
 	if ip, note := (&ddnsSrc{c: c}).local(rec, "AAAA", nil); ip != "" || !strings.Contains(note, "no global IPv6 address in the neighbour table") {
 		t.Errorf("old prefix only: %q %q", ip, note)
 	}
+	// a policy route pins the device to wan2 (#108): an address in wan2's prefix comes first, even
+	// before the EUI-64 one in another prefix; without wan2's record the usual order
+	addrs["br-lan"] = []net.IP{net.ParseIP("2001:db8:1:2::1"), net.ParseIP("2001:db8:2:2::1")}
+	nb = []monNeigh{n("2001:db8:1:2:0:ff:fe00:10", mac), n("2001:db8:2:2:bbbb::9", mac), n("2001:db8:2:2:aaaa::9", mac)}
+	c.Policy = append(c.Policy, Policy{Name: "pin", MAC: strings.ToUpper(mac), Via: "wan2"})
+	if ip, _ := (&ddnsSrc{c: c}).local(rec, "AAAA", nil); ip != "2001:db8:1:2:0:ff:fe00:10" {
+		t.Errorf("no wan2 record: %q", ip)
+	}
+	os.MkdirAll(wanRunDir, 0755)
+	os.WriteFile(pd6File("wan2"), []byte("2001:db8:2::/48\n"), 0644)
+	if ip, _ := (&ddnsSrc{c: c}).local(rec, "AAAA", nil); ip != "2001:db8:2:2:aaaa::9" {
+		t.Errorf("pinned WAN's prefix first: %q", ip)
+	}
+	c.Policy[len(c.Policy)-1].Dst = "2001:db8:99::/48" // not every destination: no pin
+	if ip, _ := (&ddnsSrc{c: c}).local(rec, "AAAA", nil); ip != "2001:db8:1:2:0:ff:fe00:10" {
+		t.Errorf("dst policy does not pin: %q", ip)
+	}
 	// fixed values
 	if ip, _ := src.local(DDNSRecord{IPv4: "203.0.113.5", IPv6: "2001:db8::5"}, "AAAA", nil); ip != "2001:db8::5" {
 		t.Errorf("fixed: %q", ip)

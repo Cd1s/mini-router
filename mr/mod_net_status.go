@@ -384,6 +384,12 @@ type wanRuntimeView struct {
 	Interval int      `json:"interval,omitempty"`
 	Targets  []string `json:"targets,omitempty"`
 	WANs     []wanRT  `json:"wans"`
+	// multiwan.dial_order (mod_net_dial.go)
+	DialOrder     []string `json:"dial_order,omitempty"`
+	DialOrderOK   *bool    `json:"dial_order_ok,omitempty"`   // no up WAN has an older session than an up WAN before it
+	DialLate      []string `json:"dial_late,omitempty"`       // the up WANs that dialled too early
+	DialRestore   string   `json:"dial_restore,omitempty"`    // off | now | HH:MM
+	DialRestoreAt int64    `json:"dial_restore_at,omitempty"` // HH:MM and broken: when crond redials (unix)
 }
 
 func wanRuntime(c *Config) wanRuntimeView {
@@ -416,6 +422,11 @@ func wanRuntime(c *Config) wanRuntimeView {
 			r.Health, r.RTT, r.Fails, r.HealthSince = h.State, h.RTT, h.Fails, h.Since
 		}
 		v.WANs = append(v.WANs, r)
+	}
+	if m := c.MultiWAN; len(m.DialOrder) > 0 {
+		v.DialLate = dialLate(m)
+		ok := len(v.DialLate) == 0
+		v.DialOrder, v.DialOrderOK, v.DialRestore, v.DialRestoreAt = m.DialOrder, &ok, m.DialRestore, dialRestoreAt(c)
 	}
 	return v
 }

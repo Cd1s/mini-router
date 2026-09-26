@@ -13,8 +13,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type LAN struct {
@@ -88,6 +90,8 @@ type Mcast struct {
 // Device: a device or group:NAME of the inventory (mod_dev.go) instead of one MAC. Fallback: while
 // Via has no route (down, health check failed) its traffic takes the main table's default route
 // ("main", default) or is dropped ("drop": this WAN only, never another one; policyFallbackRules).
+// NAT6: IPv6 from any LAN prefix follows Via; a source outside Via's delegated prefix gets that prefix
+// (NPTv6, same interface ID) while Via has one, otherwise the default route (Cd1s/mini-router#108).
 type Policy struct {
 	Name        string   `yaml:"name"`
 	MAC         string   `yaml:"mac,omitempty"`
@@ -100,6 +104,7 @@ type Policy struct {
 	Table       int      `yaml:"table,omitempty"`
 	Mark        string   `yaml:"mark,omitempty"`     // e.g. 0x102
 	Fallback    string   `yaml:"fallback,omitempty"` // main (default) | drop
+	NAT6        bool     `yaml:"nat6,omitempty"`
 }
 
 // byDomain reports whether the policy selects destinations by DNS name.
@@ -121,10 +126,23 @@ type MultiWAN struct {
 	Fall     int            `yaml:"fall,omitempty"`     // failed rounds before a WAN is down (default 3)
 	Rise     int            `yaml:"rise,omitempty"`     // good rounds before it is up again (default 2)
 	Weights  map[string]int `yaml:"weights,omitempty"`  // balance: WAN name -> share of new connections (default 1 each)
+	// PPPoE dial order (any mode, mod_net_dial.go)
+	DialOrder   []string `yaml:"dial_order,omitempty"`   // PPPoE WANs that dial in this order (each waits for the earlier ones)
+	DialWait    int      `yaml:"dial_wait,omitempty"`    // seconds a WAN waits for the earlier ones (default 20)
+	DialRestore string   `yaml:"dial_restore,omitempty"` // off (default) | now | HH:MM: redial later WANs when the order broke
 }
 
 // Enabled reports whether the health checker runs.
 func (m MultiWAN) Enabled() bool { return m.Mode == "failover" || m.Mode == "balance" }
+
+// dialWait: seconds a WAN waits for the ones before it in DialOrder (default 20; the default is not
+// written into the config, so a web UI round trip does not add the key).
+func (m MultiWAN) dialWait() time.Duration {
+	if m.DialWait == 0 {
+		return 20 * time.Second
+	}
+	return time.Duration(m.DialWait) * time.Second
+}
 
 // Weight of a WAN in balance mode (0 = never chosen by the balancer, only by failover).
 func (m MultiWAN) Weight(name string) int {
@@ -464,6 +482,7 @@ func netValidate(c *Config, v *Validator) {
 		v.Add("multicast.upstream: unknown wan %q", c.Mcast.Upstream)
 	}
 	netValidateMultiWAN(c, v)
+	netValidateDial(c, v)
 }
 
 func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
@@ -664,8 +683,17 @@ func netValidatePolicy(c *Config, v *Validator) {
 		if src != nil && dst != nil && isV4(src) != isV4(dst) {
 			v.Add("%s: src and dst must be the same family", p)
 		}
-		if c.WANByName(pr.Via) == nil {
+		w := c.WANByName(pr.Via)
+		if w == nil {
 			v.Add("%s.via: unknown wan %q", p, pr.Via)
+		}
+		if pr.NAT6 {
+			if w != nil && (!w.IPv6 || !w.IPv6PD) {
+				v.Add("%s.nat6: wan %s needs ipv6 and ipv6_pd", p, pr.Via)
+			}
+			if !slices.Contains(policyFams(pr), 6) {
+				v.Add("%s.nat6: the policy is IPv4-only (src / dst)", p)
+			}
 		}
 		if (pr.Table == 0) != (pr.Mark == "") {
 			v.Add("%s: table and mark go together (or leave both empty)", p)

@@ -951,7 +951,7 @@ registerPage("system", "diag", "网络诊断", 50, ()=>{
 // ---------- 体检与事件: mr doctor, the event log, notifications (router.yaml notify) ----------
 const EVT = {wan_down:"WAN 断线", wan_up:"WAN 恢复", failover:"线路切换", apply:"配置更改", rollback:"回滚",
   login_lock:"登录锁定", new_device:"新设备", boot:"开机", upgrade:"固件升级", doctor:"体检", cert:"证书", wifi:"WiFi 自愈", ddns:"DDNS",
-  update:"新版本", archive:"异地归档", watchcat:"断网自救", device:"设备上下线"};
+  update:"新版本", archive:"异地归档", watchcat:"断网自救", device:"设备上下线", dial:"拨号顺序"};
 const EVT_ALL = Object.keys(EVT);
 const SEV = {risk:["风险","bad"], warn:["警告","warn"], ok:["正常","ok"], skip:["跳过",""], info:["信息",""]};
 const sevTag = s=>{ const m = SEV[s]||[s,""]; return h("span",{class:"tag "+m[1], style:"white-space:nowrap"}, m[0]); };

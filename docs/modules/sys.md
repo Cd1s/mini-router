@@ -90,7 +90,7 @@ notify:                      # events pushed to the phone; no daemon (see "Healt
     - {name: phone, type: telegram, token_secret: notify_tg_token, chat_id: "123456789"}   # or -100… (group), @channel
     - {name: ntfy, type: webhook, url_secret: notify_ntfy_url, format: text}              # ntfy: plain text + Title header
     - {name: ha, type: webhook, url_secret: notify_ha_url}                                # json (default): Gotify, Bark, HA, Slack …
-  events: [wan_down, wan_up, failover, rollback, login_lock, new_device, boot, upgrade, doctor, cert, wifi, ddns, update, archive, watchcat, device]   # default: all but apply
+  events: [wan_down, wan_up, failover, rollback, login_lock, new_device, boot, upgrade, doctor, cert, wifi, ddns, update, archive, watchcat, device, dial]   # default: all but apply
   rate: 10                   # messages per channel and hour (1-60); the rest goes out together later
   quiet_hours: "23:00-07:00" # router time: only warn / risk events then, the others wait
   doctor_interval: 30        # minutes between background `mr doctor` runs (5-1440, 0 = off); default 30 with channels
@@ -486,6 +486,7 @@ boot) are the ones a RAM log loses. Types and where they come from:
 | `ddns` | `mr ddns sync` (see "DDNS"): records written with a new address, a record failing 3 times in a row or refused, and working again | info / warn |
 | `wifi` | the wifi module's self-heal (`wifi.self_heal`, `mr wifi tick`, see `docs/modules/wifi.md`): a radio's TX stalled with stations associated — firmware recovery triggered, hostapd restarted, gave up (no automatic reboot) — and TX moving again | warn / risk / info |
 | `device` | `devices[].watch` (dev module, `docs/modules/dev.md`): a watched device came online / was not seen for 10 minutes | info |
+| `dial` | `mr wan dial-restore` (`multiwan.dial_restore`, `docs/modules/net.md`): a PPPoE WAN is redialled because it connected before a WAN listed earlier in `dial_order` | info |
 
 Flash writes are bounded: at most 10 lines of one type are kept per hour (a flapping WAN, a DHCP flood with random
 MACs, a password-guessing botnet only reach syslog after that), so the worst case is ~100 appends of ≤ 300 bytes and two

@@ -14,9 +14,11 @@ package main
 //	                       the result of the last sync (they never contact anyone).
 //	mac:MAC              — a LAN device: IPv4 from its DHCP lease (else the neighbour table, else its
 //	                       fixed address); IPv6 its global address in a LAN prefix from the neighbour
-//	                       table — the EUI-64 one if there is one, else the one published before while it
-//	                       is still there, else the lowest (privacy addresses change: give such a device
-//	                       a stable address, or use ::IID).
+//	                       table — inside the delegated prefix of the WAN a policy route pins the device to
+//	                       (policy_routes mac / device without dst / domains, first match) when it has one
+//	                       there (Cd1s/mini-router#108); among those the EUI-64 one if there is one, else
+//	                       the one published before while it is still there, else the lowest (privacy
+//	                       addresses change: give such a device a stable address, or use ::IID).
 //	a fixed address      — published as is (IPv4: public only).
 //
 // Private (RFC 1918, link-local) and CGNAT IPv4 addresses are never published, whatever the source.
@@ -30,6 +32,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -320,6 +323,20 @@ func (x *ddnsSrc) byMAC(mac string, v6 bool, prev *ddnsState) (string, string) {
 	if len(cands) == 0 {
 		return "", mac + " has no global IPv6 address in the neighbour table (yet)"
 	}
+	if pin := ddnsPinnedPrefixes(x.c, mac); len(pin) > 0 {
+		var in []net.IP
+		for _, ip := range cands {
+			for _, p := range pin {
+				if p.Contains(ip) {
+					in = append(in, ip)
+					break
+				}
+			}
+		}
+		if len(in) > 0 {
+			cands = in
+		}
+	}
 	hw, _ := net.ParseMAC(mac)
 	eui := []byte{hw[0] ^ 2, hw[1], hw[2], 0xff, 0xfe, hw[3], hw[4], hw[5]}
 	for _, ip := range cands {
@@ -341,4 +358,29 @@ func (x *ddnsSrc) byMAC(mac string, v6 bool, prev *ddnsState) (string, string) {
 		}
 	}
 	return low.String(), ""
+}
+
+// ddnsPinnedPrefixes: the recorded delegated prefixes of the WAN the first policy route that pins mac
+// (by mac or device, IPv6, every destination) sends it to; nil without one.
+func ddnsPinnedPrefixes(c *Config, mac string) []*net.IPNet {
+	for _, p := range c.Policy {
+		if p.Dst != "" || p.byDomain() || !slices.Contains(policyFams(p), 6) {
+			continue
+		}
+		macs := []string{p.MAC}
+		if p.Device != "" {
+			macs, _ = devRefMACs(c, p.Device)
+		}
+		if !slices.ContainsFunc(macs, func(m string) bool { return strings.EqualFold(m, mac) }) {
+			continue
+		}
+		var out []*net.IPNet
+		for _, s := range pd6Prefixes(p.Via) {
+			if _, n, err := net.ParseCIDR(s); err == nil {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+	return nil
 }

@@ -39,6 +39,7 @@ func TestEdgeHomeUnchanged(t *testing.T) {
 	sysTemp(t)
 	c := testConfig(t)
 	c.Services.DDNS, c.Services.Edge = DDNS{}, Edge{}
+	c.MultiWAN.DialRestore = ""
 	if y, _ := yaml.Marshal(c); strings.Contains(string(y), "edge") {
 		t.Error("an absent services.edge appears in the canonical config (plan / history would show a change)")
 	}

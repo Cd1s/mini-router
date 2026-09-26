@@ -749,7 +749,7 @@ func fwLoad(c *Config) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return err
 	}
-	return refreshLan6()
+	return refreshLan6For(c) // the loaded ruleset's config: its sets and chains (pd6Script)
 }
 
 // refreshLan6 keeps @lan6 = link-local + multicast + the global prefixes currently on the LAN bridge.
@@ -758,6 +758,10 @@ func refreshLan6() error {
 	if err != nil {
 		return err
 	}
+	return refreshLan6For(c)
+}
+
+func refreshLan6For(c *Config) error {
 	out, err := run("ip", "-6", "-o", "addr", "show", "dev", c.LAN.Bridge, "scope", "global")
 	if err != nil {
 		return nil // bridge not up yet

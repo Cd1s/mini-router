@@ -75,15 +75,21 @@ func TestNetHomeConfig(t *testing.T) {
 	nft := renderNft(c, allExist)
 	wantSubs(t, "nft", nft,
 		`iifname "br-lan" ether saddr 02:c3:06:d6:7f:8a ip daddr != 192.168.1.0/24 ct state new ct mark set 0x102 meta mark set 0x102 return comment "desktop-via-wan2"`,
-		`iifname "br-lan" ether saddr 02:c3:06:d6:7f:8a ip6 saddr @pd6_1 ip6 daddr != @lan6 ct state new ct mark set 0x102 meta mark set 0x102 return comment "desktop-via-wan2"`)
+		`iifname "br-lan" ether saddr 02:c3:06:d6:7f:8a ip6 saddr @pd6_1 ip6 daddr != @lan6 ct state new ct mark set 0x102 meta mark set 0x102 return comment "desktop-via-wan2"`,
+		`iifname "br-lan" ether saddr 02:c3:06:d6:7f:8a ip6 saddr != @pd6_1 ip6 daddr != @lan6 ct state new jump npt6m_0 comment "desktop-via-wan2"`,
+		"chain npt6m_0 {\n\t}", "chain npt6n_0 {\n\t}",
+		`oifname "pppoe-wan2" meta mark 0x102 ip6 saddr != @pd6_1 jump npt6n_0`)
 	wantNone(t, "nft", nft, "numgen")
 	// the UI round trip must not add new keys to the home router.yaml
 	m, err := configToJSON(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := m["multiwan"]; ok {
-		t.Error("multiwan appears in the home config JSON")
+	mw, _ := m["multiwan"].(map[string]any)
+	for k := range mw { // the home config sets only the dial order (no health check, no defaults added)
+		if k != "dial_order" && k != "dial_restore" {
+			t.Errorf("multiwan JSON has key %q", k)
+		}
 	}
 	for _, w := range m["wan"].([]any) {
 		for _, k := range []string{"vlan", "ipv4", "gateway", "dns"} {
@@ -491,13 +497,44 @@ func TestPD6Script(t *testing.T) {
 	t.Cleanup(func() { wanRunDir = old })
 	os.WriteFile(pd6File("wan2"), []byte("2001:db8:2::/60\n192.0.2.0/24\n2001:db8:2:10::1/64 dev x\n::ffff:1.2.3.4/128\n"), 0644)
 	got := pd6Script(c)
-	if got != "flush set inet mr pd6_1\nadd element inet mr pd6_1 { 2001:db8:2::/60, 2001:db8:2:10::/64 }\n" {
+	// the home policy has nat6 (#108): its chains mark and translate to wan2's first prefix
+	nat := "flush chain inet mr npt6m_0\nflush chain inet mr npt6n_0\n"
+	if got != "flush set inet mr pd6_1\nadd element inet mr pd6_1 { 2001:db8:2::/60, 2001:db8:2:10::/64 }\n"+nat+
+		"add rule inet mr npt6m_0 ct mark set 0x102 meta mark set 0x102 accept\nadd rule inet mr npt6n_0 snat ip6 prefix to 2001:db8:2::/60\n" {
 		t.Errorf("pd6Script:\n%s", got)
 	}
 	os.Remove(pd6File("wan2"))
-	if got := pd6Script(c); got != "flush set inet mr pd6_1\n" {
+	if got := pd6Script(c); got != "flush set inet mr pd6_1\n"+nat {
 		t.Errorf("no record: %q", got)
 	}
+	c.Policy[0].NAT6 = false
+	if got := pd6Script(c); got != "flush set inet mr pd6_1\n" {
+		t.Errorf("without nat6: %q", got)
+	}
+}
+
+// nat6 (#108): validation, no chains without it, fallback: drop covers every source.
+func TestNetPolicyNAT6(t *testing.T) {
+	c := testConfig(t)
+	c.Policy = append(c.Policy,
+		Policy{Name: "v4only", Src: "192.168.1.9", Via: "wan2", NAT6: true},
+		Policy{Name: "wan-no-pd", MAC: "aa:bb:cc:dd:ee:ff", Via: "wan", NAT6: true})
+	c.WAN[0].IPv6PD = false
+	c.defaults()
+	errs := strings.Join(c.Validate(), "\n")
+	for _, w := range []string{"policy_routes[1].nat6: the policy is IPv4-only", "policy_routes[2].nat6: wan wan needs ipv6 and ipv6_pd"} {
+		if !strings.Contains(errs, w) {
+			t.Errorf("want %q in:\n%s", w, errs)
+		}
+	}
+	c = testConfig(t)
+	c.Policy[0].Fallback = "drop"
+	nft := renderNft(c, allExist)
+	wantSubs(t, "nft", nft, `iifname "br-lan" ether saddr 02:c3:06:d6:7f:8a meta nfproto ipv6 oifname "pppoe-wan" counter drop comment "fallback:desktop-via-wan2"`)
+	c.Policy[0].NAT6 = false
+	nft = renderNft(c, allExist)
+	wantSubs(t, "nft", nft, `iifname "br-lan" ether saddr 02:c3:06:d6:7f:8a ip6 saddr @pd6_1 oifname "pppoe-wan" counter drop comment "fallback:desktop-via-wan2"`)
+	wantNone(t, "nft", nft, "npt6", "!= @pd6")
 }
 
 // Cd1s/mini-router#97: the router's own IPv6 leaves each WAN with a source from that WAN's prefix.
