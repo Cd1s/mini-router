@@ -128,18 +128,18 @@ type MultiWAN struct {
 	Weights  map[string]int `yaml:"weights,omitempty"`  // balance: WAN name -> share of new connections (default 1 each)
 	// PPPoE dial order (any mode, mod_net_dial.go)
 	DialOrder   []string `yaml:"dial_order,omitempty"`   // PPPoE WANs that dial in this order (each waits for the earlier ones)
-	DialWait    int      `yaml:"dial_wait,omitempty"`    // seconds a WAN waits for the earlier ones (default 20)
+	DialWait    int      `yaml:"dial_wait,omitempty"`    // seconds a WAN waits for the earlier ones (default 30)
 	DialRestore string   `yaml:"dial_restore,omitempty"` // off (default) | now | HH:MM: redial later WANs when the order broke
 }
 
 // Enabled reports whether the health checker runs.
 func (m MultiWAN) Enabled() bool { return m.Mode == "failover" || m.Mode == "balance" }
 
-// dialWait: seconds a WAN waits for the ones before it in DialOrder (default 20; the default is not
+// dialWait: seconds a WAN waits for the ones before it in DialOrder (default 30; the default is not
 // written into the config, so a web UI round trip does not add the key).
 func (m MultiWAN) dialWait() time.Duration {
 	if m.DialWait == 0 {
-		return 20 * time.Second
+		return 30 * time.Second
 	}
 	return time.Duration(m.DialWait) * time.Second
 }

@@ -33,7 +33,7 @@ func dialEnv(t *testing.T) (c *Config, now *time.Time, sleeps *int, onSleep *fun
 
 func TestDialValidate(t *testing.T) {
 	c := testConfig(t)
-	if m := c.MultiWAN; strings.Join(m.DialOrder, ",") != "wan2,wan" || m.DialWait != 0 || m.dialWait() != 20*time.Second || m.DialRestore != "04:30" || m.Enabled() {
+	if m := c.MultiWAN; strings.Join(m.DialOrder, ",") != "wan2,wan" || m.DialWait != 0 || m.dialWait() != 30*time.Second || m.DialRestore != "04:30" || m.Enabled() {
 		t.Fatalf("home config: %+v", m)
 	}
 	for _, tc := range []struct {
@@ -64,6 +64,15 @@ func TestDialValidate(t *testing.T) {
 	}
 }
 
+// pd6Record: the dhcpcd hook's record of the prefix wan delegated, written at unix time at.
+func pd6Record(t *testing.T, wan string, at int64) {
+	t.Helper()
+	if err := os.WriteFile(pd6File(wan), []byte("2001:db8:2::/64\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	os.Chtimes(pd6File(wan), time.Unix(at, 0), time.Unix(at, 0))
+}
+
 func TestDialWait(t *testing.T) {
 	c, now, sleeps, onSleep := dialEnv(t)
 	t0 := *now
@@ -73,24 +82,40 @@ func TestDialWait(t *testing.T) {
 		t.Errorf("the first / an unlisted WAN waited %d s", *sleeps)
 	}
 	dialWait(c, "wan") // wan2 never comes up: gives up after dial_wait
-	if got := now.Sub(t0); got != 20*time.Second {
+	if got := now.Sub(t0); got != 30*time.Second {
 		t.Errorf("timeout after %v", got)
 	}
 	writeLease("wan2", wanLease{IP: "192.0.2.2", Since: now.Unix()})
+	pd6Record(t, "wan2", now.Unix())
 	*sleeps = 0
-	dialWait(c, "wan") // wan2 is up: no wait
-	if *sleeps != 0 {
-		t.Errorf("waited %d s with wan2 up", *sleeps)
+	dialWait(c, "wan") // wan2 is up with its prefix: only the settle
+	if *sleeps != 1 {
+		t.Errorf("waited %d times with wan2 up", *sleeps)
 	}
+	// a session without its prefix yet is not enough (the ISP acts on the delegation too); a record
+	// older than the session is the previous session's
+	if pd6Record(t, "wan2", now.Unix()-60); dialReady(c, "wan2", 0) {
+		t.Error("ready with the previous session's prefix record")
+	}
+	c.WAN[1].IPv6PD = false
+	if !dialReady(c, "wan2", 0) {
+		t.Error("a WAN without ipv6_pd needs no prefix")
+	}
+	c.WAN[1].IPv6PD = true
 	removeLease("wan2")
+	os.Remove(pd6File("wan2"))
+	*sleeps = 0
 	*onSleep = func(n int) {
-		if n == 3 {
+		switch n {
+		case 3: // the session
 			writeLease("wan2", wanLease{IP: "192.0.2.2", Since: now.Unix()})
+		case 6: // the prefix, seconds later
+			pd6Record(t, "wan2", now.Unix())
 		}
 	}
 	dialWait(c, "wan")
-	if *sleeps != 3 {
-		t.Errorf("wan2 up after 3 s: waited %d", *sleeps)
+	if *sleeps != 6 {
+		t.Errorf("wan2 ready after its prefix: slept %d times", *sleeps)
 	}
 }
 
@@ -128,6 +153,7 @@ func TestDialRestore(t *testing.T) {
 	dialRestart = func(svc string) error {
 		restarted = append(restarted, svc)
 		writeLease(strings.TrimPrefix(svc, "mr-pppoe."), wanLease{IP: "192.0.2.1", Since: now.Unix() + 3})
+		pd6Record(t, strings.TrimPrefix(svc, "mr-pppoe."), now.Unix()+5)
 		return nil
 	}
 	writeLease("wan", wanLease{IP: "192.0.2.1", Since: now.Unix() - 100})
