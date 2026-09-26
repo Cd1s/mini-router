@@ -66,6 +66,22 @@ def live_mon_now():
     return j
 
 
+def live_wifi(a):
+    """wifi.stations / wifi.health whose counters advance: the airtime share and the TX rate need two samples."""
+    j = copy.deepcopy(load(a + ".json"))
+    dt = time.time() - T0
+    if a == "wifi.stations":
+        for i, s in enumerate(j.get("stations", [])):
+            share = 0.002 + 0.03 * ((i * 7) % 5)  # fraction of the airtime this station uses
+            s["airtime_tx_us"] = s.get("airtime_tx_us", 0) + int(dt * 1e6 * share * 0.7)
+            s["airtime_rx_us"] = s.get("airtime_rx_us", 0) + int(dt * 1e6 * share * 0.3)
+    else:
+        j["time"] = int(time.time())
+        for i, r in enumerate(j.get("radios", [])):
+            r["tx_acked"] = (r["tx_acked"] + int(dt * (800 + 2200 * i))) % 2**32
+    return j
+
+
 def base_config():
     cfg = load("config.json")
     d = os.path.join(FIX, "config.d")
@@ -129,6 +145,8 @@ class H(http.server.SimpleHTTPRequestHandler):
             return self.send_json(STATE["cfg"])
         if a == "mon.now":
             return self.send_json(live_mon_now())
+        if a in ("wifi.stations", "wifi.health"):
+            return self.send_json(live_wifi(a))
         if a == "validate":
             p, empty = plan_for(body.get("config", {}))
             changes = ["~ %s: (changed)" % k for k in sorted(set(STATE["cfg"]["config"]) | set(body.get("config", {})))

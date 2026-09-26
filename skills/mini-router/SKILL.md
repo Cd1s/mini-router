@@ -110,6 +110,15 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
   and parses a subscription. After apply: `mr proxy status`, `mr proxy delay`, `mr proxy select GROUP NODE`.
 - **WiFi**: change country / channel / width / power only when the user asks for exact values. Check with
   `mr wifi status` (`iw dev` shows channel, width, txpower); clients: `mr wifi stations`; kick: `mr wifi kick MAC`.
+- **WiFi tuning** (all off by default; no daemon — crond runs `mr wifi tick` each minute while steering or self-heal is on;
+  none of it touches country / channel / width / power): per SSID `multicast_to_unicast: true` (AirPlay / mDNS / IPTV as
+  unicast per client); `wifi.steering: {enabled: true, min_signal_2g: -60, exclude: [MAC…]}` asks 802.11v clients on 2.4 GHz
+  with a good signal to move to 5 GHz — never forced; needs an SSID with the **same name, encryption, key_secret and network
+  on both bands** (validation says so otherwise; renaming SSIDs is the owner's call); `wifi.self_heal: true`: a radio whose
+  acknowledged TX stops for 10 min with clients on gets mt76's firmware recovery (SER, both bands, seconds), then a
+  mr-hostapd restart, then only a `wifi` event — never a reboot. Check: `mr wifi steer --dry-run` (who would be asked and
+  why not), `mr wifi health` (temperature, throttling, airtime fairness `vow_atf`, firmware restarts, stall / heal stage,
+  steering counts), `grep 'wifi steer\|wifi self-heal' /var/log/messages`, `mr event list`.
 - **WAN**: `mr wan status`; redial one line at a time: `rc-service mr-pppoe.<name> restart`.
 - **A website via another WAN**: `policy_routes: [{name: …, domains: [site.example], via: wan2}]` (or `domains_file:`).
   Connections stay hardware-offloaded. Check: `mr dns query site.example`, then `nft list set inet mr pr_<index>_4`
@@ -149,6 +158,7 @@ mr event list                  # what happened: WAN down / up, failover, changes
 mr status                      # JSON: WANs, WiFi, services, memory, offload, versions, last doctor problems, newest events
 mr wan status | mr wan health
 mr wifi status | mr wifi stations | mr wifi survey
+mr wifi health                 # per radio: temperature, TX duty (throttling), ATF, firmware restarts, self-heal; steering stats
 mr dns leases | mr dns stats | mr dns query example.com AAAA
 mr mon now | mr mon devices | mr mon conns '{"limit":20}'
 mr proxy status | mr proxy check

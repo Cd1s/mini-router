@@ -18,7 +18,9 @@
    "tx_failed": 2,
    "connected": 465,
    "inactive_ms": 10,
-   "mfp": true
+   "mfp": true,
+   "airtime_tx_us": 97654321,
+   "airtime_rx_us": 31234567
   },
   {
    "ifname": "phy0-ap0-1",
@@ -38,7 +40,9 @@
    "tx_failed": 0,
    "connected": 86400,
    "inactive_ms": 1200,
-   "mfp": false
+   "mfp": false,
+   "airtime_tx_us": 105308642,
+   "airtime_rx_us": 32469134
   },
   {
    "ifname": "phy0-ap0-1",
@@ -58,7 +62,9 @@
    "tx_failed": 4,
    "connected": 7201,
    "inactive_ms": 9000,
-   "mfp": false
+   "mfp": false,
+   "airtime_tx_us": 112962963,
+   "airtime_rx_us": 33703701
   },
   {
    "ifname": "phy1-ap0",
@@ -78,7 +84,9 @@
    "tx_failed": 11,
    "connected": 1556,
    "inactive_ms": 240,
-   "mfp": true
+   "mfp": true,
+   "airtime_tx_us": 120617284,
+   "airtime_rx_us": 34938268
   },
   {
    "ifname": "phy1-ap0",
@@ -98,7 +106,9 @@
    "tx_failed": 0,
    "connected": 1556,
    "inactive_ms": 11280,
-   "mfp": true
+   "mfp": true,
+   "airtime_tx_us": 128271605,
+   "airtime_rx_us": 36172835
   },
   {
    "ifname": "phy1-ap0",
@@ -118,7 +128,9 @@
    "tx_failed": 3,
    "connected": 1504,
    "inactive_ms": 12130,
-   "mfp": true
+   "mfp": true,
+   "airtime_tx_us": 135925926,
+   "airtime_rx_us": 37407402
   },
   {
    "ifname": "phy1-ap0-1",
@@ -138,7 +150,9 @@
    "tx_failed": 1,
    "connected": 300,
    "inactive_ms": 50,
-   "mfp": true
+   "mfp": true,
+   "airtime_tx_us": 143580247,
+   "airtime_rx_us": 38641969
   }
  ]
 }

@@ -31,6 +31,15 @@
         "aa:bb:cc:00:00:01",
         "aa:bb:cc:00:00:02"
        ]
+      },
+      {
+       "ssid": "MiniRouter-Guest",
+       "key_secret": "wifi_guest_key",
+       "encryption": "sae-mixed",
+       "hidden": false,
+       "isolate": true,
+       "max_clients": 16,
+       "network": "guest"
       }
      ]
     },
@@ -48,7 +57,8 @@
        "ssid": "MiniRouter-5G",
        "key_secret": "wifi_key",
        "encryption": "sae-mixed",
-       "hidden": false
+       "hidden": false,
+       "multicast_to_unicast": true
       },
       {
        "ssid": "MiniRouter-Guest",
@@ -61,7 +71,15 @@
       }
      ]
     }
-   ]
+   ],
+   "steering": {
+    "enabled": true,
+    "min_signal_2g": -60,
+    "exclude": [
+     "aa:bb:cc:00:00:02"
+    ]
+   },
+   "self_heal": true
   }
  },
  "secrets_set": {

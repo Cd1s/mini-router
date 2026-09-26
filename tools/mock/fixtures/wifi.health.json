@@ -1,0 +1,108 @@
+{
+ "time": 1790000000,
+ "self_heal": true,
+ "radios": [
+  {
+   "phy": "phy0",
+   "band": "2g",
+   "kphy": "phy0",
+   "state": "ENABLED",
+   "stations": 3,
+   "temp_c": 55,
+   "crit_c": 110,
+   "tx_duty": 100,
+   "fw_busy": -1,
+   "tx_acked": 12160,
+   "has_tx": true,
+   "atf": "on",
+   "fw_resets": 0,
+   "ser": true
+  },
+  {
+   "phy": "phy1",
+   "band": "5g",
+   "kphy": "phy1",
+   "state": "ENABLED",
+   "stations": 4,
+   "temp_c": 53,
+   "crit_c": 110,
+   "tx_duty": 100,
+   "fw_busy": -1,
+   "tx_acked": 6028984,
+   "has_tx": true,
+   "atf": "on",
+   "fw_resets": 1,
+   "ser": true,
+   "heal_actions": [
+    {
+     "t": 1789990000,
+     "action": "ser"
+    },
+    {
+     "t": 1789990060,
+     "action": "recovered"
+    }
+   ]
+  }
+ ],
+ "steering": {
+  "enabled": true,
+  "min_signal_2g": -60,
+  "excluded": 1,
+  "since": 1789900000,
+  "pairs": [
+   {
+    "ssid": "MiniRouter-Guest",
+    "from": "phy0-ap0-2",
+    "to": "phy1-ap0-1"
+   }
+  ],
+  "counts": {
+   "sent": 9,
+   "accepted": 6,
+   "rejected": 2,
+   "noreply": 1,
+   "moved": 5
+  },
+  "recent": [
+   {
+    "t": 1789950000,
+    "mac": "aa:bb:cc:00:00:21",
+    "ssid": "MiniRouter-Guest",
+    "from": "phy0-ap0-2",
+    "to": "phy1-ap0-1",
+    "signal": -48,
+    "result": "accepted",
+    "moved": true
+   },
+   {
+    "t": 1789970000,
+    "mac": "aa:bb:cc:00:00:22",
+    "ssid": "MiniRouter-Guest",
+    "from": "phy0-ap0-2",
+    "to": "phy1-ap0-1",
+    "signal": -57,
+    "result": "declined (status 7)"
+   },
+   {
+    "t": 1789980000,
+    "mac": "aa:bb:cc:00:00:23",
+    "ssid": "MiniRouter-Guest",
+    "from": "phy0-ap0-2",
+    "to": "phy1-ap0-1",
+    "signal": -52,
+    "result": "no answer"
+   },
+   {
+    "t": 1789995000,
+    "mac": "aa:bb:cc:00:00:21",
+    "ssid": "MiniRouter-Guest",
+    "from": "phy0-ap0-2",
+    "to": "phy1-ap0-1",
+    "signal": -45,
+    "result": "accepted",
+    "moved": true
+   }
+  ]
+ }
+}

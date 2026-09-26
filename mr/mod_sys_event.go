@@ -50,13 +50,13 @@ type event struct {
 }
 
 // eventTypes: every type, in the order the web UI lists them.
-var eventTypes = []string{"wan_down", "wan_up", "failover", "apply", "rollback", "login_lock", "new_device", "boot", "upgrade", "doctor", "cert"}
+var eventTypes = []string{"wan_down", "wan_up", "failover", "apply", "rollback", "login_lock", "new_device", "boot", "upgrade", "doctor", "cert", "wifi"}
 
 // eventLabels: short names for notification lines.
 var eventLabels = map[string]string{
 	"wan_down": "WAN down", "wan_up": "WAN up", "failover": "Failover", "apply": "Change", "rollback": "Rollback",
 	"login_lock": "Login locked", "new_device": "New device", "boot": "Boot", "upgrade": "Firmware", "doctor": "Health check",
-	"cert": "Certificate",
+	"cert": "Certificate", "wifi": "WiFi self-heal",
 }
 
 const (

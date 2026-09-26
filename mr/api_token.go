@@ -67,7 +67,7 @@ var tokenActions = map[string]string{
 	// read: no side effects, no secrets
 	"status": "read", "config": "read", "config.raw": "read", "schema": "read", "history": "read", "history.diff": "read", "job": "read",
 	"net": "read", "net.ports": "read", "net.routes": "read", "net.wan": "read",
-	"wifi.status": "read", "wifi.stations": "read", "clients": "read", "wifi.survey": "read",
+	"wifi.status": "read", "wifi.stations": "read", "clients": "read", "wifi.survey": "read", "wifi.health": "read",
 	"dns.stats": "read", "dns.leases": "read", "fw.stats": "read", "proxy.status": "read", "proxy.routes": "read",
 	"mon.now": "read", "mon.history": "read", "mon.devices": "read", "mon.conns": "read", "mon.procs": "read", "mon.dmesg": "read",
 	"sys.services": "read", "sys.time": "read", "sys.doctor": "read", "sys.events": "read", "sys.edge": "read",

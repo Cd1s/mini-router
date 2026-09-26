@@ -438,14 +438,14 @@ func TestKickViaControlSocket(t *testing.T) {
 	hostapdCtrlDir = dir
 	defer func() { hostapdCtrlDir = old }()
 	var deauthed []string
-	for _, ifn := range []string{"phy1-ap0", "phy1-ap0-1", "phy1-ap0-2", "phy1-ap0-3", "phy0-ap0", "phy0-ap0-1"} {
+	for _, ifn := range []string{"phy1-ap0", "phy1-ap0-1", "phy1-ap0-2", "phy1-ap0-3", "phy0-ap0", "phy0-ap0-1", "phy0-ap0-2"} {
 		ifn := ifn
 		fakeHostapd(t, dir, ifn, func(cmd string) string {
 			switch {
 			case cmd == "STATUS" && ifn == "phy1-ap0":
 				return "state=ENABLED\nhw_mode=a\nchannel=36\nsecondary_channel=1\nhe_oper_chwidth=2\nbss[0]=phy1-ap0\nbssid[0]=02:00:00:00:00:00\nnum_sta[0]=0\nbss[1]=phy1-ap0-1\nnum_sta[1]=0\nbss[2]=phy1-ap0-2\nnum_sta[2]=2\nbss[3]=phy1-ap0-3\nnum_sta[3]=0\n"
 			case cmd == "STATUS":
-				return "state=ENABLED\nhw_mode=g\nchannel=6\nbss[0]=phy0-ap0\nnum_sta[0]=1\nbss[1]=phy0-ap0-1\nnum_sta[1]=0\n"
+				return "state=ENABLED\nhw_mode=g\nchannel=6\nbss[0]=phy0-ap0\nnum_sta[0]=1\nbss[1]=phy0-ap0-1\nnum_sta[1]=0\nbss[2]=phy0-ap0-2\nnum_sta[2]=0\n"
 			case cmd == "STA 02:c3:06:d6:7f:8a" && ifn == "phy1-ap0-2":
 				return "02:c3:06:d6:7f:8a\nflags=[AUTH][ASSOC][AUTHORIZED]\n"
 			case strings.HasPrefix(cmd, "STA "):
@@ -474,7 +474,7 @@ func TestKickViaControlSocket(t *testing.T) {
 		t.Errorf("not ready: %v", wifiNotReady(c))
 	}
 	st := wifiStatusAll(c)
-	if len(st) != 6 || !st[4].Up || st[4].Clients != 2 || st[4].SSID != "MiniRouter-Guest" || st[4].HTMode != "160MHz" || st[4].Network != "guest" {
+	if len(st) != 7 || !st[5].Up || st[5].Clients != 2 || st[5].SSID != "MiniRouter-Guest" || st[5].HTMode != "160MHz" || st[5].Network != "guest" {
 		b, _ := json.Marshal(st)
 		t.Errorf("status: %s", b)
 	}

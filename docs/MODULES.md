@@ -12,7 +12,7 @@ file, applies with snapshot + verify + auto-rollback, and serves the web UI API 
 | Module | Prio | Go files | UI file | router.yaml keys | Owner scope |
 |---|---|---|---|---|---|
 | net   | 10 | `mr/mod_net*.go`, `mr/hooks.go` | `rootfs/www/ui/net.js` | `lan`, `networks`, `wan`, `multiwan`, `policy_routes`, `static_routes`, `multicast` | links, bridges, VLANs, WAN (PPPoE/DHCP), multi-WAN failover, routing, IPv6 WAN side (dhcpcd), port status |
-| wifi  | 20 | `mr/mod_wifi*.go` | `ui/wifi.js` | `wifi` | radios, SSIDs, hostapd, stations |
+| wifi  | 20 | `mr/mod_wifi*.go` | `ui/wifi.js` | `wifi` | radios, SSIDs, hostapd, stations; tuning: multicast-to-unicast, 802.11v band steering, radio health + self-heal (`mr wifi tick`, a crond line in sys's crontab block; its events are type `wifi`) |
 | dns   | 30 | `mr/mod_dns*.go` | `ui/dns.js` | `dhcp`, `dns`, `networks[].dhcp` (type `Pool`) | dnsmasq: DNS, DHCP, RA/DHCPv6, split lists, local records, stubby.yml, query log; `rootfs/etc/conf.d/dnsmasq` |
 | fw    | 40 | `mr/mod_fw*.go` | `ui/fw.js` | `firewall` | nftables skeleton + hooks, zones, forwards, rules, NAT, IPv6 pinholes, access control |
 | mon   | 50 | `mr/mod_mon*.go` | `ui/mon.js` | — | realtime graphs, per-device traffic, connections, system load; its per-minute sampler (`mon-collect`) also starts sys's `mr event tick` when due |

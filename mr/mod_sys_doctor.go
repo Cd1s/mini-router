@@ -9,7 +9,8 @@ package main
 // Checks: config (validates, guard, edits not applied), pending (a change waiting for confirmation, a
 // failed boot rollback), wan (address, health, CGNAT behind port forwards, overlap with a LAN subnet), routes (main default route,
 // per-WAN tables), dns (a lookup through dnsmasq on 127.0.0.1), ipv6 (delegated prefix on the LAN), offload
-// (flowtable, hardware flag, PPE entries), services (wanted vs running), wifi (radios / BSSes up), clock
+// (flowtable, hardware flag, PPE entries), services (wanted vs running), wifi (radios / BSSes up; radio
+// health from the wifi module: temperature / throttling, airtime fairness, firmware restarts, TX stalls), clock
 // (plausible, NTP synced), storage (config flash, /tmp), memory, conntrack, temp, crash (pstore records,
 // oops / OOM in this boot's kernel log), ssh (password logins), certs (the reverse proxy's certificates).
 //
@@ -76,6 +77,7 @@ type docEnv struct {
 	klog      func() (string, error)
 	pstore    func() ([]string, string)
 	wifi      func(c *Config) []string
+	wifiRadio func(c *Config) []docFinding // radio health (mod_wifi_health.go); nil = not checked
 }
 
 // doctorFile keeps the last result (tmpfs).
@@ -161,6 +163,7 @@ var newDocEnv = func() *docEnv {
 		klog:      monKlog,
 		pstore:    pstoreRecords,
 		wifi:      wifiNotReady,
+		wifiRadio: wifiDoctor,
 	}
 }
 
@@ -464,6 +467,9 @@ func docWiFi(c *Config, e *docEnv) []docFinding {
 	}
 	if len(out) == 0 {
 		out = append(out, docOK("WiFi", fmt.Sprintf("%d radio(s) up with every SSID", len(c.WiFi.Radios))))
+	}
+	if e.wifiRadio != nil {
+		out = append(out, e.wifiRadio(c)...)
 	}
 	return out
 }
