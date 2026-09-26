@@ -16,6 +16,10 @@ package main
 //	*/<interval> * * * * /usr/sbin/mr ddns sync --cron
 //	M H * * * /usr/sbin/mr edge renew --cron
 //
+// and while dns.adblock is on, the hourly list check (mod_dns_adblock.go; downloads once a day):
+//
+//	M * * * * /usr/sbin/mr dns adblock update --cron
+//
 // `mr sys run` checks the action against the live config again, logs it (syslog + change log) and
 // runs it. The time spec is a strict 5-field cron expression (numbers, *, a-b, /step, lists; no
 // names, no @reboot) with safety limits: every task runs at most once per hour (fixed minute), a
@@ -196,7 +200,7 @@ func validateSchedules(c *Config, v *Validator) {
 }
 
 func cronWanted(c *Config) bool {
-	if ddnsInterval(c) > 0 || edgeOn(c) {
+	if ddnsInterval(c) > 0 || edgeOn(c) || c.DNS.Adblock.Enabled {
 		return true
 	}
 	for _, s := range c.Schedules {
@@ -230,7 +234,7 @@ func renderCronLines(c *Config) []string {
 	if n := ddnsInterval(c); n > 0 {
 		lines = append(lines, "# ddns (services.ddns)", fmt.Sprintf("*/%d * * * * %s ddns sync --cron", n, mrBin))
 	}
-	return append(lines, edgeCronLine(c)...)
+	return append(append(lines, edgeCronLine(c)...), adblockCronLine(c)...)
 }
 
 // renderCrontab: /etc/crontabs/root with the managed block (ok=false: leave the file alone).

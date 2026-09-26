@@ -290,6 +290,46 @@ const statsTab = ()=>{
   return box;
 };
 
+// 去广告（dns.adblock, #30）：dnsmasq 列表，不新增进程
+const ADBLOCK_LISTS = [["HaGeZi Multi NORMAL（约 16 万，推荐）","https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/multi-onlydomains.txt"],
+  ["HaGeZi Multi LIGHT（约 4.5 万）","https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/light-onlydomains.txt"],
+  ["anti-AD（约 11 万，中文网站）","https://anti-ad.net/domains.txt"]];
+const adblockTab = ()=>{
+  const d = S.cfg.dns; const box = h("div"); const stat = h("div");
+  const ab = lazy(d, "adblock", ()=>({enabled:false, lists:[], allow:[], max_domains:0}));
+  const setLists = v=>{ ab.o.lists = v; ab.attach(); };
+  const ta = h("textarea",{rows:4, placeholder:"每行一个 https 地址", oninput:e=>setLists(e.target.value.split(/\s+/).filter(Boolean))}, (ab.o.lists||[]).join("\n"));
+  const presets = h("div",{class:"row",style:"flex-wrap:wrap;gap:6px;margin-top:6px"}, ADBLOCK_LISTS.map(([l,u])=>h("button",{class:"btn sm",onclick:()=>{
+    const cur = ab.o.lists||[]; if (!cur.includes(u)) { setLists([...cur, u]); ta.value = ab.o.lists.join("\n"); }
+  }},"+ "+l)));
+  const load = async ()=>{
+    let j; try { j = await api("dns.adblock"); } catch(e){ stat.replaceChildren(h("span",{class:"mut"},e.message)); return; }
+    const last = j.last || null;
+    stat.replaceChildren(...[
+      h("div",{}, h("b",{}, j.domains ? j.domains.toLocaleString()+" 个域名已拦截" : "还没有列表"),
+        j.updated ? h("span",{class:"mut"}," · 更新于 "+new Date(j.updated*1000).toLocaleString()) : null,
+        j.running ? h("span",{class:"tag warn",style:"margin-left:6px"},"更新中…") : null,
+        j.enabled && j.domains && !j.current ? h("span",{class:"mut"}," · 设置已改，一小时内按新设置重新下载") : null),
+      last && last.lists ? h("div",{class:"mut",style:"margin-top:6px;font-size:12px"}, last.lists.map(x=>h("div",{class:"mono"},
+        (x.error ? "✗ " : "✓ ")+x.url+"："+(x.error ? x.error : x.domains.toLocaleString()+" 行可用")))) : null,
+      last && last.error ? h("div",{style:"color:var(--bad);margin-top:6px"}, "上次更新失败（仍用之前的列表）："+last.error) : null].filter(Boolean));
+  };
+  const upd = h("button",{class:"btn",onclick:async()=>{
+    try { await api("dns.adblock",{update:true}); toast("已开始更新，约半分钟"); setTimeout(load, 4000); setTimeout(load, 15000); setTimeout(load, 40000); }
+    catch(e){ toast(e.message,4000); }
+  }},"立即更新");
+  box.replaceChildren(
+    card("去广告", [h("div",{class:"dns-note"},"广告、跟踪、恶意域名直接返回“不存在”。不新增进程：列表变成 dnsmasq 的规则，每小时检查一次、满一天才重新下载；下载失败或内容不对会继续用旧列表。更新时 DNS 停顿 1–2 秒。列表经路由器自己的网络下载（不走代理）。"),
+      onEdit(form(
+        ...field("启用", inBool(ab.o,"enabled",()=>ab.attach())),
+        ...field("列表地址", h("div",{}, ta, presets), "纯域名、hosts、AdGuard（||域名^）或 dnsmasq 格式"),
+        ...field("白名单", inList(ab.o,"allow",{placeholder:"example.com, cdn.example.org"}), "这些域名及其子域名永不拦截"),
+        ...field("最多域名数", inNum(ab.o,"max_domains"), "0 = 300000；超过就不更新（保护内存）")), ()=>ab.attach())]),
+    card("状态", [stat, h("div",{class:"row",style:"margin-top:10px"}, upd, h("span",{class:"mut"},"启用并“保存并应用”后才能更新"))]));
+  load();
+  return box;
+};
+
 registerPage("network", "dns", "DNS", 50, ()=>tabs([
-  ["basic","上游与缓存", basicTab], ["records","本地记录", recordsTab], ["split","分流", splitTab], ["stats","统计 / 查询日志", statsTab]]));
+  ["basic","上游与缓存", basicTab], ["records","本地记录", recordsTab], ["split","分流", splitTab], ["adblock","去广告", adblockTab], ["stats","统计 / 查询日志", statsTab]]));
 })();
