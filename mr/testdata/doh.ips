@@ -1,0 +1,5 @@
+# public DoH resolvers (test data; the lab's "internet" host is one of them)
+203.0.113.2
+2001:db8:ffff::2      # IPv6
+192.0.2.0/24
+::ffff:198.51.100.200

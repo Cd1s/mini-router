@@ -4,7 +4,8 @@
 #  1. every rendered stubby.yml listens on 127.0.0.1 only
 #  2. the rendered lab dnsmasq.conf runs for real in a throwaway network + mount namespace:
 #     the lab's local records answer (`mr dns query`), the CHAOS statistics answer (`mr dns stats`),
-#     and `mr dns release` makes dnsmasq drop a lease (DHCPRELEASE, lease file never edited).
+#     and `mr dns release` makes dnsmasq drop a lease (DHCPRELEASE, lease file never edited);
+#     the Firefox canary and (lab) iCloud Private Relay names answer NXDOMAIN from the router itself.
 set -eu
 : "${OUT:?}" "${ROOT:?}"
 
@@ -63,6 +64,12 @@ check photos.lan A 192.168.1.10
 check 192.168.1.11 PTR printer.lan
 check _smb._tcp.lan SRV "0 0 445 nas.lan"
 check nas.lan TXT "home server; v=1"
+for n in use-application-dns.net mask.icloud.com mask-h2.icloud.com; do
+	# no upstream in this namespace: NXDOMAIN can only come from dnsmasq's own local= answer
+	out=$(mr dns query "$n" A 2>&1) || true
+	echo "$out" | grep -q 'NXDOMAIN, 0 answers' || fail "$n: want NXDOMAIN, got: $out"
+	echo "ok: $n -> NXDOMAIN"
+done
 mr dns stats | grep -q '"cache_size": 8000' || fail "mr dns stats: $(mr dns stats 2>&1)"
 echo "ok: mr dns stats"
 grep -q " $LEASEIP " /tmp/dhcp.leases || fail "test lease not loaded"

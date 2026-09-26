@@ -169,6 +169,16 @@ registerPage("network", "dhcp", "DHCP / IPv6 RA", 40, ()=>tabs([
   ["pools","地址池", poolsTab], ["hosts","静态分配", hostsTab], ["options","DHCP 选项", optionsTab], ["ra","IPv6 通告 (RA)", raTab]]));
 
 // ---------------- 网络 › DNS ----------------
+// 防绕过（dns.sovereignty, #45）：让设备留在路由器的 DNS 上
+const sovCard = d=>{
+  const sv = lazy(d, "sovereignty", ()=>({}));
+  const canary = h("label",{class:"sw"}, h("input",{type:"checkbox", checked: sv.o.firefox_canary!==false, onchange:e=>{ sv.o.firefox_canary=e.target.checked; }}), h("span"));
+  return card("防绕过（DNS 主导权）", onEdit(form(
+    ...field("Firefox 金丝雀", canary, "use-application-dns.net 返回“不存在”：Firefox 不会自己开启 DoH（默认开）"),
+    ...field("iCloud 专用代理", inSel(sv.o,"private_relay",[["","允许（默认）"],["block","在本网络关闭"]]), "关闭后苹果设备会提示本网络不支持专用代理"),
+    ...field("拦截 DoT / DoQ", inBool(sv.o,"block_dot"), "局域网连任何 853 端口都被立即拒绝，设备改用路由器 DNS；手动填了“私人 DNS 主机名”的安卓设备会解析失败，需改回“自动”"),
+    ...field("DoH 服务器 IP 列表", inText(sv.o,"doh_blocklist_file",{placeholder:"/etc/mini-router/dns/doh.ips"}), "文件里每行一个 IP 或网段；局域网连这些地址的 443 端口被拒绝")), ()=>sv.attach()));
+};
 const basicTab = ()=>{
   const c = S.cfg, d = c.dns; const box = h("div");
   const stub = lazy(c.services, "stubby", ()=>({enabled:false}));
@@ -196,7 +206,8 @@ const basicTab = ()=>{
         ...field("仅服务本地网络", inBool(d,"local_service")),
         ...field("劫持 LAN DNS", inBool(d,"redirect"), "LAN 设备发往任何 53 端口的请求都交给路由器"),
         ...field("额外 hosts 文件", inList(d,"addn_hosts")),
-        ...field("上游服务器文件", inText(d,"servers_file",{placeholder:"留空"})))));
+        ...field("上游服务器文件", inText(d,"servers_file",{placeholder:"留空"})))),
+      sovCard(d));
   };
   draw();
   return box;

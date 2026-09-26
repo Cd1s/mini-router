@@ -35,6 +35,8 @@ records), `mr/mod_dns_query.go` (tiny DNS client, statistics, post-apply read-ba
   needs router.yaml to load, like every `mr` module command). The view hides `mr`'s own statistics
   probes (`*.bind` CHAOS queries from 127.0.0.1).
 - DNS redirect (`dns.redirect`, nft DNAT of LAN port 53 to the router) — unchanged.
+- **DNS sovereignty** (`dns.sovereignty`, Cd1s/mini-router#45): keeps devices on the router's DNS, which
+  local names, the split, policy routes by domain and the proxy's fake-ip all rely on (see below).
 - **nftset lines from the net module** (`policy_routes[].domains`, `Module.Dnsmasq`): dnsmasq writes the addresses
   its upstream answers for those names into nft sets that pick the WAN (docs/modules/net.md, "按域名"). This needs
   a dnsmasq built with nftset: the image ships Alpine's `dnsmasq-dnssec-nftset` (DNSSEC is compiled in but off);
@@ -144,7 +146,37 @@ dns:
     - {name: nas.lan, type: TXT, value: "home server; v=1"}      # 1-255 chars, no " or \
   split:
     - {name: cloudflare-dot, domains_file: /etc/mini-router/dns/cloudflare-dot.domains, server: "127.0.0.1#5453"}
+  sovereignty:
+    firefox_canary: true      # default: use-application-dns.net → NXDOMAIN
+    private_relay: allow      # allow (default) | block: mask.icloud.com / mask-h2.icloud.com → NXDOMAIN
+    block_dot: false          # true: LAN → port 853 (DoT / DoQ) refused
+    doh_blocklist_file: ""    # /etc/mini-router/dns/doh.ips: LAN → port 443 of these IPs / CIDRs refused
 ```
+
+DNS sovereignty (`dns.sovereignty`). Encrypted DNS that bypasses the router doesn't break anything by
+itself, but the device then misses local names, the DNS split, policy routes by domain and the proxy's
+fake-ip split (ECH does not matter here: the split works on the DNS name, not on TLS SNI).
+
+- `firefox_canary` (default on): Firefox checks `use-application-dns.net` before it turns DoH on by
+  itself; NXDOMAIN keeps it on the router's DNS. A user who turns DoH on explicitly keeps it.
+- `private_relay: block`: iCloud Private Relay checks `mask.icloud.com` / `mask-h2.icloud.com`; NXDOMAIN
+  turns it off on this network and the device shows a notice. Off by default: it is the user's choice.
+- `block_dot`: LAN → any port 853, TCP (DoT) and UDP (DoQ), is refused at once (TCP reset / ICMP port
+  unreachable), so apps and devices that try DoT fall back to plain DNS. A device with a *strict*
+  private DNS host name (Android "Private DNS provider hostname") does not fall back: it loses DNS until
+  that setting is changed, which is how you find it. Android's automatic mode asks the network's own DNS
+  server (the router) on 853 and falls back as before.
+- `doh_blocklist_file`: one IP address or CIDR per line (`#` comments), both families, at most 65536
+  entries (e.g. dibdot or HaGeZi's DoH IP list, ~3k entries). LAN → port 443 of them (TCP and HTTP/3)
+  is refused. A bad line stops `mr apply` (the error names the line, never its content); edit the file,
+  then `mr apply` (or `mr fw`) loads it. Keep it under `/etc/mini-router/dns/` so backups include it.
+  Agents and API tokens cannot set it (a `*_file` key).
+
+Both dnsmasq instances (the main one and the proxy's) answer the NXDOMAIN names. The refusals are a
+chain of their own (`dns_guard`, prerouting priority mangle − 1) in front of the policy marks and the
+proxy's tproxy: a resolver inside a proxied range is refused too, not tunnelled. Only LAN-side bridges
+are matched, and the router's own addresses are left alone. Cost: three dnsmasq lines, a few nft rules,
+the set (tens of KB for a DoH list).
 
 Upstream modes:
 
@@ -227,7 +259,12 @@ No handler builds a shell command; `rc-service dnsmasq restart` is the only exec
   `dnsmasq --test` on a config using every feature in all three upstream modes.
 - `tools/ci.d/dns.sh`: stubby listens on loopback only; the rendered **lab** dnsmasq.conf runs for
   real in a throwaway net+mount namespace, every record type is queried through `mr dns query`,
-  `mr dns stats` answers, and `mr dns release` makes dnsmasq drop a lease.
+  `mr dns stats` answers, `mr dns release` makes dnsmasq drop a lease, and the canary / Private Relay
+  names answer NXDOMAIN (the namespace has no upstream, so only dnsmasq's own answer can say that).
+- `tools/ci.d/fw.sh` (lab: `block_dot`, a DoH list with the test "internet" host): LAN and guest → 853
+  and → 443 of a listed resolver are refused (IPv4 and IPv6), DoT to a proxied range is refused before
+  the proxy socket could take it, the router's own 853 and the resolver's other ports still work.
+- `mr/mod_dns_sovereignty_test.go`: defaults, validation, blocklist parsing (bad lines named, not echoed).
 - stubby 0.4.3 (Alpine 3.24) accepts the rendered stubby.yml (`stubby -C … -i`, checked once in an
   arm64 Alpine container; not part of CI because it needs network access).
 
