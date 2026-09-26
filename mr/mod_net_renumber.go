@@ -127,7 +127,9 @@ func containsString(xs []string, x string) bool {
 func raLeaseSecs(lease string) int {
 	mult := map[byte]int{'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 604800}
 	secs := 7200
-	if l := len(lease); l > 1 && mult[lease[l-1]] > 0 {
+	if n, err := strconv.Atoi(lease); err == nil && n > 0 { // plain seconds, as dnsmasq reads them
+		secs = n
+	} else if l := len(lease); l > 1 && mult[lease[l-1]] > 0 {
 		if n, err := strconv.Atoi(lease[:l-1]); err == nil && n > 0 && n <= 7200 {
 			secs = n * mult[lease[l-1]]
 		}
