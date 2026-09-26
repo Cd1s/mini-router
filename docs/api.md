@@ -88,8 +88,9 @@ expired token, 403 not allowed, 404 unknown, 405 POST required, 409 conflict, 42
 | Action | Body → answer |
 |---|---|
 | `GET config` | → `{config, secrets_set, rev}` — the effective config (defaults filled in), which secrets exist (names only), `rev` = a content hash of router.yaml |
-| `POST plan` | `{patch \| config, base_rev?, secrets?}` → `{errors, rev, changes, changes_known, plan, files, restart, enable, disable, firewall, empty}` — nothing is changed |
-| `POST apply` | `{patch \| config, base_rev, confirm (s, default 120), comment, secrets?}` → `{ok, confirm}`: the apply job starts; 409 when `base_rev` is stale or another change waits for confirmation |
+| `GET config.raw` | `{yaml, rev}`: router.yaml as it is on flash (comments and layout; secret names only) |
+| `POST plan` | `{patch \| yaml \| config, base_rev?, secrets?}` → `{errors, rev, changes, changes_known, plan, files, restart, enable, disable, firewall, empty}` — nothing is changed |
+| `POST apply` | `{patch \| yaml \| config, base_rev, confirm (s, default 120), comment, secrets?}` (`yaml`: the whole router.yaml text, written as typed — the web UI's 系统 → router.yaml 原文) → `{ok, confirm}`: the apply job starts; 409 when `base_rev` is stale or another change waits for confirmation |
 | `GET job` | → `{job: {state: running \| ok \| failed, output}, confirm_pending, pending}` |
 | `POST confirm` / `POST revert` | keep / undo the pending change (a token: only its own) |
 | `GET history`, `POST history.diff {rev}`, `POST rollback {rev}` | revisions; the config from before #rev applied as a new change |

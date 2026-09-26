@@ -65,7 +65,7 @@ var scopeLevel = map[string]int{"read": 1, "operate": 2, "apply": 3}
 // action too) is refused until it is listed here.
 var tokenActions = map[string]string{
 	// read: no side effects, no secrets
-	"status": "read", "config": "read", "schema": "read", "history": "read", "history.diff": "read", "job": "read",
+	"status": "read", "config": "read", "config.raw": "read", "schema": "read", "history": "read", "history.diff": "read", "job": "read",
 	"net": "read", "net.ports": "read", "net.routes": "read", "net.wan": "read",
 	"wifi.status": "read", "wifi.stations": "read", "clients": "read", "wifi.survey": "read",
 	"dns.stats": "read", "dns.leases": "read", "fw.stats": "read", "proxy.status": "read", "proxy.routes": "read",

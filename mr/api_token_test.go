@@ -140,7 +140,7 @@ func TestTokenValidation(t *testing.T) {
 // The actions tokens can reach exist; the sensitive ones are not among them.
 func TestTokenActions(t *testing.T) {
 	core := map[string]bool{"status": true, "config": true, "validate": true, "apply": true, "job": true, "confirm": true,
-		"revert": true, "history": true, "history.diff": true, "rollback": true}
+		"revert": true, "history": true, "history.diff": true, "rollback": true, "config.raw": true}
 	for a, s := range tokenActions {
 		found := core[a]
 		for _, m := range modules {

@@ -1,0 +1,4 @@
+{
+ "yaml": "# mini-router config (mock)\nsystem:\n  hostname: mini-router\n  timezone: UTC0\nlan:\n  bridge: br-lan\n  ports: [lan2, lan3, lan4]\n  ipv4: 192.168.1.6/24   # the router\n  ipv6_ra: true\ndns:\n  cache_size: 8000\n",
+ "rev": "0123456789abcdef"
+}
