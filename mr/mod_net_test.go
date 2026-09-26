@@ -499,3 +499,25 @@ func TestPD6Script(t *testing.T) {
 		t.Errorf("no record: %q", got)
 	}
 }
+
+// Cd1s/mini-router#97: the router's own IPv6 leaves each WAN with a source from that WAN's prefix.
+func TestSrcDefaults6(t *testing.T) {
+	addrs := []string{"2001:db8:2::6", "fd00::1", "2001:db8:1:5::6"}
+	if got := wanSrc6([]string{"2001:db8:1::/56"}, addrs); got != "2001:db8:1:5::6" {
+		t.Fatalf("wan's address: %q", got)
+	}
+	if got := wanSrc6([]string{"2001:db8:3::/64", "bad"}, addrs); got != "" {
+		t.Fatalf("no address in the prefix: %q", got)
+	}
+	w := &WAN{Metric: 0}
+	if m := src6Metric(w, true); m != 1 { // metric 0 would be 1024 for IPv6
+		t.Fatalf("metric %d", m)
+	}
+	if m := src6Metric(w, false); m != 1+downMetric {
+		t.Fatalf("down metric %d", m)
+	}
+	got := strings.Join(src6Args("wan", []string{"via", "fe80::1"}, "2001:db8:1::6", 11), " ")
+	if want := "-6 route replace default via fe80::1 dev wan src 2001:db8:1::6 proto 97 metric 11"; got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}

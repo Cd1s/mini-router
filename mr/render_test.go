@@ -72,7 +72,7 @@ func TestNft(t *testing.T) {
 		`iifname "pppoe-wan" ct state new ct mark set 0x200`,
 		`iifname "pppoe-wan2" ct state new ct mark set 0x102`,
 		`iifname "br-lan" ct mark != 0x0 meta mark set ct mark return`,
-		`flags offload`, `"phy1-ap0"`, `masquerade`, `dport 41641 accept`, `tcp dport 443 accept`,
+		`flags offload`, `"phy1-ap0"`, `masquerade`, `dport 41641 accept`,
 		`dnat ip to 192.168.1.6 comment "dns-redirect"`,
 	} {
 		if !strings.Contains(all, s) {

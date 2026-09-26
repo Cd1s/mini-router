@@ -111,8 +111,6 @@ func sysServiceRows(c *Config) []svcRow {
 	sv := c.Services
 	return []svcRow{
 		{Name: "tailscale", Label: "Tailscale", Cfg: "tailscale", Wanted: sv.Tailscale.Enabled},
-		{Name: "lucky", Label: "Lucky", Cfg: "lucky", Wanted: sv.Lucky.Enabled},
-		{Name: "lucky-dns-inotify", Label: "Lucky 域名 → dnsmasq", Cfg: "lucky", Wanted: sv.Lucky.Enabled},
 		{Name: "dstatus-agent", Label: "dstatus 探针", Cfg: "dstatus", Wanted: sv.Dstatus.Enabled},
 		{Name: "stubby", Label: "stubby (DoT)", Cfg: "stubby", Wanted: sv.Stubby.Enabled},
 		{Name: "dropbear", Label: "SSH (dropbear)", Cfg: "ssh", Wanted: sv.SSH.Enabled},
@@ -252,8 +250,7 @@ func apiSysServices(r apiReq) apiResp {
 		}
 	}
 	body := map[string]any{"services": rows, "others": others,
-		"lucky_port": c.Services.Lucky.Port, "ssh_port": c.Services.SSH.Port,
-		"tailscale_port": c.Services.Tailscale.Port}
+		"ssh_port": c.Services.SSH.Port, "tailscale_port": c.Services.Tailscale.Port}
 	if ip, _, ok := strings.Cut(c.LAN.IPv4, "/"); ok {
 		body["lan_ip"] = ip
 	}

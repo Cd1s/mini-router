@@ -141,7 +141,7 @@ dns:
   rebind_protection: true
   local_service: true
   redirect: true
-  addn_hosts: [/etc/lucky/dnsmasq.hosts]
+  addn_hosts: [/etc/mini-router/dns/extra.hosts]
   servers_file: ""
   records:
     - {name: nas, type: A, value: 192.168.1.10}                  # nas and nas.lan (+ PTR)
@@ -335,7 +335,7 @@ No handler builds a shell command; `rc-service dnsmasq restart` is the only exec
 
 - **给家里服务器起名字**：网络 › DNS › 本地记录 → “+ 添加”，名称填 `nas`，类型 A，值 `192.168.1.10`，
   底部“保存并应用”。之后局域网里 `nas` 和 `nas.lan` 都解析到它；应用后路由器会自己查询一遍，
-  查不到就自动回滚。想让 `*.home.example.com` 在家里直接走内网（Lucky 反代），名称填
+  查不到就自动回滚。想让 `*.home.example.com` 在家里直接走内网（反向代理站点），名称填
   `*.home.example.com`、值填路由器地址即可。
 - **固定 IP**：状态 › 终端设备，在设备那一行点“设为静态”，再“保存并应用”；或在 网络 › DHCP / IPv6 RA ›
   静态分配 手动添加。服务器可以在“租期”列填 `infinite`。

@@ -74,9 +74,7 @@
     "bootstrap": []
    },
    "servers_file": "",
-   "addn_hosts": [
-    "/etc/lucky/dnsmasq.hosts"
-   ],
+   "addn_hosts": [],
    "rebind_protection": true,
    "local_service": true,
    "redirect": true,

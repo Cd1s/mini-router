@@ -302,7 +302,6 @@ umask 077
 	fi
 	echo "services:"
 	echo "  tailscale: {enabled: false}"
-	echo "  lucky: {enabled: false}"
 	echo "  dstatus: {enabled: false}"
 	echo "  stubby: {enabled: false}"
 	echo "  ssh: {enabled: $ssh_enabled, port: 22, password_login: true}"

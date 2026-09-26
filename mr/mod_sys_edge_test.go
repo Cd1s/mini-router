@@ -15,14 +15,12 @@ func init() {
 	edgeStart = func(string, ...string) {}
 }
 
-// edgeTestConfig: the home config with the reverse proxy on — lucky and its firewall.open 443 gone
-// (the migration the docs describe), three routes: two under the wildcard certificate, one of its own.
+// edgeTestConfig: the home config with the reverse proxy on, three routes: two under the wildcard certificate, one of its own.
 func edgeTestConfig(t *testing.T) *Config {
 	t.Helper()
 	c := testConfig(t)
 	c.secrets["cf_edge"] = cfTestToken
 	c.Firewall.Open = nil
-	c.Services.Lucky.Enabled = false
 	c.Services.Edge = Edge{Enabled: true, Open: true,
 		ACME: EdgeACME{Email: "admin@example.com", Token: "cf_edge", Wildcard: []string{"example.com"}},
 		Routes: []EdgeRoute{
@@ -36,10 +34,11 @@ func edgeTestConfig(t *testing.T) *Config {
 	return c
 }
 
-// The home config (no services.edge) marshals and renders exactly as before.
+// A config without services.edge marshals and renders nothing of it.
 func TestEdgeHomeUnchanged(t *testing.T) {
 	sysTemp(t)
 	c := testConfig(t)
+	c.Services.DDNS, c.Services.Edge = DDNS{}, Edge{}
 	if y, _ := yaml.Marshal(c); strings.Contains(string(y), "edge") {
 		t.Error("an absent services.edge appears in the canonical config (plan / history would show a change)")
 	}
@@ -47,7 +46,7 @@ func TestEdgeHomeUnchanged(t *testing.T) {
 	if _, ok := f[edgeConfFile]; ok {
 		t.Error("edge.json rendered without services.edge")
 	}
-	wantNone(t, "dnsmasq.conf", f["/etc/dnsmasq.conf"], "host-record=")
+	wantNone(t, "dnsmasq.conf", f["/etc/dnsmasq.conf"], "interface-name=")
 	wantNone(t, "nft", renderNft(c, allExist), "edge", "44300")
 	if strings.Contains(strings.Join(enabledServices(c), " "), "mr-edge") {
 		t.Error("mr-edge enabled without services.edge")
@@ -115,16 +114,16 @@ func TestEdgeRender(t *testing.T) {
 	wantSubs(t, "nft", nft,
 		`iifname { "pppoe-wan", "pppoe-wan2" } tcp dport 44300 ct status dnat accept comment "edge"`,
 		`iifname { "pppoe-wan", "pppoe-wan2" } fib daddr type local tcp dport 443 redirect to :44300 comment "edge"`)
-	// dnsmasq: route hosts → the main LAN address (enabled routes only)
+	// dnsmasq: route hosts → the LAN bridge's addresses, A and AAAA (enabled routes only)
 	dm := f["/etc/dnsmasq.conf"]
-	wantSubs(t, "dnsmasq.conf", dm, "host-record=nas.example.com,192.168.1.6\n", "host-record=ha.example.com,192.168.1.6\n", "host-record=cam.home.example.org,192.168.1.6\n")
-	wantNone(t, "dnsmasq.conf", dm, "old.example.net")
+	wantSubs(t, "dnsmasq.conf", dm, "interface-name=nas.example.com,br-lan\n", "interface-name=ha.example.com,br-lan\n", "interface-name=cam.home.example.org,br-lan\n")
+	wantNone(t, "dnsmasq.conf", dm, "old.example.net", "host-record=nas.example.com")
 
 	// not open: nothing in the firewall; lan_dns off: nothing in dnsmasq
 	c.Services.Edge.Open = false
 	c.Services.Edge.LANDNS = boolp(false)
 	wantNone(t, "nft (not open)", renderNft(c, allExist), "edge", "44300")
-	wantNone(t, "dnsmasq (lan_dns off)", renderMap(t, c)["/etc/dnsmasq.conf"], "host-record=")
+	wantNone(t, "dnsmasq (lan_dns off)", renderMap(t, c)["/etc/dnsmasq.conf"], "interface-name=")
 	if strings.Contains(renderMap(t, c)[edgeConfFile], "wan_port") {
 		t.Error("edge.json has a WAN port while not open")
 	}
@@ -234,14 +233,14 @@ func TestEdgeValidate(t *testing.T) {
 
 	// firewall.open of the same port: WAN connections would reach the LAN listener
 	c = edgeTestConfig(t)
-	c.Firewall.Open = []Open{{Name: "lucky-https", Enabled: boolp(true), Proto: []string{"tcp"}, Port: "443"}}
-	wantErrs(t, c, "services.edge: firewall.open[lucky-https] opens tcp 443 to the WAN")
+	c.Firewall.Open = []Open{{Name: "https", Enabled: boolp(true), Proto: []string{"tcp"}, Port: "443"}}
+	wantErrs(t, c, "services.edge: firewall.open[https] opens tcp 443 to the WAN")
 	c.Firewall.Open = []Open{{Name: "range", Enabled: boolp(true), Proto: []string{"tcp"}, Port: "400-500"}}
 	wantErrs(t, c, "firewall.open[range] opens tcp 443")
 	c.Firewall.Open = []Open{{Name: "quic", Enabled: boolp(true), Proto: []string{"udp"}, Port: "443"}}
 	mustValid(t, c)
-	c.Services.Edge.Port = 8443 // the home config's lucky-https (tcp 443) can stay while the proxy uses another port
-	c.Firewall.Open = []Open{{Name: "lucky-https", Enabled: boolp(true), Proto: []string{"tcp"}, Port: "443"}}
+	c.Services.Edge.Port = 8443 // a firewall.open of tcp 443 can stay while the proxy uses another port
+	c.Firewall.Open = []Open{{Name: "https", Enabled: boolp(true), Proto: []string{"tcp"}, Port: "443"}}
 	mustValid(t, c)
 	c.Services.Edge.Port = 443
 	c.Firewall.Open = nil
@@ -249,12 +248,6 @@ func TestEdgeValidate(t *testing.T) {
 	wantErrs(t, c, "services.edge.open: firewall.forwards[nas-https] already forwards tcp 443")
 	c.Services.Edge.Open = false
 	mustValid(t, c)
-
-	// lucky's web UI port while lucky runs
-	c = edgeTestConfig(t)
-	c.Services.Lucky.Enabled = true
-	c.Services.Edge.Port = c.Services.Lucky.Port
-	wantErrs(t, c, "services.edge.port: 16601 is used by lucky's web UI")
 }
 
 // guard.never_expose: a route the WAN can use may not lead to the router's own SSH / web UI / DNS.
@@ -273,7 +266,7 @@ func TestEdgeGuard(t *testing.T) {
 	c.Services.Edge.Open = false // not reachable from the WAN at all
 	mustValid(t, c)
 	c.Services.Edge.Open = true
-	c.Services.Edge.Routes[len(c.Services.Edge.Routes)-1].To = "http://192.168.1.6:16601" // lucky's UI: not guarded
+	c.Services.Edge.Routes[len(c.Services.Edge.Routes)-1].To = "http://192.168.1.6:16601" // another router port: not guarded
 	mustValid(t, c)
 }
 
@@ -326,4 +319,20 @@ func TestEdgeTarget(t *testing.T) {
 			t.Errorf("%s: %s, want %s", in, got, want)
 		}
 	}
+}
+
+// With the proxy on, its dnsmasq answers the LAN: it asks the main one for the route hosts and the
+// dns.records names (and lets their private answers through), instead of upstream.
+func TestEdgeLANDNSWithProxy(t *testing.T) {
+	sysTemp(t)
+	c := proxyTestConfig(t)
+	e := edgeTestConfig(t)
+	c.secrets["cf_edge"] = cfTestToken
+	c.Firewall.Open, c.Services = e.Firewall.Open, e.Services
+	c.DNS.Records = append(c.DNS.Records, Record{Name: "files.example.org", Type: "A", Value: "192.168.1.10"}, Record{Name: "*.dev.example.org", Type: "A", Value: "192.168.1.11"})
+	mustValid(t, c)
+	pd := renderMap(t, c)[proxyGenDNS]
+	wantSubs(t, "proxy-dns.conf", pd, "server=/nas.example.com/127.0.0.1\nrebind-domain-ok=/nas.example.com/\n",
+		"server=/files.example.org/127.0.0.1\nrebind-domain-ok=/files.example.org/\n", "server=/dev.example.org/127.0.0.1\n")
+	wantNone(t, "proxy-dns.conf", pd, "old.example.net")
 }

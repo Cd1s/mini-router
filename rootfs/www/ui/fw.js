@@ -157,13 +157,13 @@ registerPage("firewall", "firewall", "常规 / 安全", 10, async ()=>{
       {l:"WAN", f:x=>joinL(x.wan)||"全部"}, {l:"来源", f:x=>joinL(x.src_ip)||"任意"}, {l:"说明", f:x=>x.desc}],
     {blank:()=>({name:"", enabled:true, proto:["tcp"], port:""}),
      edit:(x,save)=>editDlg("开放路由器端口", x, o=>form(
-        ...field("名称", inText(o,"name",{placeholder:"lucky-https"})),
+        ...field("名称", inText(o,"name",{placeholder:"https"})),
         ...field("协议", inProto(o,"proto")),
         ...field("端口", inText(o,"port",{placeholder:"443 或 8000-8100 或 80,443"})),
         ...field("WAN", wanPick(o)),
         ...field("来源限制", inList(o,"src_ip",{placeholder:"留空 = 任意；例如 203.0.113.0/24, 2001:db8::/32"}), "IPv4 / IPv6 地址或网段"),
         ...field("说明", inText(o,"desc"))), o=>save(prune(o,["wan","src_ip","desc"]))),
-     note:"给路由器本身的服务（如 lucky 443）开放外网访问，IPv4 与 IPv6 同时生效。SSH 与管理界面不要开放，远程管理请走 tailscale。"});
+     note:"给路由器本身的服务（如 HTTPS 443）开放外网访问，IPv4 与 IPv6 同时生效。SSH 与管理界面不要开放，远程管理请走 tailscale。"});
 
   const logBox = h("pre",{}, (st.log||[]).slice(-50).join("\n") || (f.log_drops ? "（暂无记录）" : "（未开启日志）"));
   const dropped = (st.counters||{})["wan-in-drop"];

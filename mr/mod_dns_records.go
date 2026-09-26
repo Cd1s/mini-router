@@ -33,6 +33,30 @@ func recordNames(c *Config, name string) []string {
 	return []string{name}
 }
 
+// localAnswerNames: full names the main dnsmasq answers itself — dns.records and the reverse proxy's hosts.
+// The proxy's dnsmasq (which answers the LAN while the proxy is on) sends them there instead of upstream,
+// and lets the private answers through its rebind protection.
+func localAnswerNames(c *Config) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(n string) {
+		n = strings.TrimPrefix(n, "*.")
+		if strings.Contains(n, ".") && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	for _, r := range c.DNS.Records {
+		if r.Type != "PTR" {
+			add(r.Name)
+		}
+	}
+	for _, h := range edgeLANHosts(c) {
+		add(h)
+	}
+	return out
+}
+
 // reverseName converts an IP address to its in-addr.arpa / ip6.arpa name.
 func reverseName(ip net.IP) string {
 	if v4 := ip.To4(); v4 != nil {

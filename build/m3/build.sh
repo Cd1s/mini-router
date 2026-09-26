@@ -5,7 +5,7 @@
 #   MR_VERSION=<git short sha> ./build/m3/build.sh
 #
 # Needs build/m3/kernel.sh and build/m3/sing-box.sh first. Inputs (read only): $W/out/kernel,
-# $W/out/sing-box, the noscan hostapd package (build/hostapd) and EXTRA_BINS (tailscaled, lucky,
+# $W/out/sing-box, the noscan hostapd package (build/hostapd) and EXTRA_BINS (tailscaled,
 # dstatus-agent … as a tgz of usr/ paths; default: none). Outputs in $W/out/m3 + SHA256SUMS.
 set -eu
 REPO=$(cd "$(dirname "$0")/../.." && pwd)

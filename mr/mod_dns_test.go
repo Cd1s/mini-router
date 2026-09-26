@@ -66,7 +66,6 @@ edns-packet-max=1232
 resolv-file=/run/ppp/resolv.conf
 resolv-file=/run/mini-router/resolv.conf
 servers-file=` + GenDir + `/dns-split.servers
-addn-hosts=/etc/lucky/dnsmasq.hosts
 local=/use-application-dns.net/
 dhcp-leasefile=/tmp/dhcp.leases
 dhcp-range=set:lan,192.168.1.100,192.168.1.249,255.255.255.0,12h

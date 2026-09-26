@@ -6,14 +6,14 @@
 #   etc/mini-router/router.yaml  (required)      etc/mini-router/secrets.yaml
 #   etc/mini-router/dns/*.domains                etc/mini-router/proxy/*.domains|*.cidrs
 #   root/.ssh/authorized_keys                    etc/dropbear/dropbear_*_host_key (keep the SSH host key)
-#   etc/tailscale/tailscaled.state               etc/lucky/...   etc/dstatus-agent/config.yaml
+#   etc/tailscale/tailscaled.state               etc/dstatus-agent/config.yaml
 # Writes, 0600, into OUTDIR (default .):
 #   provision.cpio   append to the M3 test initramfs (tools/kexec-test.sh INITRAMFS provision.cpio)
 #   overlay.tar.gz   the start of rootfs_data on flash (sysupgrade --data overlay.tar.gz IMAGE)
 # Both add etc/mini-router/.firstboot: the first boot renders router.yaml and enables its services.
 # Everything is owned by root; directories 0755 (root/, root/.ssh, etc/dropbear, etc/tailscale 0700);
 # files 0644 or 0755 if executable; secrets 0600 (secrets.yaml, *_host_key, authorized_keys, *.key,
-# *.pem, *.state, open-token, *secrets, etc/dstatus-agent/*, etc/lucky/*.lkcf and the private dirs).
+# *.pem, *.state, open-token, *secrets, etc/dstatus-agent/* and the private dirs).
 # Refused: symlinks / device nodes, odd characters in names, paths outside the four trees, and files
 # that must come from the image (etc/passwd, etc/shadow, etc/group, etc/inittab, etc/fstab,
 # etc/init.d, etc/runlevels, etc/apk, and OpenWrt's etc/config, etc/rc.d).
@@ -70,7 +70,7 @@ for d in root root/.ssh etc/dropbear etc/tailscale; do
 done
 find . -type f \( -name secrets.yaml -o -name authorized_keys -o -name '*_host_key' -o -name '*.key' \
 	-o -name '*.pem' -o -name '*.state' -o -name open-token -o -name '*secrets' \
-	-o -path './etc/dstatus-agent/*' -o -path './etc/lucky/*.lkcf' \) -exec chmod 0600 {} +
+	-o -path './etc/dstatus-agent/*' \) -exec chmod 0600 {} +
 chmod 0755 .
 [ "$(id -u)" != 0 ] || chown -R 0:0 .
 

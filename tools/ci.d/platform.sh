@@ -29,7 +29,7 @@ grep -q '192\.168\.31\.1/24' "$F/etc/mini-router/gen/network.sh" || fail "factor
 for s in mr-network mr-firewall dnsmasq dropbear mr-panel mr-udhcpc.wan; do
 	grep -qx "$s" "$F/etc/mini-router/gen/services" || fail "factory service $s missing"
 done
-if grep -qx 'mr-hostapd\|tailscale\|lucky\|dstatus-agent\|mr-proxy' "$F/etc/mini-router/gen/services"; then
+if grep -qx 'mr-hostapd\|tailscale\|dstatus-agent\|mr-proxy' "$F/etc/mini-router/gen/services"; then
 	fail "factory config enables an optional service"
 fi
 if ls "$F"/etc/hostapd/hostapd-phy*.conf > /dev/null 2>&1; then fail "factory config has WiFi"; fi
@@ -213,14 +213,14 @@ echo "sysupgrade -T ok (1 image accepted, 21 refused)"
 # ---- 4. provision.sh
 command -v cpio > /dev/null || apt-get install -y -qq cpio > /dev/null
 S=$P/prov
-mkdir -p "$S/etc/mini-router/dns" "$S/root/.ssh" "$S/etc/dropbear" "$S/etc/lucky" "$S/var/lib/misc" "$P/prov-out"
+mkdir -p "$S/etc/mini-router/dns" "$S/root/.ssh" "$S/etc/dropbear" "$S/etc/app" "$S/var/lib/misc" "$P/prov-out"
 echo 'system: {}' > "$S/etc/mini-router/router.yaml"
 echo 'k: v' > "$S/etc/mini-router/secrets.yaml" && chmod 0666 "$S/etc/mini-router/secrets.yaml"
 echo example.com > "$S/etc/mini-router/dns/a.domains" && chmod 0600 "$S/etc/mini-router/dns/a.domains"
 echo 'ssh-ed25519 AAAA test' > "$S/root/.ssh/authorized_keys" && chmod 0644 "$S/root/.ssh/authorized_keys"
 echo key > "$S/etc/dropbear/dropbear_ed25519_host_key"
-echo '192.168.1.6 a.example' > "$S/etc/lucky/dnsmasq.hosts" && chmod 0600 "$S/etc/lucky/dnsmasq.hosts"
-printf '#!/bin/sh\n' > "$S/etc/lucky/hook" && chmod 0700 "$S/etc/lucky/hook"
+echo '192.168.1.6 a.example' > "$S/etc/app/dnsmasq.hosts" && chmod 0600 "$S/etc/app/dnsmasq.hosts"
+printf '#!/bin/sh\n' > "$S/etc/app/hook" && chmod 0700 "$S/etc/app/hook"
 echo x > "$S/var/lib/misc/state" && chmod 4755 "$S/var/lib/misc/state"
 chown -R 1234:1234 "$S"
 sh "$ROOT/tools/provision.sh" -o "$P/prov-out" "$S" > /dev/null
@@ -232,7 +232,7 @@ want = {".": 0o40755, "etc": 0o40755, "etc/mini-router": 0o40755, "etc/mini-rout
         "etc/mini-router/dns/a.domains": 0o100644, "etc/mini-router/.firstboot": 0o100644,
         "root": 0o40700, "root/.ssh": 0o40700, "root/.ssh/authorized_keys": 0o100600,
         "etc/dropbear": 0o40700, "etc/dropbear/dropbear_ed25519_host_key": 0o100600,
-        "etc/lucky": 0o40755, "etc/lucky/dnsmasq.hosts": 0o100644, "etc/lucky/hook": 0o100755,
+        "etc/app": 0o40755, "etc/app/dnsmasq.hosts": 0o100644, "etc/app/hook": 0o100755,
         "var": 0o40755, "var/lib": 0o40755, "var/lib/misc": 0o40755, "var/lib/misc/state": 0o100755}
 def check(got, what):
     if got != want:

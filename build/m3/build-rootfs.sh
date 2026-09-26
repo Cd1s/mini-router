@@ -12,7 +12,7 @@ REPO=$W/repo
 PKGS="alpine-baselayout alpine-release apk-tools busybox busybox-openrc busybox-mdev-openrc busybox-extras
 	openrc musl-utils ca-certificates-bundle
 	iproute2-minimal iproute2-ss iw nftables ppp-daemon ppp-pppoe dhcpcd dhcpcd-openrc dnsmasq-dnssec-nftset dnsmasq-openrc hostapd
-	wireless-regdb igmpproxy dropbear dropbear-openrc stubby stubby-openrc curl inotify-tools jq
+	wireless-regdb igmpproxy dropbear dropbear-openrc stubby stubby-openrc curl jq
 	mtd-utils-ubi kexec-tools ssl_client"
 
 apk add --no-cache kmod squashfs-tools cpio xz gcc musl-dev binutils file > /dev/null
@@ -37,8 +37,9 @@ install -m 0755 "$W/mr" "$R/usr/sbin/mr"
 install -m 0755 "$W/sing-box" "$R/usr/bin/sing-box"
 tar -xzf "$W/hostapd.apk" -C "$R" usr/sbin/hostapd 2> /dev/null # noscan patch (build/hostapd)
 grep -q noscan "$R/usr/sbin/hostapd" || { echo "hostapd: not the noscan build"; exit 1; }
-if [ -f "$W/bins.tgz" ]; then # tailscaled, lucky, dstatus-agent (the M2 set)
+if [ -f "$W/bins.tgz" ]; then # tailscaled, dstatus-agent (the M2 set; its old third program is dropped)
 	tar -xzf "$W/bins.tgz" -C "$R" 2> /dev/null
+	rm -f "$R/usr/bin/lucky"
 	for f in $(tar -tzf "$W/bins.tgz" 2> /dev/null); do
 		[ -f "$R/$f" ] && chown 0:0 "$R/$f" && file "$R/$f" | sed 's#^/w/rootfs##'
 	done
@@ -122,7 +123,7 @@ for cfg in "home $REPO/examples/router.yaml $REPO/mr/testdata/secrets.yaml" "lab
 		echo "$1 config: every service present ($n)"
 	else
 		echo "$1 config: $n services, missing in the image:$gaps" | tee -a "$W/feature-gaps.txt"
-		# the example home config uses add-ons (tailscale, lucky, …): required only when they are bundled
+		# the example home config uses add-ons (tailscale, dstatus, …): required only when they are bundled
 		[ "$1" != home ] || [ -z "${MR_ADDONS:-}" ] || exit 1
 	fi
 done

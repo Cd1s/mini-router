@@ -386,6 +386,28 @@ r=$(seen6 2001:db8:1::50 2001:db8:80::1)
 ip netns exec "$DS" nft list chain inet isp in | grep -q 'packets 0 bytes 0 drop comment "isp-b"' || fail "a source from wan's prefix reached wan2's ISP"
 echo "ok: IPv6 policy route follows the source prefix: wan2's prefix via wan2, wan's prefix stays on wan"
 
+# the router's own IPv6 (no source chosen) must leave each WAN from that WAN's prefix (Cd1s/mini-router#97):
+# without a src on the default route the kernel picks wan's own address or wan2's prefix, and isp-a drops it
+own6() {
+	for _ in 1 2 3; do
+		r6=$(inD python3 "$D/echo6.py" :: 2001:db8:80::1)
+		[ "$r6" = "$1" ] && break
+	done
+	echo "$r6"
+}
+inD ip -6 route add default via 2001:db8:b::1 dev wan2 metric 1030 # wan2's RA route
+inD mr wan health
+has "v6 default with src" "$(inD ip -6 route show default proto 97)" "src 2001:db8:1::6"
+r=$(own6 2001:db8:1::6)
+[ "$r" = 2001:db8:1::6 ] || fail "the router's own IPv6 did not leave wan from wan's prefix: $r ($(inD ip -6 route show default))"
+# wan's prefix is gone (expired, or wan down): its route goes, wan2 takes over with its own source
+rm /run/mini-router/wan/wan.pd6
+inD mr wan health
+hasnt "v6 src default of a WAN without prefix" "$(inD ip -6 route show default dev wan proto 97)" "default"
+r=$(own6 2001:db8:2::6)
+[ "$r" = 2001:db8:2::6 ] || fail "without wan's prefix the router's own IPv6 did not leave wan2 from wan2's prefix: $r"
+echo "ok: the router's own IPv6 uses the source of the WAN it leaves (and moves with the prefix)"
+
 # a new connection to a learned address restarts its timer (with the set's timeout)
 inD nft add element inet mr pr_0_4 '{ 192.0.2.82 timeout 100s }'
 [ "$(seen 192.0.2.82)" = 10.96.0.2 ] || fail "learned 192.0.2.82 did not leave via wan2: $(seen 192.0.2.82)"

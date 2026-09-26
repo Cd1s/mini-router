@@ -232,7 +232,7 @@ const recordsTab = ()=>{
   const t = etable(d.records, [{k:"name",l:"名称",ph:"nas.lan"},{k:"type",l:"类型",t:"sel",o:RTYPES,w:"100px"},{k:"value",l:"值",ph:"192.168.1.10"}], {name:"",type:"A",value:""});
   const help = roTable(["类型","名称","值","说明"], [
     ["A / AAAA", mono("nas 或 nas.lan"), mono("192.168.1.10 / fd00::10"), "不带点的名称同时生成 nas 和 nas."+(S.cfg.dhcp.domain||"lan")+"，并自动提供反向解析"],
-    ["A / AAAA", mono("*.home.example.com"), mono("192.168.1.6"), "域名本身及所有子域（适合 Lucky 反代的内网直连）；只应答对应的 A 或 AAAA，另一种仍走上游，需要时两种都加"],
+    ["A / AAAA", mono("*.home.example.com"), mono("192.168.1.6"), "域名本身及所有子域（适合反向代理站点的内网直连）；只应答对应的 A 或 AAAA，另一种仍走上游，需要时两种都加"],
     ["CNAME", mono("photos.lan"), mono("nas.lan"), "目标必须是本地已知名称（记录 / DHCP 设备 / hosts）"],
     ["PTR", mono("192.168.1.11"), mono("printer.lan"), "名称可填 IP，自动转换为 in-addr.arpa / ip6.arpa"],
     ["SRV", mono("_smb._tcp.lan"), mono("nas.lan:445[:优先级[:权重]]"), ""],

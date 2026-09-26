@@ -1,7 +1,7 @@
 package main
 
 // sys module: hostname, time (timezone, NTP client/server), sysctl, SSH (dropbear, managed
-// authorized_keys), add-on services (tailscale, lucky, dstatus, stubby, web UI, zram), dynamic DNS,
+// authorized_keys), add-on services (tailscale, dstatus, stubby, web UI, zram), dynamic DNS,
 // Wake-on-LAN, the HTTPS reverse proxy with certificates (mr-edge), scheduled tasks (busybox crond),
 // backup/restore, firmware upgrade / factory reset, logs, diagnostics, `mr doctor`, the event log and
 // notifications. Owns router.yaml: system, services, schedules, notify. Files: mod_sys_time.go (TZ, TZif,
@@ -39,7 +39,7 @@ type System struct {
 
 type Services struct {
 	Tailscale Tailscale `yaml:"tailscale"`
-	Lucky     Lucky     `yaml:"lucky"`
+	Lucky     any       `yaml:"lucky,omitempty"` // removed: kept only to reject old configs clearly
 	Dstatus   Toggle    `yaml:"dstatus"`
 	Stubby    Toggle    `yaml:"stubby"`
 	SSH       SSH       `yaml:"ssh"`
@@ -57,11 +57,6 @@ type Tailscale struct {
 	Port    int  `yaml:"port"` // tailscaled --port (UDP, opened on the WANs)
 	// ExitNode: chosen LAN devices leave through a tailscale exit node (mod_sys_tsexit.go)
 	ExitNode TSExit `yaml:"exit_node,omitempty"`
-}
-
-type Lucky struct {
-	Enabled bool `yaml:"enabled"`
-	Port    int  `yaml:"port,omitempty"` // Lucky's own web UI port (only used for the link in the web UI)
 }
 
 type SSH struct {
@@ -214,9 +209,6 @@ func sysServices(c *Config) []string {
 	if sv.Tailscale.Enabled {
 		s = append(s, "tailscale")
 	}
-	if sv.Lucky.Enabled {
-		s = append(s, "lucky", "lucky-dns-inotify")
-	}
 	if sv.Dstatus.Enabled {
 		s = append(s, "dstatus-agent")
 	}
@@ -249,9 +241,6 @@ func init() {
 			if c.Services.Tailscale.Port == 0 {
 				c.Services.Tailscale.Port = 41641
 			}
-			if c.Services.Lucky.Port == 0 {
-				c.Services.Lucky.Port = 16601
-			}
 			if len(c.System.NTP) == 0 {
 				c.System.NTP = []string{"pool.ntp.org"} // no RTC: the clock must come from somewhere
 			}
@@ -278,7 +267,7 @@ func init() {
 			return nil
 		},
 		Services:     sysServices,
-		Managed:      []string{"dropbear", "tailscale", "lucky", "lucky-dns-inotify", "dstatus-agent", "stubby", "mr-panel", "mr-zram", "crond", "mr-bootlog", "mr-edge"},
+		Managed:      []string{"dropbear", "tailscale", "dstatus-agent", "stubby", "mr-panel", "mr-zram", "crond", "mr-bootlog", "mr-edge"},
 		Restart:      sysRestart,
 		RestartOrder: []string{"ntpd", "syslog", "dropbear", "crond", "tailscale", "mr-panel", "mr-edge"},
 		Status: func(c *Config, st map[string]any) {
@@ -424,8 +413,8 @@ func sysValidate(c *Config, v *Validator) {
 	if sv.Tailscale.Port < 1 || sv.Tailscale.Port > 65535 {
 		v.Add("services.tailscale.port: 1-65535")
 	}
-	if sv.Lucky.Port < 1 || sv.Lucky.Port > 65535 {
-		v.Add("services.lucky.port: 1-65535")
+	if sv.Lucky != nil {
+		v.Add("services.lucky: removed — use services.ddns and services.edge (docs/modules/sys.md)")
 	}
 	validateSSH(c, v)
 	validateSchedules(c, v)

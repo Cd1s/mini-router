@@ -80,7 +80,6 @@ func TestFwHomeEquivalent(t *testing.T) {
 		`iifname { "pppoe-wan", "pppoe-wan2" } udp dport 45000-45100 dnat ip to 192.168.1.241 comment "vps-45000-45100"`,
 		`iifname { "pppoe-wan", "pppoe-wan2" } tcp dport 7443 dnat ip to 192.168.1.66:9999 comment "desktop-7443"`,
 		`iifname { "pppoe-wan", "pppoe-wan2" } udp dport 46001-46020 dnat ip to 192.168.1.237 comment "workstation"`,
-		`iifname { "pppoe-wan", "pppoe-wan2" } tcp dport 443 accept comment "lucky-https"`,
 		`oifname { "pppoe-wan", "pppoe-wan2" } meta nfproto ipv4 masquerade`,
 		`iifname "br-lan" oifname "br-lan" ct status dnat ip saddr 192.168.1.0/24 masquerade comment "nat-reflection"`,
 		`iifname "br-lan" fib daddr type local ip daddr != 192.168.1.6 tcp dport 7443 dnat ip to 192.168.1.66:9999`,
@@ -99,7 +98,7 @@ func TestFwHomeEquivalent(t *testing.T) {
 	// nothing the home config did not ask for
 	mustNotContain(t, "home nft", out, "@ac_4", "meta hour", "log prefix", "v6in:", "rule:", "dhcp-client")
 	// the open port must come before the final WAN drop
-	if strings.Index(out, `comment "lucky-https"`) > strings.Index(out, `comment "wan-in-drop"`) {
+	if strings.Index(out, `comment "tailscale"`) > strings.Index(out, `comment "wan-in-drop"`) {
 		t.Error("open port rendered after the WAN drop")
 	}
 }
@@ -211,7 +210,7 @@ func TestFwValidateRejects(t *testing.T) {
 	fw.Forwards[4].WAN = []string{"wan9"}
 	fw.Forwards[5].Port, fw.Forwards[5].ToPort = "5000-5010", "6000-6010"
 	fw.Forwards[6].Enabled = boolp(true)
-	fw.Forwards[6].Proto, fw.Forwards[6].Port = []string{"tcp"}, "443" // collides with the open lucky-https port
+	fw.Forwards[6].Proto, fw.Forwards[6].Port = []string{"tcp"}, "4443" // collides with the open https port
 	fw.Forwards[6].Desc = "line\nbreak"
 	fw.Open[1].SrcIP = []string{"203.0.113.0/24; drop"}
 	fw.Open[2].Port = "80,x"
@@ -237,7 +236,7 @@ func TestFwValidateRejects(t *testing.T) {
 	for _, s := range []string{
 		"forwards[0].name", "forwards[1].to: must be an IPv4 inside", "that is the router itself", "network or broadcast address",
 		"forwards[3].src_ip: port forwards are IPv4 only", `forwards[4].wan: unknown wan "wan9"`, "forwards[5].to_port: a port range maps",
-		"both take tcp port 443", "forwards[6].desc",
+		"both take tcp port 4443", "forwards[6].desc",
 		"open[1].src_ip", "open[2].port",
 		"ipv6_allow[0].iid", "ipv6_allow[1]: set exactly one of iid or mac", "ipv6_allow[2].iid", "ipv6_allow[3].src_ip",
 		"rules[0].action", "rules[1].src", "rules[2].src_mac", "rules[3]: rules towards the router can only drop or reject",
@@ -408,7 +407,7 @@ func TestFwParseCounters(t *testing.T) {
 	   "expr": [{"match": {}}, {"counter": {"packets": 3, "bytes": 180}}, {"drop": null}]}},
 	 {"rule": {"family": "inet", "table": "mr", "chain": "forward", "handle": 8, "comment": "access:kid",
 	   "expr": [{"counter": {"packets": 2, "bytes": 100}}, {"drop": null}]}},
-	 {"rule": {"family": "inet", "table": "mr", "chain": "input", "handle": 9, "comment": "lucky-https", "expr": [{"accept": null}]}},
+	 {"rule": {"family": "inet", "table": "mr", "chain": "input", "handle": 9, "comment": "https", "expr": [{"accept": null}]}},
 	 {"rule": {"family": "inet", "table": "mr", "chain": "input", "handle": 10, "expr": [{"counter": {"packets": 1, "bytes": 1}}]}}]}`
 	got := fwParseCounters([]byte(j))
 	if len(got) != 1 || got["access:kid"] != (fwCounter{5, 280}) {

@@ -400,6 +400,9 @@ func proxyDnsmasq(c *Config, sets []proxyRuleSet) (string, error) {
 	}
 	w("# local names (DHCP leases, static hosts, the router) come from the main dnsmasq")
 	w("server=/%s/127.0.0.1\nserver=//127.0.0.1", c.DHCP.Domain)
+	for _, n := range localAnswerNames(c) {
+		w("server=/%s/127.0.0.1\nrebind-domain-ok=/%s/", n, n)
+	}
 	for _, n := range c.LANNets() {
 		if pf, err := netip.ParsePrefix(n.IPv4); err == nil {
 			w("rev-server=%s,127.0.0.1", pf.Masked())

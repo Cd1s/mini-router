@@ -4,7 +4,7 @@ package main
 // strictly here. It is rendered three ways:
 //
 //	/etc/localtime       a TZif file carrying the POSIX string, so every musl / Go program (syslogd
-//	                     timestamps, crond, lucky, mr itself) uses local time without a TZ variable
+//	                     timestamps, crond, mr itself) uses local time without a TZ variable
 //	/etc/conf.d/crond    export TZ=... (crond gets the zone even if /etc/localtime were unreadable)
 //	/etc/profile.d/tz.sh export TZ=... for login shells
 //

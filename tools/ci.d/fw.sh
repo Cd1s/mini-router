@@ -20,7 +20,6 @@ for s in \
 	'iifname { "pppoe-wan", "pppoe-wan2" } tcp dport 7443 dnat ip to 192.168.1.66:9999 comment "desktop-7443"' \
 	'iifname { "pppoe-wan", "pppoe-wan2" } tcp dport 46001-46020 dnat ip to 192.168.1.237 comment "workstation"' \
 	'iifname { "pppoe-wan", "pppoe-wan2" } udp dport 46001-46020 dnat ip to 192.168.1.237 comment "workstation"' \
-	'iifname { "pppoe-wan", "pppoe-wan2" } tcp dport 443 accept comment "lucky-https"' \
 	'oifname { "pppoe-wan", "pppoe-wan2" } meta nfproto ipv4 masquerade' \
 	'iifname "br-lan" oifname "br-lan" ct status dnat ip saddr 192.168.1.0/24 masquerade comment "nat-reflection"' \
 	'iifname "br-lan" fib daddr type local ip daddr != 192.168.1.6 tcp dport 7443 dnat ip to 192.168.1.66:9999' \
@@ -166,7 +165,7 @@ done
 
 # servers
 spawn() { setsid -f ip netns exec "$@" >/dev/null 2>&1 < /dev/null; } # detached: cleanup kills them quietly
-for p in 443 22 80 53; do spawn "$R" python3 "$PY" serve "$p"; done
+for p in 4443 22 80 53; do spawn "$R" python3 "$PY" serve "$p"; done
 for p in 9999 22 9100 443; do spawn "$L1" python3 "$PY" serve "$p"; done
 for p in 8080 25 853 443; do spawn "$W" python3 "$PY" serve "$p"; done
 spawn "$W" python3 "$PY" stream 9000
@@ -251,8 +250,8 @@ ip -n "$L2" addr replace 2001:db8:1::80/64 dev eth0 nodad # link down may have f
 ip -n "$L2" -6 route replace default via 2001:db8:1::1
 
 # WAN → router
-ok "$W" 203.0.113.1 443 "WAN -> open port 443 (IPv4)"
-ok "$W" 2001:db8:ffff::1 443 "WAN -> open port 443 (IPv6)"
+ok "$W" 203.0.113.1 4443 "WAN -> open port 4443 (IPv4)"
+ok "$W" 2001:db8:ffff::1 4443 "WAN -> open port 4443 (IPv6)"
 blocked "$W" 203.0.113.1 22 "WAN -> router SSH dropped" "" "TimeoutError"
 blocked "$W" 203.0.113.1 80 "WAN -> router web UI dropped"
 blocked "$W" 198.51.100.1 53 "WAN2 -> router DNS dropped"
@@ -280,7 +279,7 @@ blocked "$L1" 2001:db8:ffff::2 443 "LAN -> listed DoH resolver (IPv6) refused" "
 blocked "$L1" 198.18.0.1 853 "LAN -> DoT inside a proxied range refused, not proxied" "" "ConnectionRefusedError"
 ok "$L1" 192.168.1.6 853 "LAN -> the router's own port 853 not refused"
 ok "$L1" 203.0.113.2 8080 "LAN -> the listed resolver's other ports still reachable"
-ok "$W" 203.0.113.1 443 "WAN -> open port 443 unaffected by the LAN-side refusals"
+ok "$W" 203.0.113.1 4443 "WAN -> open port 4443 unaffected by the LAN-side refusals"
 # IPv6 pinholes (no NAT): by interface identifier only, only the listed ports
 ok "$W" 2001:db8:1::211:32ff:fe12:3456 443 "IPv6 pinhole nas-https (IID)" "" "ok from 2001:db8:ffff::2"
 blocked "$W" 2001:db8:1::211:32ff:fe12:3456 22 "IPv6 pinhole: other port dropped"

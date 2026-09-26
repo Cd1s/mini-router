@@ -9,22 +9,6 @@
    "running": true
   },
   {
-   "name": "lucky",
-   "label": "Lucky",
-   "cfg": "lucky",
-   "wanted": true,
-   "installed": true,
-   "running": true
-  },
-  {
-   "name": "lucky-dns-inotify",
-   "label": "Lucky 域名 → dnsmasq",
-   "cfg": "lucky",
-   "wanted": true,
-   "installed": true,
-   "running": true
-  },
-  {
    "name": "dstatus-agent",
    "label": "dstatus 探针",
    "cfg": "dstatus",
@@ -153,7 +137,6 @@
    "running": true
   }
  ],
- "lucky_port": 16601,
  "ssh_port": 22,
  "tailscale_port": 41641,
  "lan_ip": "192.168.1.6",

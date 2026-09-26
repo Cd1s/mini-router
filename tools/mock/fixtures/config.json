@@ -29,9 +29,7 @@
    "start": 100
   },
   "dns": {
-   "addn_hosts": [
-    "/etc/lucky/dnsmasq.hosts"
-   ],
+   "addn_hosts": [],
    "cache_size": 8000,
    "edns_packet_max": 1232,
    "local_service": true,
@@ -82,15 +80,7 @@
     }
    ],
    "offload": "hardware",
-   "open": [
-    {
-     "name": "lucky-https",
-     "port": "443",
-     "proto": [
-      "tcp"
-     ]
-    }
-   ],
+   "open": [],
    "synflood_protect": true
   },
   "lan": {
@@ -118,9 +108,6 @@
   ],
   "services": {
    "dstatus": {
-    "enabled": true
-   },
-   "lucky": {
     "enabled": true
    },
    "panel": {

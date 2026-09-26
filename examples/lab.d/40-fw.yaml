@@ -27,7 +27,7 @@ firewall:
     - {name: office-rdp, proto: [tcp], port: "3390", to: office-pc, to_port: "3389", desc: "to a device of the inventory (its ip)"}
 
   open:
-    - {name: lucky-https, proto: [tcp], port: "443"}
+    - {name: https, proto: [tcp], port: "4443"}
     - name: wg-office
       proto: [udp]
       port: "51820,51821"

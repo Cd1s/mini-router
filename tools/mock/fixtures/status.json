@@ -110,14 +110,6 @@
    "running": true
   },
   {
-   "name": "lucky",
-   "running": true
-  },
-  {
-   "name": "lucky-dns-inotify",
-   "running": true
-  },
-  {
    "name": "dstatus-agent",
    "running": true
   },
