@@ -144,7 +144,14 @@ fi
 defwan=$(ip route show default 2> /dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
 [ -n "$defwan" ] || defwan=${ifaces%% *}
 echo "网卡 / interfaces: $ifaces"
-ask MR_MODE "工作模式 router 主路由 / bypass 旁路由 / ap 纯 AP / mode" router
+defmode=router
+if [ "$(echo $ifaces | wc -w)" = 1 ] && [ "$HAVE_WIFI" != 1 ]; then
+	# one port and no radio: a main router needs a VLAN-capable switch (docs/install-alpine.md, one-armed router)
+	echo "只发现一个网口：建议做旁路由（bypass）；做主路由需要支持 VLAN 的交换机，见 docs/install-alpine.md"
+	echo "one port only: a side router (bypass) is suggested; a main router needs a VLAN switch (docs/install-alpine.md)"
+	defmode=bypass
+fi
+ask MR_MODE "工作模式 router 主路由 / bypass 旁路由 / ap 纯 AP / mode" "$defmode"
 case $MR_MODE in router | bypass | ap) ;; *) die "mode must be router, bypass or ap" ;; esac
 if [ "$MR_MODE" != router ]; then
 	# behind a main router: one port is enough (ap: list every port); the box keeps the address it has

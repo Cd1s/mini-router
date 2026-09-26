@@ -98,18 +98,18 @@ checks every service and rolls back on its own. The web UI, the CLI and AI agent
 
 适合 x86 小主机、虚拟机、树莓派、各种 ARM 板。
 
-> **目前需要两个网口**：一个接外网（WAN），一个接内网（LAN）；或者一个网口 + 一块无线网卡（无线做 LAN）。
-> 只有一个网口的设备请等**旁路由模式**（[#24](https://github.com/Cd1s/mini-router/issues/24)，开发中）——那时一个口就够，
-> 挂在现有路由器旁边只负责代理等功能。
+> 做**主路由**需要两个网口（WAN + LAN），或者一个网口 + 一块无线网卡。**只有一个网口**：做旁路由（`mode: bypass`，
+> 挂在现有路由器下面只负责 DNS 和代理），或者配合支持 VLAN 的交换机做单臂路由。纯 AP 用 `mode: ap`。
+> 从装 Alpine、认网口到卸载的完整步骤：[docs/install-alpine.md](docs/install-alpine.md)。
 
-先装好 Alpine，然后：
+先装好 Alpine（`setup-alpine`，磁盘模式选 `sys`），然后：
 
 ```sh
 wget -O install.sh https://github.com/Cd1s/mini-router/releases/latest/download/install.sh
 sh install.sh
 ```
 
-脚本会问：WAN 网口与类型（DHCP / PPPoE / 静态）、LAN 网口、路由器 IP、WiFi 名称和密码、网页管理员密码、时区，
+脚本会问：工作模式（主路由 / 旁路由 / 纯 AP）、WAN 网口与类型（DHCP / PPPoE / 静态）、LAN 网口、路由器 IP、WiFi 名称和密码、网页管理员密码、时区，
 然后安装软件包、下载对应架构的 `mr`、生成配置并应用。完成后打开 `http://路由器IP/`。
 
 无人值守（所有问题用环境变量回答，其它变量见 `install.sh` 开头；`MR_APPLY=0` 只安装不应用）：
