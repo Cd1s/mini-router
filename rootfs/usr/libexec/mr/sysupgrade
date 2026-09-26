@@ -298,6 +298,11 @@ flash_install() {
 		echo "$(cat "$d/when" 2>/dev/null || echo '-') sysupgrade: installed mini-router $(meta MR_VERSION) (kernel $(meta MR_KERNEL))" \
 			>> /mnt/mr-data/mr/upper/etc/router-changes.log
 		chmod 0644 /mnt/mr-data/mr/upper/etc/router-changes.log
+		# no RTC: mr-clock starts the new system from this file's mtime (#103). After the kexec the
+		# installer's clock starts near 0, so the time the upgrade was staged is the floor.
+		c=/mnt/mr-data/mr/upper/etc/mini-router/state/clock t=$(cat "$d/epoch" 2>/dev/null) now=$(date +%s)
+		[ "${t:-0}" -gt "$now" ] 2>/dev/null || t=$now
+		mkdir -p "${c%/*}" && touch -d "@$t" "$c" 2>/dev/null || msg "could not save the clock"
 		sync
 		umount /mnt/mr-data
 	fi
@@ -361,6 +366,7 @@ kexec_installer() {
 	[ -n "$data" ] && { cp "$data" "$I/data.tgz" || die "staging failed"; }
 	[ "$wipe" = 1 ] && echo wipe=1 > "$I/flags"
 	date '+%Y-%m-%d %H:%M:%S' > "$I/when"
+	date +%s > "$I/epoch"
 	copy_bin /bin/busybox "$S" || die "staging busybox failed"
 	cp /lib/ld-musl-aarch64.so.1 "$S/lib/" && ln -sf ld-musl-aarch64.so.1 "$S/lib/libc.musl-aarch64.so.1"
 	ln -s busybox "$S/bin/sh"
@@ -416,6 +422,9 @@ kexec_installer() {
 	# pending that crashed the new kernel's SPI driver (it is patched now, build/m3/patches). Freeze every
 	# process (not init, not this shell), flush, give the last operations time to finish. If kexec -e
 	# fails from here, the armed watchdog reboots the old system.
+	# no OpenRC shutdown (mr-clock stop): save the clock for the old system too, in case the installer
+	# fails before the write and reboots it (#103)
+	touch /etc/mini-router/state/clock 2> /dev/null
 	kill -STOP -1 2> /dev/null
 	sync
 	sleep 2
@@ -501,6 +510,7 @@ if root_is_ram; then
 	[ -n "$data" ] && { cp "$data" "$WORK/data.tgz" || die "no space in $WORK"; }
 	[ "$wipe" = 1 ] && echo wipe=1 > "$WORK/flags"
 	date '+%Y-%m-%d %H:%M:%S' > "$WORK/when"
+	date +%s > "$WORK/epoch"
 	flash_install "$WORK" || die "INSTALL FAILED (see the messages above; docs/flash.md)"
 	rm -rf "$WORK"
 	if [ "$reboot" = 1 ]; then

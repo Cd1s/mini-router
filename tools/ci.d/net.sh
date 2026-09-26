@@ -6,8 +6,8 @@
 #     against a dnsmasq DHCP server, a static WAN via `mr routes`, and the busybox sh health checker
 #     taking a WAN down and up again (routes, rules, balance map in the loaded nft ruleset, DNS).
 #  4. PPPoE mtu 1500 (RFC 4638): the rendered link commands give the PPPoE port 1508 and a DHCP VLAN on it
-#     1500 in the real kernel; IPv6 renumbering (RFC 9096): after a "reboot" (another boot id in the
-#     record) the real `mr hook dhcpcd` puts a prefix that did not come back on the bridge, and a real
+#     1500 in the real kernel; IPv6 renumbering (RFC 9096): after dhcpcd's shutdown events and a
+#     "reboot" with a new prefix the real `mr hook dhcpcd` puts a prefix that did not come back on the bridge, and a real
 #     dnsmasq advertises it to a client with preferred lifetime 0 while the current one stays preferred.
 #  3. policy route by domain, end to end in three network namespaces (IPv6 too: a source from one WAN's
 #     prefix never leaves through the other WAN, #63): the rendered nftset= lines in a
@@ -459,15 +459,27 @@ ip -n "$RR" link add vr type veth peer name vc netns "$RC"
 ip -n "$RR" link set vr master br-lan
 for l in br-lan vr; do ip -n "$RR" link set "$l" up; done
 ip -n "$RC" link set vc up
+hookev() { ip netns exec "$RR" env interface=br-lan reason="$1" "$MRH" -c "$M4/router.yaml" -s "$M4/secrets.yaml" hook dhcpcd || true; }
+LREC=/etc/mini-router/state/lan6-prefixes.json
+mkdir -p /etc/mini-router/state /run/mini-router/wan
+rm -f "$LREC"
+# first boot: the WAN delegates 2001:db8:1::/48 (hook record + bridge address), the hook records it
+echo 2001:db8:1::/48 > /run/mini-router/wan/wan.pd6
+ip -n "$RR" -6 addr add 2001:db8:1::1/64 dev br-lan noprefixroute nodad
+hookev DELEGATED6
+grep -q '2001:db8:1::1/64' "$LREC" || fail "prefix not recorded: $(cat "$LREC" 2> /dev/null)"
+# shutdown (#102): dhcpcd releases, the pd6 record and the address go, the hook runs again
+rm /run/mini-router/wan/wan.pd6
+ip -n "$RR" -6 addr del 2001:db8:1::1/64 dev br-lan
+hookev RELEASE6
+hookev STOPPED
+grep -q '2001:db8:1::1/64' "$LREC" || fail "the shutdown events emptied the record: $(cat "$LREC")"
+# "reboot": a new prefix
+echo 2001:db8:2::/48 > /run/mini-router/wan/wan.pd6
 ip -n "$RR" -6 addr add 2001:db8:2::1/64 dev br-lan noprefixroute nodad
-mkdir -p /etc/mini-router/state
-printf '{"boot":"an-earlier-boot","addrs":{"wan br-lan":["2001:db8:1::1/64","2001:db8:2::1/64"]}}' > /etc/mini-router/state/lan6-prefixes.json
-mkdir -p /run/mini-router/wan && echo 2001:db8::/32 > /run/mini-router/wan/wan.pd6 # the WAN has delegated again (hook record)
-ip netns exec "$RR" env interface=br-lan reason=DELEGATED6 "$MRH" -c "$M4/router.yaml" -s "$M4/secrets.yaml" hook dhcpcd || true
+hookev DELEGATED6
 ip -n "$RR" -6 addr show dev br-lan | grep -q '2001:db8:1::1/64' || fail "the hook did not put the stale prefix back: $(ip -n "$RR" -6 addr show dev br-lan)"
-if grep -q 'an-earlier-boot' /etc/mini-router/state/lan6-prefixes.json; then
-	fail "record not rewritten for this boot: $(cat /etc/mini-router/state/lan6-prefixes.json)"
-fi
+if grep -q '2001:db8:1::1/64' "$LREC"; then fail "stale prefix still recorded: $(cat "$LREC")"; fi
 cat > "$T/ra-dnsmasq.conf" << EOF
 port=0
 interface=br-lan

@@ -9,13 +9,15 @@ package main
 // advertised before a reboot, power cut or upgrade: ISPs that hand out a new prefix per PPPoE session
 // leave the clients holding the dead one as preferred until the RA lifetime (dhcp.ipv6.lease) ends.
 //
-// So the prefixes on the RA bridges are recorded on flash (written only when they change), per WAN that
-// delegated them (the dhcpcd hook's pd6 record), and after a reboot every recorded address that has not
-// come back is put on its bridge once more for
-// lan6StalePreferred seconds of preferred lifetime: dnsmasq sees it, advertises it, sees the kernel
-// deprecate it and then advertises it as an old prefix like any other. If the ISP hands out the same
-// prefix again, dhcpcd re-adds the address and dnsmasq advertises it as before. Runs from the dhcpcd
-// hook; nothing resident. mr-dhcpcd starts after dnsmasq, so the first event after boot finds it running.
+// So the addresses last advertised on the RA bridges are recorded on flash, per WAN that delegated them
+// (the dhcpcd hook's pd6 record). A WAN without addresses for the moment (release, link down, shutdown:
+// dhcpcd's RELEASE6 / STOP6 / STOPPED remove the pd6 record and the addresses) keeps its record; once it
+// has addresses again, every recorded one that has not come back — after a reboot or a PPPoE redial in
+// the same boot — is put on its bridge once more for lan6StalePreferred seconds of preferred lifetime:
+// dnsmasq sees it, advertises it, sees the kernel deprecate it and then advertises it as an old prefix
+// like any other. If the ISP hands out the same prefix again, nothing is stale. Flash is written only when
+// a non-empty set changes. Runs from the dhcpcd hook; nothing resident. mr-dhcpcd starts after dnsmasq,
+// so the first event after boot finds it running.
 
 import (
 	"bytes"
@@ -30,22 +32,15 @@ import (
 	"strings"
 )
 
-var (
-	lan6StateFile = "/etc/mini-router/state/lan6-prefixes.json"
-	bootIDFile    = "/proc/sys/kernel/random/boot_id"
-)
+var lan6StateFile = "/etc/mini-router/state/lan6-prefixes.json"
 
-// lan6StalePreferred: preferred lifetime (seconds) of a stale address put back after a reboot. Long
+// lan6StalePreferred: preferred lifetime (seconds) of a stale address put back. Long
 // enough for dnsmasq to notice it and advertise it once, short enough that clients stop using it at once.
 const lan6StalePreferred = 10
 
-// lan6State is what the RA bridges advertised, per boot. Keys are "<wan> <bridge>" (lan6Key).
+// lan6State: the addresses last advertised per WAN x bridge. Keys are "<wan> <bridge>" (lan6Key).
 type lan6State struct {
-	Boot  string              `json:"boot"`
 	Addrs map[string][]string `json:"addrs"` // "wan br-lan" -> ["2001:db8:1::1/64", ...]
-	// records of an earlier boot whose WAN has not delegated to that bridge (yet) in this one: judged
-	// once it has
-	Pending map[string][]string `json:"pending,omitempty"`
 }
 
 func lan6Key(wan, br string) string { return wan + " " + br }
@@ -114,45 +109,27 @@ func lan6CIDR(s string) (string, bool) {
 	return fmt.Sprintf("%s/%d", ip, ones), true
 }
 
-// lan6Plan compares what the bridges have now (cur, lan6ByWAN) with the record. Within one boot dnsmasq
-// has seen every change itself; in a new boot, recorded addresses that are not back are stale — judged
-// per WAN only once that WAN has delegated to the bridge again: dhcpcd events come before the
-// delegation, WANs delegate at different times, and a prefix the ISP hands out again must not be
-// deprecated in between. WANs and bridges that no longer do RA are left out (nothing advertises there).
-func lan6Plan(prev lan6State, boot string, cur map[string][]string) (stale map[string][]string, next lan6State) {
-	next = lan6State{Boot: boot, Addrs: map[string][]string{}, Pending: map[string][]string{}}
-	for br, as := range cur {
-		if len(as) > 0 {
-			next.Addrs[br] = as
-		}
-	}
-	old := prev.Pending
-	if prev.Boot != "" && prev.Boot != boot {
-		old = map[string][]string{}
-		for _, m := range []map[string][]string{prev.Addrs, prev.Pending} {
-			for br, as := range m {
-				old[br] = append(old[br], as...)
-			}
-		}
-	}
+// lan6Plan compares what the bridges have now (cur, lan6ByWAN) with the record. A key without addresses
+// now keeps its record (dhcpcd events come before the delegation, WANs delegate at different times, and
+// the prefix the ISP may hand out again must not be deprecated in between); a key with addresses replaces
+// it, and the recorded ones that are gone are stale. WANs and bridges that no longer do RA are left out
+// (nothing advertises there).
+func lan6Plan(prev lan6State, cur map[string][]string) (stale map[string][]string, next lan6State) {
+	next = lan6State{Addrs: map[string][]string{}}
 	stale = map[string][]string{}
-	for br, as := range old { // br: a lan6Key
-		now, ok := cur[br]
-		if !ok {
-			continue
-		}
+	for k, now := range cur {
 		if len(now) == 0 {
-			next.Pending[br] = as
+			if len(prev.Addrs[k]) > 0 {
+				next.Addrs[k] = prev.Addrs[k]
+			}
 			continue
 		}
-		for _, a := range as {
-			if s, valid := lan6CIDR(a); valid && !containsString(now, s) && !containsString(stale[br], s) {
-				stale[br] = append(stale[br], s)
+		next.Addrs[k] = now
+		for _, a := range prev.Addrs[k] {
+			if s, valid := lan6CIDR(a); valid && !containsString(now, s) && !containsString(stale[k], s) {
+				stale[k] = append(stale[k], s)
 			}
 		}
-	}
-	if len(next.Pending) == 0 {
-		next.Pending = nil
 	}
 	return stale, next
 }
@@ -197,13 +174,9 @@ func raLease(lease string) string {
 // given (raLease).
 func raLeaseSecs(lease string) int { return leaseSecs(raLease(lease)) }
 
-// lan6Renumber records the prefixes of the RA bridges and, after a reboot, once a bridge has a prefix again,
+// lan6Renumber records the prefixes of the RA bridges per WAN and, once a WAN has delegated again,
 // announces the ones that did not come back as stale (see the top of this file).
 func lan6Renumber(c *Config) {
-	boot := strings.TrimSpace(readFile(bootIDFile))
-	if boot == "" {
-		return
-	}
 	lease := map[string]int{}
 	for _, n := range dhcpNets(c) {
 		if n.ra {
@@ -233,7 +206,7 @@ func lan6Renumber(c *Config) {
 			}
 		}
 	}
-	stale, next := lan6Plan(prev, boot, lan6ByWAN(cur, wans, pds))
+	stale, next := lan6Plan(prev, lan6ByWAN(cur, wans, pds))
 	var keys []string
 	for k := range stale {
 		keys = append(keys, k)
@@ -242,12 +215,12 @@ func lan6Renumber(c *Config) {
 	for _, k := range keys {
 		_, br, _ := strings.Cut(k, " ")
 		for _, a := range stale[k] {
-			logf("lan6: %s on %s was advertised before the reboot and is gone: announcing it as stale (RFC 9096)", a, br)
+			logf("lan6: %s on %s was advertised and is gone: announcing it as stale (RFC 9096)", a, br)
 			run("ip", "-6", "addr", "add", a, "dev", br, "valid_lft", strconv.Itoa(lease[br]),
 				"preferred_lft", strconv.Itoa(lan6StalePreferred), "noprefixroute", "nodad")
 		}
 	}
-	// flash is written only when the prefixes (or the boot) change
+	// flash is written only when a non-empty set changes
 	b, _ := json.Marshal(next)
 	if (err != nil && len(next.Addrs) == 0) || bytes.Equal(old, b) {
 		return
