@@ -526,3 +526,27 @@ func TestFmtSecs(t *testing.T) {
 		}
 	}
 }
+
+// sysupgrade kexecs without OpenRC: it marks its stop, so the next boot is a planned restart (also with
+// the same version: a rebuilt release), not an unexpected one (#105).
+func TestEventBootAfterSysupgrade(t *testing.T) {
+	_, now, _, _ := eventEnv(t)
+	c := testConfig(t)
+	version = "v1"
+	boot := func(id string) event {
+		t.Helper()
+		eventBootID = func() string { return id }
+		if err := eventBoot(c); err != nil {
+			t.Fatal(err)
+		}
+		ev := eventsRead(0, 0)
+		return ev[len(ev)-1]
+	}
+	boot("b1")
+	appendChangeLogAt(*now, "sysupgrade: installing mini-router v1 (kexec)")
+	eventShutdown()
+	*now = now.Add(2 * time.Minute)
+	if e := boot("b2"); e.Sev != "info" || !strings.HasPrefix(e.Msg, "booted after a clean restart (sysupgrade)") {
+		t.Errorf("same-version sysupgrade: %+v", e)
+	}
+}

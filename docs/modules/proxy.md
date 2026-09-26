@@ -11,7 +11,7 @@
 | 导入 | 分享链接（ss / vless / vmess / trojan / hysteria2 / hy2 / tuic / anytls / socks / http(s)）和 base64 订阅，先预览再添加 |
 | DNS | fake-ip：代理域名只由代理服务器端解析，本地和运营商 DNS 看不到 |
 | 透明代理 | nftables `tproxy`（TCP + UDP，IPv4 + IPv6），只接管目标在代理集合里的连接 |
-| 常驻内存 | sing-box：只用 SS 时 arm64 精简构建实测 RSS 约 43 MB；CI 里 amd64 官方完整构建（含 tailscale / cloudflared 等无关代码）只用 SS 约 67 MB，每种协议都跑过流量后约 77 MB（`GOMEMLIMIT=48MiB` 软上限，`GOGC=50`）。第二个 dnsmasq 约 5 MB（cache 8000） |
+| 常驻内存 | sing-box：只用 SS 时 arm64 精简构建实测 RSS 约 43 MB；CI 里 amd64 官方完整构建（含 tailscale / cloudflared 等无关代码）只用 SS 约 67 MB，每种协议都跑过流量后约 77 MB（`GOMEMLIMIT=96MiB` 软上限，高于有流量时的用量——上限低于实际堆大小时 GC 会不停运行，白白耗 CPU；`GOGC=50`）。第二个 dnsmasq 约 5 MB（cache 8000） |
 | 闪存 | sing-box 二进制由固件（platform）决定；`mr` 本轮再增加约 192 KB（arm64 5.31 → 5.51 MB） |
 | 关闭时 | `proxy.enabled: false`：没有 nft 链、没有服务、没有 DNS 改动 |
 
