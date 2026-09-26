@@ -165,3 +165,24 @@ func modeNetSh(c *Config, phase string, b *strings.Builder) {
 		fmt.Fprintf(b, "ip -4 route replace default via %s dev %s table %d\n", c.LAN.Gateway, br, bypassTable)
 	}
 }
+
+// bypassTagHost: a dhcp-host line of the device inventory gets the bypass tag (clients selected) when
+// one of its MACs is selected; those MACs then need no line of their own.
+func bypassTagHost(line string, tag map[string]bool) string {
+	if len(tag) == 0 {
+		return line
+	}
+	fields := strings.Split(strings.TrimPrefix(line, "dhcp-host="), ",")
+	n, hit := 0, false
+	for ; n < len(fields) && reMAC.MatchString(fields[n]); n++ {
+		if m := strings.ToLower(fields[n]); tag[m] {
+			hit = true
+			delete(tag, m)
+		}
+	}
+	if !hit {
+		return line
+	}
+	out := append(append(append([]string{}, fields[:n]...), "set:bypass"), fields[n:]...)
+	return "dhcp-host=" + strings.Join(out, ",")
+}

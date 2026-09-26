@@ -92,7 +92,11 @@ it off the internet.
 `hosts[].name` may not be something dnsmasq reads as a lease time or keyword in `dhcp-host=`
 (`12345`, `5m`, `2w`, `infinite`, `ignore` — the last one would stop DHCP for that device);
 "设为静态" in the UI turns such a DHCP-supplied name into `host-<n>`.
-`host_leases` keys must be MACs of `dhcp.hosts` entries. (It is a separate map because the core test
+Devices of the inventory (`devices:`, dev module, [dev.md](dev.md)) are rendered here too, after the
+`dhcp.hosts` lines: one `dhcp-host=MAC[,MAC…][,IP],NAME[,lease]` per device (the name becomes its DHCP / DNS
+name; `ip:` makes it a static lease). A MAC, name or address may be in `dhcp.hosts` or in `devices`, not in
+both. `host_leases` keys must be MACs of `dhcp.hosts` entries or devices (a device takes the lease time of its
+first MAC that has one). (It is a separate map because the core test
 `render_test.go` builds `Host` with a positional literal; moving it to `hosts[].lease` needs that one
 line changed — see the integration notes.)
 

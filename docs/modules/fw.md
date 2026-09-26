@@ -45,16 +45,19 @@ goes through tailscale, never through an open SSH / web port.
 
 Chain order (first match wins):
 
-    input:   [access: proxy bypass guard] → ct state (invalid dropped) → lo → [rules towards the router]
-             → lan accept → guest DHCP/DNS/ICMP, rest dropped → SYN-flood limit → WAN ping
+    input:   [pause] → [access: proxy bypass guard] → ct state (invalid dropped) → lo → [rules towards
+             the router] → lan accept → guest DHCP/DNS/ICMP, rest dropped → SYN-flood limit → WAN ping
              → required ICMPv6 / MLD / DHCPv6 / DHCPv4 / IGMP → hook input (open ports, tailscale, …)
              → [log] → counted WAN drop → policy drop
-    forward: [access control] → flow offload → ct state → hook forward_early (traffic rules, …)
-             → lan accept → guest → WAN → DNAT'ed accept → hook forward (IPv6 pinholes, …)
-             → IPv6 ICMP errors/echo → policy drop
+    forward: [pause] → hook forward_first (policy route fallback: drop) → [access control] → flow offload
+             → ct state → hook forward_early (traffic rules, …) → lan accept → guest → WAN → DNAT'ed
+             accept → hook forward (IPv6 pinholes, …) → IPv6 ICMP errors/echo → policy drop
 
 Every hook in `nftHooks` (module.go) is still emitted at its documented place; the fw-internal
-parts (access control, router-bound rules) sit around them.
+parts (access control, router-bound rules) sit around them. `[pause]` is runtime state (`mr pause`,
+[dev.md](dev.md)): fwLoad inserts it in the same transaction while a pause is active; it is never in
+the rendered `nftables.nft`. Every reload is serialized by a lock (`/run/mini-router/fw.lock`), so the
+state a reload carries over (learned sets, pauses) is never replaced by a stale copy.
 
 ## Performance
 
@@ -80,7 +83,8 @@ firewall:
       enabled: true          # default true; false keeps the entry but renders nothing
       proto: [tcp]           # tcp and/or udp
       port: "7443"           # external port or range "45000-45100"
-      to: 192.168.1.66       # host inside a LAN-side network (guest networks allowed), not the router
+      to: 192.168.1.66       # host inside a LAN-side network (guest networks allowed), not the router,
+                             # or a device of the inventory with ip: (to: desktop → its address; dev.md)
       to_port: "9999"        # optional; a range maps only to the same range or to one port
       wan: [wan2]            # optional: only these WANs (default all)
       src_ip: [203.0.113.0/24, 198.51.100.7]   # optional: only these IPv4 sources
@@ -129,6 +133,8 @@ firewall:
   access:                    # block internet (WAN) for devices; LAN, DHCP, DNS keep working
     - name: kid-bedtime
       macs: ["aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02"]
+      devices: ["group:kids", tv-box]   # optional: devices / groups of the inventory (dev.md), all their MACs;
+                                        # macs and / or devices, 1-64 MACs in total
       schedule:              # blocked only in these windows; empty = always blocked
         - {days: [sun, mon, tue, wed, thu], time: "21:30-07:00"}
         - {days: [fri, sat], time: "23:00-08:00"}
@@ -171,10 +177,16 @@ PPPoE reconnect, apply, `mr fw`).
 Limits: a phone using a per-network random MAC must be listed with the MAC it uses on this WiFi
 (iOS/Android "private address" is stable per network). A device on a guest network is matched too.
 
+Access control is config (schedules, permanent blocks). For "no internet for this device for the next
+hour" without a config change there is `mr pause` / 暂停 (dev module, [dev.md](dev.md)): the same
+drops in both chains, but on runtime sets with kernel timeouts, and the device stays offloaded
+until it is paused (the pause replaces the ruleset once, which ends every offloaded flow).
+
 ## Web UI API
 
 `GET fw.stats` — read-only, no parameters: `{counters: {"<comment>": {packets, bytes}}, log: [...]}`.
-Comments: `wan-in-drop`, `rule:<name>` (rules with `counter: true`), `access:<name>`, `v6in:<name>`.
+Comments: `wan-in-drop`, `rule:<name>` (rules with `counter: true`), `access:<name>`, `v6in:<name>`,
+`fallback:<policy>` (policy routes with `fallback: drop`, net module), `pause` (while a pause is active).
 `log` = the last 100 kernel log lines from `log_drops` / rule logging (`dmesg`). Mock fixture:
 `tools/mock/fixtures/fw.stats.json`; sample config: `tools/mock/fixtures/config.d/fw.json`.
 
@@ -209,9 +221,11 @@ chain changed intentionally:
   后规则仍然有效。表格“命中”列是计数。
 - **通信规则**：按顺序匹配（↑ 调整顺序）。源 / 目标区域、IP、MAC、协议、端口、生效时间段、计数、
   日志。目标选“路由器本机”可限制某台设备访问路由器服务（只能丢弃 / 拒绝）。
-- **设备管控**：选设备（从已知设备下拉或填 MAC），选“始终禁止上网”或“按时间段禁止”，勾选星期、
-  填时间段（如 `21:30-07:00`，跨午夜自动算到次日）。到点立即断网，已经在播的视频也会停；内网、
-  DHCP、DNS 不受影响。
+- **设备管控**：选设备（从设备清单选设备 / 分组，或从已知设备下拉填 MAC），选“始终禁止上网”或
+  “按时间段禁止”，勾选星期、填时间段（如 `21:30-07:00`，跨午夜自动算到次日）。到点立即断网，已经在
+  播的视频也会停；内网、DHCP、DNS 不受影响。临时断网一会儿（不改配置）用 网络 › 设备 或
+  状态 › 终端设备 里的“暂停”。
+- **端口转发**的内部 IP 也可以直接写设备清单里有固定 IP 的设备名（如 `desktop`）。
 
 改完点底部“保存并应用”：先校验并显示变更计划，应用后 120 秒内点“保留”，否则自动回滚。
 
@@ -233,5 +247,8 @@ firewall:
     - {name: nas-https, iid: "::10", proto: [tcp], port: "443"}
 ```
 
-查看命中计数：`nft list table inet mr | grep -E 'rule:|access:|v6in:|wan-in-drop'`；
+设备清单里的名字（dev.md）：`access: [{name: kids-night, devices: ["group:kids"], schedule: …}]`、
+`forwards: [{name: nas-https, proto: [tcp], port: "8443", to: nas, to_port: "443"}]`。
+
+查看命中计数：`nft list table inet mr | grep -E 'rule:|access:|v6in:|fallback:|pause|wan-in-drop'`；
 查看拦截日志：`dmesg | grep mr-drop`。

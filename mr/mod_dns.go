@@ -340,6 +340,9 @@ func renderDnsmasq(c *Config) string {
 		}
 		b.WriteString(line + "\n")
 	}
+	for _, l := range devDHCPHosts(c) { // the device inventory (mod_dev.go)
+		b.WriteString(bypassTagHost(l, bypassTag) + "\n")
+	}
 	for _, m := range c.Bypass.MACs { // selected devices without a static lease (config order)
 		if bypassTag[strings.ToLower(m)] {
 			w("dhcp-host=%s,set:bypass", strings.ToLower(m))
@@ -737,9 +740,14 @@ func dnsValidate(c *Config, v *Validator) {
 		}
 		ips[h.IP] = true
 	}
+	for _, d := range c.Devices {
+		for _, m := range d.MACs {
+			macs[strings.ToLower(m)] = true
+		}
+	}
 	for mac, l := range c.DHCP.HostLeases {
 		if !macs[strings.ToLower(mac)] {
-			v.Add("dhcp.host_leases: %q is not the MAC of a dhcp.hosts entry", mac)
+			v.Add("dhcp.host_leases: %q is not the MAC of a dhcp.hosts entry or a device", mac)
 		}
 		if !reLease.MatchString(l) {
 			v.Add("dhcp.host_leases[%s]: e.g. 12h, 30m, 1d or infinite, got %q", mac, l)

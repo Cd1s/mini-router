@@ -85,16 +85,21 @@ type Mcast struct {
 // these names (and their subdomains) into nft sets, the rule matches the destination against them
 // (mod_net_domains.go). Table/Mark are optional: the first policy via a WAN may pin that WAN's
 // routing table and fwmark (the home config keeps table 102 / 0x102 for wan2); otherwise 200+i / 0x200+i.
+// Device: a device or group:NAME of the inventory (mod_dev.go) instead of one MAC. Fallback: while
+// Via has no route (down, health check failed) its traffic takes the main table's default route
+// ("main", default) or is dropped ("drop": this WAN only, never another one; policyFallbackRules).
 type Policy struct {
 	Name        string   `yaml:"name"`
 	MAC         string   `yaml:"mac,omitempty"`
+	Device      string   `yaml:"device,omitempty"`       // a device / group:NAME: ether saddr { its MACs }
 	Src         string   `yaml:"src,omitempty"`          // source IP or CIDR (LAN side)
 	Dst         string   `yaml:"dst,omitempty"`          // destination IP or CIDR
 	Domains     []string `yaml:"domains,omitempty"`      // destination by DNS name: example.com = it and every subdomain
 	DomainsFile string   `yaml:"domains_file,omitempty"` // more domains, one per line (# comments)
 	Via         string   `yaml:"via"`                    // WAN name
 	Table       int      `yaml:"table,omitempty"`
-	Mark        string   `yaml:"mark,omitempty"` // e.g. 0x102
+	Mark        string   `yaml:"mark,omitempty"`     // e.g. 0x102
+	Fallback    string   `yaml:"fallback,omitempty"` // main (default) | drop
 }
 
 // byDomain reports whether the policy selects destinations by DNS name.
@@ -615,8 +620,22 @@ func netValidatePolicy(c *Config, v *Validator) {
 		if !reLabel.MatchString(pr.Name) {
 			v.Add("%s.name: invalid %q", p, pr.Name)
 		}
-		if pr.MAC == "" && pr.Src == "" && pr.Dst == "" && !pr.byDomain() {
-			v.Add("%s: need at least one of mac, src, dst, domains", p)
+		if pr.MAC == "" && pr.Device == "" && pr.Src == "" && pr.Dst == "" && !pr.byDomain() {
+			v.Add("%s: need at least one of mac, device, src, dst, domains", p)
+		}
+		if pr.Device != "" {
+			if pr.MAC != "" {
+				v.Add("%s: set mac or device, not both", p)
+			}
+			devCheckRefs(c, v, p+".device", []string{pr.Device})
+			if m, ok := devRefMACs(c, pr.Device); ok && (len(m) == 0 || len(m) > fwMaxList) {
+				v.Add("%s.device: %s stands for %d MACs (1-%d)", p, pr.Device, len(m), fwMaxList)
+			}
+		}
+		switch pr.Fallback {
+		case "", "main", "drop":
+		default:
+			v.Add("%s.fallback: main|drop, got %q", p, pr.Fallback)
 		}
 		for _, d := range pr.Domains {
 			if _, ok := proxyNormDomain(d); !ok {

@@ -179,6 +179,13 @@ func TestModeBypassDHCP(t *testing.T) {
 	if strings.Count(conf, "02:00:00:00:00:21") != 1 {
 		t.Error("a selected device with a static lease has two dhcp-host lines")
 	}
+	// a selected MAC that belongs to a device of the inventory: the device's line carries the tag
+	c.Devices = []Device{{Name: "tablet", MACs: []string{"02:00:00:00:00:22", "02:00:00:00:00:23"}}}
+	mustValid(t, c)
+	conf = modeFiles(t, c)["/etc/dnsmasq.conf"]
+	if !strings.Contains(conf, "dhcp-host=02:00:00:00:00:22,02:00:00:00:00:23,set:bypass,") || strings.Count(conf, "02:00:00:00:00:22") != 1 {
+		t.Errorf("device line:\n%s", conf)
+	}
 }
 
 // ap: bridging only — forwarding off, no flowtable, no NAT, no DHCP.

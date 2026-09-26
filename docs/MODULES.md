@@ -14,6 +14,7 @@ file, applies with snapshot + verify + auto-rollback, and serves the web UI API 
 | net   | 10 | `mr/mod_net*.go`, `mr/hooks.go` | `rootfs/www/ui/net.js` | `lan`, `networks`, `wan`, `multiwan`, `policy_routes`, `static_routes`, `multicast` | links, bridges, VLANs, WAN (PPPoE/DHCP), multi-WAN failover, routing, IPv6 WAN side (dhcpcd), port status |
 | wifi  | 20 | `mr/mod_wifi*.go` | `ui/wifi.js` | `wifi` | radios, SSIDs, hostapd, stations; tuning: multicast-to-unicast, 802.11v band steering, radio health + self-heal (`mr wifi tick`, a crond line in sys's crontab block; its events are type `wifi`) |
 | dns   | 30 | `mr/mod_dns*.go` | `ui/dns.js` | `dhcp`, `dns`, `networks[].dhcp` (type `Pool`) | dnsmasq: DNS, DHCP, RA/DHCPv6, split lists, local records, stubby.yml, query log; `rootfs/etc/conf.d/dnsmasq` |
+| dev   | 35 | `mr/mod_dev*.go` | `ui/dev.js` | `devices`, `groups` | device inventory and groups other sections refer to by name (resolved at validate / render; dnsmasq dhcp-host lines through the dns module), `mr pause` / `mr unpause` (runtime nft sets with timeouts, inserted by fwLoad) |
 | fw    | 40 | `mr/mod_fw*.go` | `ui/fw.js` | `firewall` | nftables skeleton + hooks, zones, forwards, rules, NAT, IPv6 pinholes, access control |
 | mon   | 50 | `mr/mod_mon*.go` | `ui/mon.js` | — | realtime graphs, per-device traffic, connections, system load; its per-minute sampler (`mon-collect`) also starts sys's `mr event tick` when due |
 | proxy | 55 | `mr/mod_proxy*.go` | `ui/proxy.js` | `proxy` | selective transparent proxy: sing-box, fake-ip DNS, tproxy, bypass devices |
@@ -39,9 +40,13 @@ Register exactly one `Module` in `init()`:
   Reject newlines / control chars / quotes wherever they could break out of a config line.
 - `Render(c, out)` — add generated files (`out.Add(path, mode, data)`); must not touch the system.
 - `NetSh(c, phase, b)` — idempotent POSIX sh for `network.sh`, phases `links` → `wifi` → `routes` → `tail`.
-- `Nft(c, hook, n)` — nftables lines at hook points (`defs`, `input`, `forward_early`, `forward`,
-  `mark`, `dstnat`, `srcnat`, `output`), see `nftHooks`. A module that needs its own base chain
-  (different priority) declares it in `defs`. `n.W(format, args...)` writes one line.
+- `Nft(c, hook, n)` — nftables lines at hook points (`defs`, `input`, `forward_first`, `forward_early`,
+  `forward`, `mark`, `dstnat`, `srcnat`, `output`), see `nftHooks`. `forward_first` is the top of
+  filter/forward, before flow offload and the established accept: only for drops that must also stop
+  established connections (policy route `fallback: drop`). A module that needs its own base chain
+  (different priority) declares it in `defs`. `n.W(format, args...)` writes one line. Runtime state
+  that must survive reloads but never appears in the rendered file (learned sets, `mr pause`) is
+  appended by `fwLoad` in the same nft transaction, under `/run/mini-router/fw.lock`.
 - `FlowDevs(c)` — netdevs for the offload flowtable. `Dnsmasq(c)` — extra dnsmasq.conf lines.
 - `Services(c)` / `Managed` — OpenRC services wanted / owned. `Restart(path)` — service to restart
   when a generated file changes (`"-"` = none). `RestartOrder` — relative restart order.
@@ -106,7 +111,10 @@ by mon's sampler). Messages are English, one line, cleaned (`eventClean`): text 
 markup. A new type needs an entry in `eventTypes` / `eventLabels` and the web UI's `EVT` map (`sys.js`).
 
 Cross-module helpers: `c.LANNets()`, `c.BridgeFor(network)`, `c.LANBridges()`, `c.WANIfnames()`,
-`c.WANTable(name)`, `c.WANByName(name)`, `c.Secret(key)`.
+`c.WANTable(name)`, `c.WANByName(name)`, `c.Secret(key)`. Device inventory (dev, `mod_dev.go`): a key
+that names devices resolves them with `devRefMACs` / `devMACs` (a device or `group:NAME` → MACs),
+`devHostIP` (a device → its `ip`), validates with `devCheckRefs` (an unknown name is an error at the
+place that uses it); `c.knownHosts()` = `dhcp.hosts` + one entry per device MAC (names, fixed addresses).
 
 Secrets (passwords, keys) live in `secrets.yaml`; router.yaml stores the secret **name**
 (`*_secret` fields). The UI sets secrets by name and can never read them back.

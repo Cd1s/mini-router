@@ -166,6 +166,7 @@ proxy:
       cidr_file: /etc/mini-router/proxy/telegram.cidrs                # 可选
   bypass:                                    # 例外设备：永不代理，DNS 由主 dnsmasq 解析
     - {name: desktop, mac: "02:c3:06:d6:7f:8a"}
+    - {name: kids, device: "group:kids"}      # 或设备清单（devices，dev.md）里的设备 / 分组：它的所有 MAC
   subscriptions:                             # 只给 Web UI 的“导入”用：获取 → 预览 → 添加；不会自动更新节点
     - {name: airport, url_secret: proxy_airport_sub}   # 订阅链接（含令牌）在 secrets.yaml
 ```

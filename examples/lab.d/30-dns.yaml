@@ -30,6 +30,7 @@ dhcp:
     - {name: desktop,        mac: "02:c3:06:d6:7f:8a", ip: 192.168.1.66}
   host_leases:
     "02:c3:06:d6:7f:8a": infinite
+    "02:00:00:00:10:01": infinite     # a device of the inventory (35-dev.yaml)
 
 dns:
   cache_size: 8000

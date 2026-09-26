@@ -54,5 +54,6 @@ proxy:
       cidr_file: @REPO@/mr/testdata/proxy.cidrs
   bypass:
     - {name: desktop, mac: "02:c3:06:d6:7f:8a"}
+    - {name: kids, device: "group:kids"}       # devices of the inventory (35-dev.yaml)
   subscriptions:
     - {name: airport, url_secret: proxy_sub_airport}

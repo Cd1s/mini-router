@@ -123,8 +123,17 @@ type ProxyRule struct {
 // ProxyDevice is never proxied and always gets real DNS answers (matched by MAC, so dynamic
 // IPv4 and IPv6 addresses are covered).
 type ProxyDevice struct {
-	Name string `yaml:"name"`
-	MAC  string `yaml:"mac"`
+	Name   string `yaml:"name"`
+	MAC    string `yaml:"mac,omitempty"`
+	Device string `yaml:"device,omitempty"` // or: a device / group:NAME of the inventory (mod_dev.go)
+}
+
+// proxyBypassMACs: the MACs a bypass entry stands for (lowercase).
+func proxyBypassMACs(c *Config, d ProxyDevice) []string {
+	if d.Device != "" {
+		return devMACs(c, []string{d.Device})
+	}
+	return []string{strings.ToLower(d.MAC)}
 }
 
 const (
@@ -419,6 +428,13 @@ func proxyValidate(c *Config, v *Validator) {
 		path := fmt.Sprintf("proxy.bypass[%d]", i)
 		if !safeText(d.Name) || len(d.Name) > 64 {
 			v.Add("%s.name: printable text up to 64 bytes", path)
+		}
+		if d.Device != "" {
+			if d.MAC != "" {
+				v.Add("%s: set mac or device, not both", path)
+			}
+			devCheckRefs(c, v, path+".device", []string{d.Device})
+			continue
 		}
 		if !reMAC.MatchString(d.MAC) {
 			v.Add("%s.mac: invalid %q", path, d.MAC)

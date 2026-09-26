@@ -38,7 +38,7 @@ type Forward struct {
 	Enabled *bool    `yaml:"enabled,omitempty"` // default true
 	Proto   []string `yaml:"proto"`
 	Port    string   `yaml:"port"` // external port or range a-b
-	To      string   `yaml:"to"`   // LAN-side IPv4
+	To      string   `yaml:"to"`   // LAN-side IPv4, or a device (devices:) with ip
 	ToPort  string   `yaml:"to_port"`
 	WAN     []string `yaml:"wan,omitempty"`    // only these WANs (default: all)
 	SrcIP   []string `yaml:"src_ip,omitempty"` // only these IPv4 sources (default: any)
@@ -94,6 +94,7 @@ type FwAccess struct {
 	Name     string   `yaml:"name"`
 	Enabled  *bool    `yaml:"enabled,omitempty"`
 	MACs     []string `yaml:"macs"`
+	Devices  []string `yaml:"devices,omitempty"`  // devices / group:NAME from the inventory (mod_dev.go), with or instead of macs
 	Schedule []FwTime `yaml:"schedule,omitempty"` // blocked only in these windows; empty = always blocked
 	Desc     string   `yaml:"desc,omitempty"`
 }
@@ -190,8 +191,14 @@ func fwValidate(c *Config, v *Validator) {
 		} else if x.ToPort != "" && x.ToPort != x.Port && strings.Contains(x.Port, "-") && strings.Contains(x.ToPort, "-") {
 			v.Add("%s.to_port: a port range maps to the same range or to one port, got %s -> %s", p, x.Port, x.ToPort)
 		}
-		if err := fwCheckTarget(c, x.To); err != "" {
-			v.Add("%s.to: must be an IPv4 inside a LAN-side network (%s), got %q: %s", p, c.LAN.IPv4, x.To, err)
+		if d := c.device(x.To); d != nil {
+			if d.IP == "" {
+				v.Add("%s.to: device %s has no ip (a forward needs a fixed address)", p, x.To)
+			}
+		} else if net.ParseIP(x.To) == nil && reDevName.MatchString(x.To) {
+			v.Add("%s.to: unknown device %q (devices:)", p, x.To)
+		} else if err := fwCheckTarget(c, x.To); err != "" {
+			v.Add("%s.to: must be an IPv4 inside a LAN-side network (%s) or a device, got %q: %s", p, c.LAN.IPv4, x.To, err)
 		}
 		if !validProtos(x.Proto) {
 			v.Add("%s.proto: tcp/udp list, got %v", p, x.Proto)
@@ -259,13 +266,14 @@ func fwValidate(c *Config, v *Validator) {
 		p := fmt.Sprintf("firewall.access[%d]", i)
 		fwCheckName(v, p, a.Name, names)
 		fwCheckDesc(v, p, a.Desc)
-		if len(a.MACs) == 0 || len(a.MACs) > fwMaxList {
-			v.Add("%s.macs: 1-%d device MACs required", p, fwMaxList)
-		}
 		for _, m := range a.MACs {
 			if !reMAC.MatchString(m) {
 				v.Add("%s.macs: invalid %q", p, m)
 			}
+		}
+		devCheckRefs(c, v, p+".devices", a.Devices)
+		if n := len(fwAccessMACs(c, a)); n == 0 || n > fwMaxList || len(a.MACs) > fwMaxList {
+			v.Add("%s.macs: 1-%d device MACs required (macs and / or devices)", p, fwMaxList)
 		}
 		fwCheckSchedule(v, p, a.Schedule)
 	}

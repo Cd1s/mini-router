@@ -367,13 +367,71 @@ func cidrStr(n *net.IPNet) string {
 	return n.String()
 }
 
-// policyRules: nft rules (mark hook) for policy route i; one per address family it covers.
-func policyRules(c *Config, i int, p Policy) []string {
-	_, mark := c.WANTable(p.Via)
+// policyHead: the LAN-side interfaces and the source MAC(s) every rule of policy p starts with.
+func policyHead(c *Config, p Policy) string {
 	head := "iifname " + nftIfnames(c.LANBridges())
 	if p.MAC != "" {
 		head += " ether saddr " + strings.ToLower(p.MAC)
+	} else if p.Device != "" {
+		head += " ether saddr " + nftSet(devMACs(c, []string{p.Device}))
 	}
+	return head
+}
+
+// policyFallbackRules (hook forward_first): a policy with fallback: drop may only use its own WAN.
+// While that WAN has no route (down, or failed the health check: its table lost the default route)
+// the mark lookup falls through to the main table and would leave through another WAN; this rule
+// drops exactly that, for established connections too (it sits before flow offload and the
+// established accept). Destinations routed elsewhere (LAN, tailscale) are not affected.
+func policyFallbackRules(c *Config) []string {
+	var out []string
+	for i, p := range c.Policy {
+		w := c.WANByName(p.Via)
+		if p.Fallback != "drop" || w == nil {
+			continue
+		}
+		var others []string
+		for _, x := range c.WANIfnames() {
+			if x != w.Ifname() {
+				others = append(others, x)
+			}
+		}
+		if len(others) == 0 {
+			continue
+		}
+		var src, dst *net.IPNet
+		if p.Src != "" {
+			src, _ = parseIPOrCIDR(p.Src)
+		}
+		if p.Dst != "" {
+			dst, _ = parseIPOrCIDR(p.Dst)
+		}
+		fams := []int{0} // 0: no address match, both families
+		if src != nil || dst != nil || p.byDomain() {
+			fams = policyFams(p)
+		}
+		for _, fam := range fams {
+			s := policyHead(c, p)
+			kw := map[int]string{4: "ip", 6: "ip6"}[fam]
+			if src != nil {
+				s += fmt.Sprintf(" %s saddr %s", kw, cidrStr(src))
+			}
+			if dst != nil {
+				s += fmt.Sprintf(" %s daddr %s", kw, cidrStr(dst))
+			}
+			if p.byDomain() {
+				s += fmt.Sprintf(" %s daddr @%s", kw, policySet(i, fam))
+			}
+			out = append(out, fmt.Sprintf("%s oifname %s counter drop comment %q", s, nftIfnames(others), "fallback:"+p.Name))
+		}
+	}
+	return out
+}
+
+// policyRules: nft rules (mark hook) for policy route i; one per address family it covers.
+func policyRules(c *Config, i int, p Policy) []string {
+	_, mark := c.WANTable(p.Via)
+	head := policyHead(c, p)
 	var src, dst *net.IPNet
 	if p.Src != "" {
 		src, _ = parseIPOrCIDR(p.Src)
@@ -459,6 +517,10 @@ func netNft(c *Config, hook string, n *Nft) {
 	switch hook {
 	case "defs":
 		policyDomainDefs(c, n)
+	case "forward_first":
+		for _, r := range policyFallbackRules(c) {
+			n.W("%s", r)
+		}
 	case "mark":
 		// connmark: remember which WAN an inbound connection used; LAN-side packets of that connection
 		// (replies, port-forward traffic) get the mark back and leave through the same WAN.

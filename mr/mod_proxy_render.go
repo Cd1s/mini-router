@@ -492,9 +492,11 @@ func proxyNft(c *Config, hook string, n *Nft) {
 	if len(p.Bypass) > 0 {
 		var macs []string
 		for _, d := range p.Bypass {
-			macs = append(macs, strings.ToLower(d.MAC))
+			macs = append(macs, proxyBypassMACs(c, d)...)
 		}
-		n.W("\telements = { %s }", strings.Join(dedup(macs), ", "))
+		if macs = dedup(macs); len(macs) > 0 { // a bypass group may be empty of devices
+			n.W("\telements = { %s }", strings.Join(macs, ", "))
+		}
 	}
 	n.W("}")
 	n.W("set proxy4 {\n\t\ttype ipv4_addr\n\t\tflags interval\n\t\tauto-merge\n\t\telements = { %s }\n\t}", nftElems(v4))

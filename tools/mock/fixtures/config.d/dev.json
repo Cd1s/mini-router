@@ -1,0 +1,11 @@
+{
+ "config": {
+  "devices": [
+   {"name": "kid-tablet", "macs": ["02:c8:61:52:f4:45"], "type": "tablet", "owner": "kid"},
+   {"name": "kid-phone", "macs": ["02:d9:44:2f:7a:85", "02:00:00:00:10:03"], "type": "phone", "owner": "kid", "desc": "WiFi private address + home address"},
+   {"name": "office-pc", "macs": ["02:00:00:00:10:01"], "ip": "192.168.1.70", "type": "pc", "owner": "alice"},
+   {"name": "tv-box", "macs": ["02:00:00:00:10:02"], "type": "tv"}
+  ],
+  "groups": {"kids": ["kid-tablet", "kid-phone"]}
+ }
+}

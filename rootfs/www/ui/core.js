@@ -364,6 +364,23 @@ function cpuBusy(a, b){
 }
 // confirmBtn(label, question, fn): a red button that asks before running fn.
 function confirmBtn(label, question, fn){ return h("button",{class:"btn sm d",onclick:async()=>{ if(!confirm(question)) return; try{ await fn(); }catch(e){ toast(e.message,4000); } }}, label); }
+// pauseDlg(target, label, done): 暂停上网 (dev.pause) — target is a device, group:NAME, a dhcp.hosts name or a
+// MAC. Runtime only (no config change, no confirm window); the router ends the pause by itself.
+function pauseDlg(target, label, done){
+  const t = new Date(), m = new Date(t); m.setHours(7,0,0,0); if (m<=t) m.setDate(m.getDate()+1);
+  const toMorning = Math.max(1, Math.round((m-t)/60000))+"m";
+  const custom = h("input",{type:"text",placeholder:"如 45m、3h、1d",style:"width:140px",title:"最长 7 天"});
+  const go = async d=>{ if (!d) return toast("请填写时长");
+    try { await api("dev.pause",{target, duration:d}); dlg.remove(); toast("已暂停 "+label, 3000); done&&done(); } catch(e){ toast("暂停失败："+e.message, 5000); } };
+  const opt = (l, d)=>h("button",{class:"btn",onclick:()=>go(d)}, l);
+  const dlg = modal("暂停上网 · "+label, [
+    h("div",{class:"mut",style:"margin-bottom:10px"},"只断开外网（WAN），内网、DHCP、DNS 照常；正在进行的连接（视频、游戏）立即中断。不改配置，到时自动恢复，也可随时提前恢复；路由器重启后恢复。"),
+    h("div",{class:"row"}, opt("30 分钟","30m"), opt("1 小时","1h"), opt("2 小时","2h"), opt("到明早 7:00", toMorning)),
+    h("div",{class:"row",style:"margin-top:10px"}, custom, h("button",{class:"btn p",onclick:()=>go(custom.value.trim())},"暂停"))],
+    [h("button",{class:"btn",onclick:()=>dlg.remove()},"取消")]);
+}
+// pauseLeft(p): "剩余 1时 5分" for a dev.paused entry
+const pauseLeft = p=>"剩余 "+fmtDur(Math.max(60, p.left||0));
 
 // ---------- core pages ----------
 // overview gauges keep a short history for their sparklines (40 points = 2 min at 3 s)
@@ -398,12 +415,19 @@ registerPage("status", "overview", "总览", 10, async ()=>{
       h("div",{}, probs.map(p=>h("div",{style:"margin:2px 0"}, h("span",{class:"tag "+(p.sev==="risk"?"bad":"warn")}, p.sev==="risk"?"风险":"警告"), " ", h("b",{},p.title), " ", p.detail)),
         h("div",{class:"mut",style:"margin-top:6px;font-size:12px"}, "体检时间 "+new Date(doc.time*1000).toLocaleString())),
       h("a",{class:"btn sm",href:"#doctor"},"体检 →")) : null;
+    // devices paused with 暂停上网 (dev module; runtime, ends by itself)
+    const pz = s.paused||[];
+    const pzCard = pz.length ? card(h("span",{}, h("span",{class:"dot",style:"background:var(--warn)"}), "暂停上网中 ("+pz.length+")"),
+      h("div",{}, pz.map(p=>h("div",{class:"row",style:"margin:3px 0"}, h("b",{}, p.name||p.mac), h("span",{class:"mono mut"}, p.mac),
+        p.ref && p.ref!==p.name && p.ref!==p.mac ? h("span",{class:"tag"}, p.ref) : null, h("span",{class:"mut"}, pauseLeft(p)),
+        h("button",{class:"btn sm",onclick:async()=>{ try { await api("dev.unpause",{target:p.mac}); toast("已恢复 "+(p.name||p.mac)); draw(); } catch(e){ toast(e.message,4000); } }},"恢复")))),
+      h("a",{class:"btn sm",href:"#devices"},"设备 →")) : null;
     const evs = s.events||[];
     const evCard = evs.length ? card("最近事件", h("div",{}, evs.map(e=>h("div",{style:"margin:2px 0"},
         h("span",{class:"mut mono"}, new Date(e.t*1000).toLocaleString()), " ", e.sev!=="info" ? h("span",{class:"tag "+(e.sev==="risk"?"bad":"warn")}, e.sev==="risk"?"风险":"警告") : null, " ", e.msg))),
       h("a",{class:"btn sm",href:"#doctor"},"全部 →"))
       : card("最近变更", h("pre",{}, (s.changes||[]).slice().reverse().join("\n")||"（无）"));
-    wrap.replaceChildren(docCard||"",
+    wrap.replaceChildren(docCard||"", pzCard||"",
       h("div",{class:"grid gauges"},
         gauge({label:"CPU", pct:busy, value:busy==null ? "…" : busy.toFixed(0)+" %", sub:cores+"负载 "+s.load, extra:spark(OV.h.cpu, null, 100)}),
         gauge({label:"内存", pct:memPct, value:fmtBytes(memUsed*1024), sub:"共 "+fmtBytes(s.mem_total_kb*1024)+" · 可用 "+fmtBytes(s.mem_avail_kb*1024), extra:spark(OV.h.mem, COLORS[4], 100)}),

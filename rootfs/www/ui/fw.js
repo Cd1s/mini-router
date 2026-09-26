@@ -86,6 +86,7 @@ function hits(ctr, key){
 async function stats(){ try { return await api("fw.stats"); } catch(e){ return {counters:{}, log:[]}; } }
 async function knownDevices(){
   const m = new Map();
+  for (const d of S.cfg.devices||[]) for (const x of d.macs||[]) m.set(x.toLowerCase(), {name:d.name, ip:d.ip||"", mac:x.toLowerCase(), dev:true});
   for (const x of S.cfg.dhcp.hosts||[]) m.set((x.mac||"").toLowerCase(), {name:x.name, ip:x.ip, mac:(x.mac||"").toLowerCase()});
   try { for (const l of (await api("status")).leases||[]) { const k=l.mac.toLowerCase(); if(!m.has(k)) m.set(k, {name:l.name==="*"?"":l.name, ip:l.ip, mac:k}); } } catch(e){}
   return [...m.values()];
@@ -187,7 +188,9 @@ registerPage("firewall", "forward", "端口转发", 20, async ()=>{
   const f = F();
   const devs = await knownDevices();
   const ipList = "fw-hosts";
-  const dl = h("datalist",{id:ipList}, devs.filter(d=>d.ip).map(d=>h("option",{value:d.ip}, d.name||d.mac)));
+  // devices of the inventory with a fixed address can be the target by name (网络 › 设备)
+  const dl = h("datalist",{id:ipList}, (S.cfg.devices||[]).filter(d=>d.ip).map(d=>h("option",{value:d.name}, d.ip)),
+    devs.filter(d=>d.ip && !d.dev).map(d=>h("option",{value:d.ip}, d.name||d.mac)));
   return h("div",{}, dl, listCard("端口转发（IPv4 DNAT）", f.forwards, [
       {l:"名称", f:x=>x.name}, {l:"协议", f:x=>joinL(x.proto).toUpperCase()}, {l:"外部端口", f:x=>mono(x.port)},
       {l:"内部地址", f:x=>mono(x.to+(x.to_port&&x.to_port!==x.port?":"+x.to_port:""))},
@@ -197,7 +200,7 @@ registerPage("firewall", "forward", "端口转发", 20, async ()=>{
         ...field("名称", inText(o,"name",{placeholder:"nas-https"})),
         ...field("协议", inProto(o,"proto")),
         ...field("外部端口", inText(o,"port",{placeholder:"8080 或 1000-2000"})),
-        ...field("内部 IP", inText(o,"to",{placeholder:"192.168.1.x", list:ipList}), "必须在某个内网 / 访客网络之内"),
+        ...field("内部 IP", inText(o,"to",{placeholder:"192.168.1.x 或设备名", list:ipList}), "必须在某个内网 / 访客网络之内；也可以写设备清单里有固定 IP 的设备名"),
         ...field("内部端口", inText(o,"to_port",{placeholder:"留空 = 同外部端口"}), "端口段只能映射到相同端口段或单个端口"),
         ...field("WAN", wanPick(o)),
         ...field("来源限制", inList(o,"src_ip",{placeholder:"留空 = 任意；例如 203.0.113.0/24"}), "只允许这些 IPv4 地址 / 网段访问"),
@@ -295,7 +298,8 @@ registerPage("firewall", "fwrules", "通信规则", 40, async ()=>{
 registerPage("firewall", "access", "设备管控", 50, async ()=>{
   const f = F();
   const [st, devs] = await Promise.all([stats(), knownDevices()]);
-  const macsText = x=>(x.macs||[]).map(m=>{ const n=devName(devs,m); return n ? n+" ("+m+")" : m; }).join(", ");
+  const macsText = x=>[...(x.devices||[]), ...(x.macs||[]).map(m=>{ const n=devName(devs,m); return n ? n+" ("+m+")" : m; })].join(", ");
+  const inv = [...(S.cfg.devices||[]).map(d=>[d.name, d.name+(d.owner?" · "+d.owner:"")]), ...Object.keys(S.cfg.groups||{}).map(g=>["group:"+g, "分组 "+g])];
   return h("div",{}, listCard("禁止上网的设备", f.access, [
       {l:"名称", f:x=>x.name},
       {l:"设备", f:x=>mono(macsText(x))},
@@ -315,13 +319,17 @@ registerPage("firewall", "access", "设备管控", 50, async ()=>{
             schedSlot.replaceChildren(...field("禁止时间段", schedEdit(o,"schedule"), "按系统时区；跨午夜自动算到次日")); }
         };
         drawSched();
+        const devIn = inList(o,"devices",{placeholder:"设备名 / group:分组"});
+        const devPick = h("select",{onchange:e=>{ const v=e.target.value; if(!v) return; o.devices ||= []; if(!o.devices.includes(v)) o.devices.push(v); devIn.value=o.devices.join(", "); e.target.value=""; touch(); }},
+          h("option",{value:""},"从设备清单添加…"), inv.map(([v,l])=>h("option",{value:v}, l)));
         return form(
           ...field("名称", inText(o,"name",{placeholder:"kid-ipad"})),
+          ...field("设备 / 分组", h("div",{style:"display:grid;gap:6px"}, devIn, devPick), "网络 › 设备 里的设备名或 group:分组名（设备的所有 MAC 都受管控）"),
           ...field("设备 MAC", h("div",{style:"display:grid;gap:6px"}, macIn, pick), "可填多个；手机请关闭该 WiFi 的“私有地址”或填它在本网络使用的 MAC"),
           ...field("模式", inSel(mode,"m",[["always","始终禁止上网"],["sched","按时间段禁止"]], ()=>drawSched())),
           schedSlot,
           ...field("说明", inText(o,"desc")));
-      }, o=>save(prune(o,["schedule","desc"]))),
+      }, o=>save(prune(o,["devices","schedule","desc"]))),
      note:"只禁止访问外网（WAN），内网、DHCP、DNS 照常。到点立即生效，已建立的连接也会断开——为此这些设备的流量不走硬件加速。"}));
 });
 })();

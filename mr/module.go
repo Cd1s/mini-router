@@ -15,7 +15,7 @@ import (
 type Module struct {
 	Name string
 	// Prio orders modules wherever order matters (network.sh fragments, nft hook emission,
-	// render output): lower runs first. net=10 wifi=20 dns=30 fw=40 mon=50 proxy=55 sys=70 api=80.
+	// render output): lower runs first. net=10 wifi=20 dns=30 dev=35 fw=40 mon=50 proxy=55 sys=70 api=80.
 	Prio int
 
 	// Defaults fills in zero values after loading (runs before Validate).
@@ -106,14 +106,16 @@ func (n *Nft) W(f string, a ...any) { fmt.Fprintf(n.b, n.indent+f+"\n", a...) }
 //
 //	defs          table level: sets, maps, counters, extra chains (with or without hooks)
 //	input         filter/input after established/related/lo/LAN accepts; accept or drop WAN-side traffic
-//	forward_early filter/forward before the LAN accept (blocks: traffic rules, guest isolation);
-//	              fw's device access control sits at the very top of forward, before `flow add`
+//	forward_first filter/forward at the very top, before `flow add` and the established accept: drops
+//	              that must also stop established connections (policy route fallback: drop); fw's
+//	              device access control follows it, `mr pause` inserts its rules above both
+//	forward_early filter/forward before the LAN accept (blocks: traffic rules, guest isolation)
 //	forward       filter/forward after the LAN accept (extra accepts, e.g. igmpproxy)
 //	mark          prerouting mangle (policy routing marks, connmark); runs before routing
 //	dstnat        nat prerouting (port forwards, DNS redirect)
 //	srcnat        nat postrouting (masquerade, SNAT)
 //	output        filter/output (policy accept)
-var nftHooks = []string{"defs", "input", "forward_early", "forward", "mark", "dstnat", "srcnat", "output"}
+var nftHooks = []string{"defs", "input", "forward_first", "forward_early", "forward", "mark", "dstnat", "srcnat", "output"}
 
 func emitNft(c *Config, hook string, b *strings.Builder, exists func(string) bool) {
 	indent := "\t\t"

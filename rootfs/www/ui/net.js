@@ -275,11 +275,14 @@ registerPage("routing", "policy", "策略路由", 20, async ()=>{
   const c = S.cfg;
   let n = {}; try { n = await api("net.routes"); } catch(e){}
   return h("div",{}, tableCard("策略路由（指定出口 WAN）", c.policy_routes, [
-      {k:"name",l:"名称"},{k:"mac",l:"设备 MAC",ph:"aa:bb:cc:dd:ee:ff"},{k:"src",l:"源地址 / 网段",ph:"192.168.1.66"},{k:"dst",l:"目标地址 / 网段",ph:"1.2.3.0/24"},
+      {k:"name",l:"名称"},{k:"mac",l:"设备 MAC",ph:"aa:bb:cc:dd:ee:ff"},{k:"device",l:"或设备 / 分组",ph:"desktop / group:kids"},
+      {k:"src",l:"源地址 / 网段",ph:"192.168.1.66"},{k:"dst",l:"目标地址 / 网段",ph:"1.2.3.0/24"},
       {k:"domains",l:"目标域名",t:"list",ph:"example.com, video.example"},
-      {k:"via",l:"出口 WAN",t:"sel",o:()=>c.wan.map(w=>w.name)},{k:"table",l:"路由表",t:"num",w:"80px",ph:"自动"},{k:"mark",l:"标记",w:"90px",ph:"自动"}],
+      {k:"via",l:"出口 WAN",t:"sel",o:()=>c.wan.map(w=>w.name)},
+      {k:"fallback",l:"该 WAN 断线时",t:"sel",o:[["","换线"],["drop","断网"]]},
+      {k:"table",l:"路由表",t:"num",w:"80px",ph:"自动"},{k:"mark",l:"标记",w:"90px",ph:"自动"}],
       ()=>({name:"",mac:"",src:"",dst:"",via:(c.wan[1]||c.wan[0]||{}).name||"",table:0,mark:""}),
-      "条件同时满足；MAC / 源 / 目标 / 域名至少填一项。没填源 / 目标地址时 IPv4 + IPv6 都生效，填了就只管该地址族。只影响新连接；访问内网、tailscale 和静态路由不受影响。域名含子域名：设备通过路由器 DNS 解析到的地址走该 WAN，连接照常硬件加速（DoH / 自定义 DNS 的设备不生效）。路由表填 0、标记留空 = 自动（200+序号 / 0x200+序号）。"),
+      "条件同时满足；MAC（或 网络 › 设备 里的设备名 / group:分组）/ 源 / 目标 / 域名至少填一项。没填源 / 目标地址时 IPv4 + IPv6 都生效，填了就只管该地址族。只影响新连接；访问内网、tailscale 和静态路由不受影响。域名含子域名：设备通过路由器 DNS 解析到的地址走该 WAN，连接照常硬件加速（DoH / 自定义 DNS 的设备不生效）。“断网”= 该 WAN 断线或健康检查失败时这些流量直接丢弃，绝不从其他 WAN 出去（该 WAN 没有 IPv6 时，这些设备也就没有 IPv6 外网）。路由表填 0、标记留空 = 自动（200+序号 / 0x200+序号）。"),
     tabs([["p4","IPv4 策略规则", ()=>card("ip -4 rule", roTable(RULE_COLS, (n.rules4||[]).map(fmtRule)), null, true)],
       ["p6","IPv6 策略规则", ()=>card("ip -6 rule", roTable(RULE_COLS, (n.rules6||[]).map(fmtRule)), null, true)]]));
 });

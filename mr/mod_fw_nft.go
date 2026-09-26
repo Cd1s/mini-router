@@ -7,11 +7,15 @@ package main
 //
 // Chain order (filter):
 //
-//	input:   [access: proxy bypass] → ct state → lo → [rules → router] → lan accept → guest (dhcp/dns/icmp)
-//	         → synflood → wan ping → required ICMPv6 / DHCPv6 / MLD / IGMP → hook input (open ports,
-//	         tailscale, …) → [log] → counted wan drop → policy drop
-//	forward: [access control] → flow offload → ct state → hook forward_early (traffic rules, …)
-//	         → lan accept → guest→wan → dnat accept → hook forward (IPv6 pinholes, …) → ICMPv6 → drop
+//	input:   [pause] → [access: proxy bypass] → ct state → lo → [rules → router] → lan accept → guest
+//	         (dhcp/dns/icmp) → synflood → wan ping → required ICMPv6 / DHCPv6 / MLD / IGMP → hook input
+//	         (open ports, tailscale, …) → [log] → counted wan drop → policy drop
+//	forward: [pause] → hook forward_first (policy route fallback: drop) → [access control] → flow
+//	         offload → ct state → hook forward_early (traffic rules, …) → lan accept → guest→wan →
+//	         dnat accept → hook forward (IPv6 pinholes, …) → ICMPv6 → drop
+//
+// [pause] (`mr pause`, mod_dev_pause.go) is runtime state, not config: fwLoad inserts it in the same
+// transaction while a pause is active, so it is never in the rendered file (nor in `mr plan`).
 
 import (
 	"encoding/json"
@@ -136,6 +140,7 @@ func renderNft(c *Config, exists func(string) bool) string {
 	w("\t}")
 
 	w("\tchain forward {\n\t\ttype filter hook forward priority filter; policy drop;")
+	hook("forward_first")
 	acc := fwAccessForward(c, clk)
 	for _, l := range acc {
 		r("%s", l)
@@ -208,7 +213,7 @@ func fwNft(c *Config, hook string, n *Nft) {
 			n.W("chain reflect {\n\t\ttype nat hook prerouting priority dstnat + 1; policy accept;")
 			for _, f := range fwd {
 				for _, p := range f.Proto {
-					n.W("\tiifname %s fib daddr type local ip daddr != %s %s dport %s dnat ip to %s", iif, routers, p, nftPorts(f.Port), fwdTo(f))
+					n.W("\tiifname %s fib daddr type local ip daddr != %s %s dport %s dnat ip to %s", iif, routers, p, nftPorts(f.Port), fwdTo(c, f))
 				}
 			}
 			n.W("}")
@@ -255,7 +260,7 @@ func fwNft(c *Config, hook string, n *Nft) {
 				src = "ip saddr " + nftSet(v4) + " "
 			}
 			for _, p := range f.Proto {
-				n.W("iifname %s %s%s dport %s dnat ip to %s comment %q", fwWANSet(c, f.WAN), src, p, nftPorts(f.Port), fwdTo(f), f.Name)
+				n.W("iifname %s %s%s dport %s dnat ip to %s comment %q", fwWANSet(c, f.WAN), src, p, nftPorts(f.Port), fwdTo(c, f), f.Name)
 			}
 		}
 	case "srcnat":
@@ -287,11 +292,13 @@ func fwEnabledForwards(c *Config) []Forward {
 	return out
 }
 
-func fwdTo(f Forward) string {
+// fwdTo: the DNAT target (a device name resolves to its ip), with the port when it differs.
+func fwdTo(c *Config, f Forward) string {
+	to := devHostIP(c, f.To)
 	if f.ToPort != "" && f.ToPort != f.Port {
-		return fmt.Sprintf("%s:%s", f.To, nftPorts(f.ToPort))
+		return fmt.Sprintf("%s:%s", to, nftPorts(f.ToPort))
 	}
-	return f.To
+	return to
 }
 
 // fwReflectMatch: input interfaces and router addresses for the NAT loopback chain.
@@ -447,11 +454,16 @@ func fwRuleLines(c *Config, x FwRule, clk fwClock) []string {
 
 // ---- device access control ----
 
+// fwAccessMACs: an entry's MACs and those of its devices / groups, lowercase, each once.
+func fwAccessMACs(c *Config, a FwAccess) []string {
+	return dedup(append(lowerAll(a.MACs), devMACs(c, a.Devices)...))
+}
+
 // fwAccessEntries returns the indices of enabled access entries.
 func fwAccessEntries(c *Config) []int {
 	var out []int
 	for i, a := range c.Firewall.Access {
-		if on(a.Enabled) && len(a.MACs) > 0 {
+		if on(a.Enabled) && len(fwAccessMACs(c, a)) > 0 {
 			out = append(out, i)
 		}
 	}
@@ -469,7 +481,7 @@ func fwAccessForward(c *Config, clk fwClock) []string {
 	wanSet := "{ " + quoteList(c.WANIfnames()) + " }"
 	for _, i := range fwAccessEntries(c) {
 		a := c.Firewall.Access[i]
-		macs := nftSet(lowerAll(a.MACs))
+		macs := nftSet(fwAccessMACs(c, a))
 		cm := fmt.Sprintf("%q", "access:"+a.Name)
 		out = append(out,
 			fmt.Sprintf("iifname %s ether saddr %s update @ac_4 { ip saddr } update @ac%d_4 { ip saddr }", lanSide, macs, i),
@@ -502,7 +514,7 @@ func fwAccessInput(c *Config, clk fwClock) []string {
 			if tm != "" {
 				tm += " "
 			}
-			out = append(out, fmt.Sprintf("iifname %s ether saddr %s %sfib daddr type != { local, broadcast, multicast, anycast } counter drop comment %q", lanSide, nftSet(lowerAll(a.MACs)), tm, "access:"+a.Name))
+			out = append(out, fmt.Sprintf("iifname %s ether saddr %s %sfib daddr type != { local, broadcast, multicast, anycast } counter drop comment %q", lanSide, nftSet(fwAccessMACs(c, a)), tm, "access:"+a.Name))
 		}
 	}
 	return out
@@ -519,14 +531,14 @@ func fwAccessInput(c *Config, clk fwClock) []string {
 func fwAccessElements(c *Config, neigh []fwNeigh, prev []fwLearnedElem) string {
 	idx := map[string][]int{}
 	for _, i := range fwAccessEntries(c) {
-		for _, m := range lowerAll(c.Firewall.Access[i].MACs) {
+		for _, m := range fwAccessMACs(c, c.Firewall.Access[i]) {
 			idx[m] = append(idx[m], i)
 		}
 	}
 	if len(idx) == 0 {
 		return ""
 	}
-	for _, h := range c.DHCP.Hosts {
+	for _, h := range c.knownHosts() {
 		neigh = append(neigh, fwNeigh{Dst: h.IP, LLAddr: h.MAC})
 	}
 	elems := map[string][]string{}
@@ -668,8 +680,15 @@ func netdevExists(name string) bool {
 	return err == nil
 }
 
+// fwLockFile serializes reloads: the runtime state a reload carries over (learned sets, pauses) is
+// read under it, so two reloads at once (a PPPoE hook during `mr pause`) cannot load a stale copy last.
+var fwLockFile = RunDir + "/fw.lock"
+
 // fwLoad renders against live devices and loads atomically; keeps the last good ruleset on failure.
 func fwLoad(c *Config) error {
+	if lk := flock(fwLockFile, true); lk != nil {
+		defer lk.Close()
+	}
 	rules := renderNft(c, netdevExists)
 	path := GenDir + "/nftables.nft"
 	tmp := path + ".new"
@@ -691,6 +710,10 @@ func fwLoad(c *Config) error {
 	// the addresses dnsmasq learned for policy_routes domains (net module): dnsmasq only adds them when
 	// it asks upstream, so a reload that emptied the sets would send cached names to the wrong WAN
 	elems += policyDomainCarry(c)
+	// active pauses (dev module): their sets and rules, in the same transaction. Replacing the table
+	// also replaces the flowtable, so a paused device's offloaded flows come back to the CPU path,
+	// where these rules drop them in both directions.
+	elems += pauseScript(c)
 	loaded := false
 	if elems != "" {
 		if out, err := runStdin(rules+elems, "nft", "-f", "-"); err == nil {

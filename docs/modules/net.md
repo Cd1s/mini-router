@@ -209,9 +209,23 @@ policy_routes:
     domains: [video.example, "*.cdn.example.net"]   # 按域名：写 example.com = 它和它的所有子域名
     domains_file: /etc/mini-router/video.domains    # 可选：更多域名，一行一个，# 注释
     via: wan2
+  - name: office-wan2-only
+    device: office-pc         # 代替 mac：设备清单（devices，见 dev.md）里的设备或 group:分组，它的所有 MAC
+    via: wan2
+    fallback: drop            # main（默认）| drop：见下
 ```
 
 没写 src / dst 时 IPv4 + IPv6 都生效；写了 src / dst 就只管那个地址族。访问 LAN 侧网络、tailscale、静态路由的流量不受影响。
+
+#### 断线兜底（fallback）
+
+`via` 的 WAN 断线（PPPoE 掉线）或健康检测失败时，它的路由表里没有默认路由，打了标记的流量会落到 main 表，
+从别的 WAN 出去——这是默认的 `fallback: main`（能上网，但换了出口）。`fallback: drop` = 这些流量只准走 `via`：
+filter/forward 最前面（hook `forward_first`，在 flow offload 和“已建立连接放行”之前）加一条
+`iifname {LAN} <同样的条件> oifname {其它所有 WAN} counter drop comment "fallback:<名称>"`，所以断线期间
+新连接和已有连接都出不去，恢复后自动恢复；访问 LAN、tailscale 不受影响。注意：`via` 没有 IPv6 时，这台设备
+也就没有 IPv6 外网（想只管 IPv4 就写 `src`）；设备的 DNS 仍由路由器经任意线路查询；被透明代理接管的连接走代理。
+家里配置没有用它，输出不变。
 
 #### 按域名（domains / domains_file）
 
@@ -298,8 +312,9 @@ multicast: {igmp_snooping: false, igmp_proxy: false, upstream: wan2}
   或者填 VLAN ID 并勾选带标签端口（接支持 VLAN 的交换机 / AP）；DHCP 地址池也在这里。WiFi 的 SSID 在“无线设置”里选网络。
 - **网络 → LAN 与网络 → 工作模式**：选旁路由或纯 AP，填主路由地址。旁路由默认“只管代理”：卡片里列出主路由要添加的静态路由；
   在主路由的 DHCP 里把 DNS 改成本机地址。选“全部设备”或“指定设备”时先关掉主路由的 DHCP。
-- **路由 → 策略路由**：按 MAC / 源地址 / 目标地址 / 域名指定出口 WAN（域名一栏填 `example.com, video.example`，
-  含子域名；更长的列表用 router.yaml 的 `domains_file`）；下面是实时 `ip rule`（v4 / v6）。
+- **路由 → 策略路由**：按 MAC（或设备清单里的设备名 / `group:分组`）/ 源地址 / 目标地址 / 域名指定出口 WAN（域名一栏填
+  `example.com, video.example`，含子域名；更长的列表用 router.yaml 的 `domains_file`）；“该 WAN 断线时”选“断网”=
+  只走这条线，断线时不换线（`fallback: drop`）；下面是实时 `ip rule`（v4 / v6）。
 - **路由 → 静态路由**：静态路由表格 + 当前所有路由表。
 - 所有修改点底部“保存并应用”：先校验、显示变更计划，应用后 120 秒内点“保留”，否则自动回滚。
 
