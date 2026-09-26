@@ -68,8 +68,9 @@ ok "service settings"
 
 # 3. crontab
 C=$L/etc/crontabs/root
-# home: no schedules, but the DDNS check and the certificate renewal
-[ "$(grep -c '^[^#]' "$H/etc/crontabs/root")" = 2 ] && grep -q ' /usr/sbin/mr ddns sync --cron$' "$H/etc/crontabs/root" &&
+# home: no schedules, but the DDNS check, the dial-order restore and the certificate renewal
+[ "$(grep -c '^[^#]' "$H/etc/crontabs/root")" = 3 ] && grep -q ' /usr/sbin/mr ddns sync --cron$' "$H/etc/crontabs/root" &&
+	grep -qx '30 4 \* \* \* /usr/sbin/mr wan dial-restore' "$H/etc/crontabs/root" &&
 	grep -q ' /usr/sbin/mr edge renew --cron$' "$H/etc/crontabs/root" || fail "home crontab: $(cat "$H/etc/crontabs/root")"
 grep -qx 'crond' "$L/etc/mini-router/gen/services" || fail "lab: crond not enabled"
 grep -qx 'crond' "$H/etc/mini-router/gen/services" || fail "home: crond not enabled"

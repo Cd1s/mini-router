@@ -149,7 +149,10 @@ registerPage("network", "multiwan", "多线路", 15, async ()=>{
       w.health ? h("span",{}, healthTag(w), w.health_since ? h("span",{class:"mut"}, " "+fmtDur(now-w.health_since)) : null) : h("span",{class:"mut"},"未检测"),
       w.rtt_ms!=null ? w.rtt_ms.toFixed(1)+" ms" : "-", w.fails||0,
       w.route_metric!=null ? h("span",{class:w.route_metric>=10000?"err":""}, String(w.route_metric)) : "-",
-      mono(w.table+" / "+w.mark), r.mode==="balance" ? String(w.weight??0) : "-"])));
+      mono(w.table+" / "+w.mark), r.mode==="balance" ? String(w.weight??0) : "-"])),
+      r.dial_order ? h("div",{class:"mut",style:"margin-top:8px"}, "拨号顺序", " "+r.dial_order.join(" → ")+": ",
+        r.dial_order_ok ? "正常" : h("span",{class:"err"}, "乱序", " ("+(r.dial_late||[]).join(", ")+")"),
+        r.dial_restore_at ? " → "+r.dial_restore : "") : "");
     when.textContent = tr(r.checked ? "上次检测 "+Math.max(0,Math.round(now-r.checked))+" 秒前" : (r.mode ? "检测未运行" : "未启用健康检测"));
   };
   try { await draw(); } catch(e){ stat.replaceChildren(h("div",{class:"err"}, e.message)); }
@@ -280,6 +283,7 @@ registerPage("routing", "policy", "策略路由", 20, async ()=>{
       {k:"domains",l:"目标域名",t:"list",ph:"example.com, video.example"},
       {k:"via",l:"出口 WAN",t:"sel",o:()=>c.wan.map(w=>w.name)},
       {k:"fallback",l:"该 WAN 断线时",t:"sel",o:[["","换线"],["drop","断网"]]},
+      {k:"nat6",l:"IPv6 全走该 WAN",t:"bool"},
       {k:"table",l:"路由表",t:"num",w:"80px",ph:"自动"},{k:"mark",l:"标记",w:"90px",ph:"自动"}],
       ()=>({name:"",mac:"",src:"",dst:"",via:(c.wan[1]||c.wan[0]||{}).name||"",table:0,mark:""}),
       "条件同时满足；MAC（或 网络 › 设备 里的设备名 / group:分组）/ 源 / 目标 / 域名至少填一项。没填源 / 目标地址时 IPv4 + IPv6 都生效，填了就只管该地址族。只影响新连接；多条同时命中时，排在前面的那条生效；访问内网、tailscale 和静态路由不受影响。域名含子域名：设备通过路由器 DNS 解析到的地址走该 WAN，连接照常硬件加速（DoH / 自定义 DNS 的设备不生效）。“断网”= 该 WAN 断线或健康检查失败时这些流量直接丢弃，绝不从其他 WAN 出去（该 WAN 没有 IPv6 时，这些设备也就没有 IPv6 外网）。路由表填 0、标记留空 = 自动（200+序号 / 0x200+序号）。"),

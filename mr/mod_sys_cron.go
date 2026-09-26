@@ -24,6 +24,10 @@ package main
 //	*/<interval> * * * * /usr/sbin/mr ddns sync --cron
 //	M H * * * /usr/sbin/mr edge renew --cron
 //
+// and with multiwan.dial_restore HH:MM, the dial-order check (mod_net_dial.go; redials only when broken):
+//
+//	M H * * * /usr/sbin/mr wan dial-restore
+//
 // and while dns.adblock is on, the hourly list check (mod_dns_adblock.go; downloads once a day):
 //
 //	M * * * * /usr/sbin/mr dns adblock update --cron
@@ -232,7 +236,7 @@ func validateSchedules(c *Config, v *Validator) {
 }
 
 func cronWanted(c *Config) bool {
-	if ddnsInterval(c) > 0 || edgeOn(c) || c.DNS.Adblock.Enabled || len(wifiCronLine(c)) > 0 || c.Notify.UpdateCheck || c.System.Watchcat.Enabled || len(presenceRules(c)) > 0 {
+	if ddnsInterval(c) > 0 || len(dialCronLine(c)) > 0 || edgeOn(c) || c.DNS.Adblock.Enabled || len(wifiCronLine(c)) > 0 || c.Notify.UpdateCheck || c.System.Watchcat.Enabled || len(presenceRules(c)) > 0 {
 		return true
 	}
 	for _, s := range c.Schedules {
@@ -266,6 +270,7 @@ func renderCronLines(c *Config) []string {
 	if n := ddnsInterval(c); n > 0 {
 		lines = append(lines, "# ddns (services.ddns)", fmt.Sprintf("*/%d * * * * %s ddns sync --cron", n, mrBin))
 	}
+	lines = append(lines, dialCronLine(c)...)
 	return append(append(append(append(append(append(lines, edgeCronLine(c)...), adblockCronLine(c)...), wifiCronLine(c)...), updateCronLine(c)...), wcCronLine(c)...), presenceCronLine(c)...)
 }
 

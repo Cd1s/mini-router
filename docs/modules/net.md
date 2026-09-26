@@ -191,6 +191,27 @@ multiwan:
 负载均衡只分新的 IPv4 连接（同一连接一直走同一条线路）；IPv6 不参与（每条线路前缀不同，按源地址路由）。
 策略路由、端口转发 / 入站连接的回包优先于均衡。
 
+**PPPoE 拨号顺序**（与 `mode` 无关，`mode` 为空也能用；Cd1s/mini-router#109）：同一个账号多拨时，运营商那边有些东西
+（例如它自带的 DDNS）只认最后建立的会话。
+
+```yaml
+multiwan:
+  dial_order: [wan2, wan]     # 这些 PPPoE WAN 按顺序拨号（至少两条，不重复）；不在列表里的照常拨
+  dial_wait: 20               # 秒（1–120，默认 20）：每条最多等排在前面的线路这么久，拨不上也不再等
+  dial_restore: "04:30"       # off（默认）| now | HH:MM（system.timezone）
+```
+
+- 等待：`mr-pppoe.<wan>` 的命令是 `/usr/libexec/mr/pppoe-dial`，它先跑 `mr wan dial-wait <wan>`（等到前面每条线路都有会话、
+  即 `/run/mini-router/wan/<名字>.json` 存在，或等满 `dial_wait`），再 exec pppd。等待不在 `start_pre` 里，OpenRC 不会被卡住
+  （串行启动时所有线路同时开始等）；只等排在前面的，不会死锁。pppd 退出后 supervise-daemon 重新拉起时也会同样等一次。
+- 顺序被打乱：某条在线的线路的会话（`mr wan status` 的 `since`）比排在它前面的某条在线线路的会话旧，即前面的线路后来单独重拨过。
+  `now`：ppp-up 钩子脱离进程（setsid）运行 `mr wan dial-restore`，按顺序重拨后面的线路（`rc-service mr-pppoe.<wan> restart`，
+  每条等新会话建立后再拨下一条）；`HH:MM`：crond 每天这个时间运行 `mr wan dial-restore`（`M H * * * /usr/sbin/mr wan dial-restore`），
+  仍然乱序才重拨。每条线路 10 分钟内最多恢复一次（`/run/mini-router/dial-restore.json`）；每次恢复写事件（类型 `dial`）
+  并在 `/etc/router-changes.log` 记一行（这样随之而来的断线 / 恢复事件标为预期）。
+- `mr wan status`：`dial_order`、`dial_order_ok`、`dial_late`（拨得太早的线路）、`dial_restore`、`dial_restore_at`（`HH:MM` 模式下
+  乱序时，下次重拨的时间，unix 秒）；网页“多线路 → 线路状态”表格下显示一行。
+
 ### policy_routes
 
 ```yaml
@@ -215,6 +236,7 @@ policy_routes:
     device: office-pc         # 代替 mac：设备清单（devices，见 dev.md）里的设备或 group:分组，它的所有 MAC
     via: wan2
     fallback: drop            # main（默认）| drop：见下
+    nat6: true                # 可选：别的前缀的 IPv6 也走 via（NPTv6），见下
 ```
 
 没写 src / dst 时 IPv4 + IPv6 都生效；写了 src / dst 就只管那个地址族。访问 LAN 侧网络、tailscale、静态路由的流量不受影响。
@@ -223,6 +245,13 @@ policy_routes:
 dhcpcd 钩子把每条 WAN 的前缀记在 `/run/mini-router/wan/<名>.pd6`，防火墙每次加载后重新填入）。两条线都有前缀时，设备用
 另一条线的前缀作源地址的连接留在默认路由上——否则上游运营商会按源地址把它丢掉。`via` 没有 IPv6 前缀时，IPv6 连接都走默认路由。
 
+**`nat6: true`**（#108，默认关闭；`via` 须 `ipv6` + `ipv6_pd`，策略不能是纯 IPv4）：设备的 IPv6 不论源地址属于哪个前缀都走 `via`。
+源地址不在 `via` 前缀里的新连接跳到 `npt6m_<序号>` 打标记，出 `via` 时在 srcnat 跳到 `npt6n_<序号>` 做 NPTv6
+（`snat ip6 prefix to <via 记录的第一个前缀>`，接口 ID 不变，回程由 conntrack 还原）。两条链由 `pd6Script` 与 `pd6_<n>`
+同时刷新：`via` 没有前缀时链为空，连接不打标记、走默认路由（不会带着别的前缀从 `via` 出去）。被转换的连接走软件
+flowtable（PPE 不做 IPv6 NAT）；源地址本就在 `via` 前缀里的照常硬件加速。DDNS `ipv6: mac:` 对被策略固定到某条 WAN 的设备
+优先发布该 WAN 前缀里的地址。
+
 #### 断线兜底（fallback）
 
 `via` 的 WAN 断线（PPPoE 掉线）或健康检测失败时，它的路由表里没有默认路由，打了标记的流量会落到 main 表，
@@ -230,7 +259,7 @@ dhcpcd 钩子把每条 WAN 的前缀记在 `/run/mini-router/wan/<名>.pd6`，�
 filter/forward 最前面（hook `forward_first`，在 flow offload 和“已建立连接放行”之前）加一条
 `iifname {LAN} <同样的条件> oifname {其它所有 WAN} counter drop comment "fallback:<名称>"`，所以断线期间
 新连接和已有连接都出不去，恢复后自动恢复；访问 LAN、tailscale 不受影响。IPv6 只拦策略本来会路由的流量
-（源地址在 `via` 委派的前缀里，`ip6 saddr @pd6_<n>`）：来自别的 WAN 前缀的源地址照常走默认 WAN；设备的 DNS 仍由路由器经任意线路查询；被透明代理接管的连接走代理。
+（源地址在 `via` 委派的前缀里，`ip6 saddr @pd6_<n>`；`nat6: true` 时该设备的 IPv6 全部）：来自别的 WAN 前缀的源地址照常走默认 WAN；设备的 DNS 仍由路由器经任意线路查询；被透明代理接管的连接走代理。
 家里配置没有用它，输出不变。
 
 #### 按域名（domains / domains_file）

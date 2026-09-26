@@ -283,21 +283,36 @@ func pd6WANs(c *Config) []string {
 }
 
 // pd6Script: nft commands that set each prefix set to the recorded prefixes (after a firewall load or
-// a dhcpcd event). Only CIDRs that parse reach nft.
+// a dhcpcd event), and each nat6 policy's chains: marking + NPTv6 to the WAN's first recorded prefix
+// while it has one, empty (default route, no translation) otherwise. Only CIDRs that parse reach nft.
 func pd6Script(c *Config) string {
 	var b strings.Builder
 	for _, name := range pd6WANs(c) {
 		set := pd6Set(c, name)
 		fmt.Fprintf(&b, "flush set inet mr %s\n", set)
-		var elems []string
-		for _, l := range strings.Fields(readFile(pd6File(name))) {
-			if p, err := netip.ParsePrefix(l); err == nil && p.Addr().Is6() && !p.Addr().Is4In6() {
-				elems = append(elems, p.Masked().String())
-			}
-		}
-		if len(elems) > 0 {
+		if elems := pd6Prefixes(name); len(elems) > 0 {
 			fmt.Fprintf(&b, "add element inet mr %s { %s }\n", set, strings.Join(elems, ", "))
 		}
 	}
+	for _, i := range nat6Policies(c) {
+		p := c.Policy[i]
+		fmt.Fprintf(&b, "flush chain inet mr npt6m_%d\nflush chain inet mr npt6n_%d\n", i, i)
+		if elems := pd6Prefixes(p.Via); len(elems) > 0 {
+			_, mark := c.WANTable(p.Via)
+			fmt.Fprintf(&b, "add rule inet mr npt6m_%d ct mark set %s meta mark set %s accept\n", i, mark, mark)
+			fmt.Fprintf(&b, "add rule inet mr npt6n_%d snat ip6 prefix to %s\n", i, elems[0])
+		}
+	}
 	return b.String()
+}
+
+// pd6Prefixes: the IPv6 prefixes recorded for wan (pd6File), masked; garbage is skipped.
+func pd6Prefixes(wan string) []string {
+	var out []string
+	for _, l := range strings.Fields(readFile(pd6File(wan))) {
+		if p, err := netip.ParsePrefix(l); err == nil && p.Addr().Is6() && !p.Addr().Is4In6() {
+			out = append(out, p.Masked().String())
+		}
+	}
+	return out
 }

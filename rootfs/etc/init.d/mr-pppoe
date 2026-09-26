@@ -4,8 +4,9 @@
 WAN="${RC_SVCNAME#mr-pppoe.}"
 description="PPPoE ${WAN}"
 supervisor=supervise-daemon
-command=/usr/sbin/pppd
-command_args="call ${WAN}"
+# pppoe-dial waits for the WANs before this one in multiwan.dial_order, then execs `pppd call ${WAN}`
+command=/usr/libexec/mr/pppoe-dial
+command_args="${WAN}"
 respawn_delay=5
 # never gives up: the uplink / WiFi is the way back in (a router far from home)
 respawn_max=0

@@ -137,6 +137,7 @@ func hookPPP(c *Config, up bool, args []string) error {
 	err := fwLoad(c)
 	if up {
 		runOnWAN(c, w.Name, "up")
+		dialOnUp(c, w.Name)
 	} else {
 		runOnWAN(c, w.Name, "down")
 	}
@@ -669,9 +670,16 @@ func hookHealth(c *Config) error {
 // wanCommand: `mr wan dhcp EVENT` (udhcpc script), `mr wan health` (net-wanmon), `mr wan status`.
 func wanCommand(c *Config, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: mr wan dhcp EVENT | health | status")
+		return fmt.Errorf("usage: mr wan dhcp EVENT | health | status | dial-wait WAN | dial-restore")
 	}
 	switch args[0] {
+	case "dial-wait":
+		if len(args) == 2 {
+			dialWait(c, args[1])
+		}
+		return nil
+	case "dial-restore":
+		return dialRestore(c)
 	case "dhcp":
 		if len(args) < 2 {
 			return fmt.Errorf("mr wan dhcp EVENT")

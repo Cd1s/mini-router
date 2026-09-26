@@ -386,6 +386,35 @@ r=$(seen6 2001:db8:1::50 2001:db8:80::1)
 ip netns exec "$DS" nft list chain inet isp in | grep -q 'packets 0 bytes 0 drop comment "isp-b"' || fail "a source from wan's prefix reached wan2's ISP"
 echo "ok: IPv6 policy route follows the source prefix: wan2's prefix via wan2, wan's prefix stays on wan"
 
+# nat6 (Cd1s/mini-router#108): with nat6 a source from wan's prefix goes to wan2 too, translated into wan2's
+# prefix with the same interface ID (NPTv6), and the reply reaches the client; without a prefix recorded
+# for wan2 it stays on the default route (wan), untranslated
+seen6x() { # WANT SRC DST
+	for _ in 1 2 3; do
+		r6=$(ip netns exec "$DL" python3 "$D/echo6.py" "$2" "$3")
+		[ "$r6" = "$1" ] && break
+	done
+	echo "$r6"
+}
+sed 's/via: wan2}/via: wan2, nat6: true}/; s/metric: 20}/metric: 20, ipv6: true, ipv6_pd: true}/' "$D/router.yaml" > "$D/router-n.yaml"
+cp "$D/router-n.yaml" /etc/mini-router/router.yaml
+ip -n "$DL" addr add 2001:db8:1::51/64 dev eth0 nodad
+inD "$MRH" -c "$D/router-n.yaml" -s "$T/secrets.yaml" fw
+has "nat6 chain filled" "$(inD nft list chain inet mr npt6n_0)" "snat ip6 prefix to 2001:db8:2::/64"
+r=$(seen6x 2001:db8:2::51 2001:db8:1::51 2001:db8:80::1)
+[ "$r" = 2001:db8:2::51 ] || fail "nat6: wan's-prefix source did not leave wan2 as 2001:db8:2::51: $r ($(inD nft list table inet mr | grep -A3 npt6))"
+r=$(seen6x 2001:db8:2::50 2001:db8:2::50 2001:db8:80::1)
+[ "$r" = 2001:db8:2::50 ] || fail "nat6: wan2's-prefix source changed: $r"
+: > /run/mini-router/wan/wan2.pd6
+inD "$MRH" -c "$D/router-n.yaml" -s "$T/secrets.yaml" fw
+hasnt "nat6 chain empty without a prefix" "$(inD nft list chain inet mr npt6m_0)" "mark set"
+r=$(seen6x 2001:db8:1::51 2001:db8:1::51 2001:db8:80::1)
+[ "$r" = 2001:db8:1::51 ] || fail "nat6 without wan2's prefix: not on the default route: $r"
+echo 2001:db8:2::/64 > /run/mini-router/wan/wan2.pd6
+cp "$D/router.yaml" /etc/mini-router/router.yaml
+inD mr fw
+echo "ok: nat6: wan's prefix leaves wan2 as wan2's prefix + same IID; without wan2's prefix the default route"
+
 # the router's own IPv6 (no source chosen) must leave each WAN from that WAN's prefix (Cd1s/mini-router#97):
 # without a src on the default route the kernel picks wan's own address or wan2's prefix, and isp-a drops it
 own6() {

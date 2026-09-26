@@ -157,7 +157,7 @@ func TestNotifyValidate(t *testing.T) {
 	c.defaults()
 	mustValid(t, c)
 	n := c.Notify
-	if n.Rate != 10 || strings.Join(n.Events, ",") != "wan_down,wan_up,failover,rollback,login_lock,new_device,boot,upgrade,doctor,cert,wifi,ddns,update,archive,watchcat,device" ||
+	if n.Rate != 10 || strings.Join(n.Events, ",") != "wan_down,wan_up,failover,rollback,login_lock,new_device,boot,upgrade,doctor,cert,wifi,ddns,update,archive,watchcat,device,dial" ||
 		n.Doctor == nil || *n.Doctor != 30 || n.Channels[0].Format != "json" {
 		t.Errorf("defaults: %+v", n)
 	}

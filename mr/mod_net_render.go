@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -409,15 +410,16 @@ func policyFallbackRules(c *Config) []string {
 		for _, fam := range policyFams(p) {
 			s := policyHead(c, p)
 			kw := map[int]string{4: "ip", 6: "ip6"}[fam]
-			if fam == 4 && src == nil && dst == nil && !p.byDomain() {
-				s += " meta nfproto ipv4"
+			if src == nil && dst == nil && !p.byDomain() && (fam == 4 || p.NAT6) {
+				s += map[int]string{4: " meta nfproto ipv4", 6: " meta nfproto ipv6"}[fam]
 			}
 			if src != nil {
 				s += fmt.Sprintf(" %s saddr %s", kw, cidrStr(src))
 			}
-			if fam == 6 {
+			if fam == 6 && !p.NAT6 {
 				// only what the policy routes (policyRules): a source from another WAN's prefix is left
-				// unmarked on purpose and takes the default route (Cd1s/mini-router#63)
+				// unmarked on purpose and takes the default route (Cd1s/mini-router#63). With nat6 every
+				// source is routed, so all of the device's IPv6 is dropped (#108).
 				s += " ip6 saddr @" + pd6Set(c, p.Via)
 			}
 			if dst != nil {
@@ -453,12 +455,7 @@ func policyRules(c *Config, i int, p Policy) []string {
 		if src != nil {
 			s += fmt.Sprintf(" %s saddr %s", kw, cidrStr(src))
 		}
-		if fam == 6 {
-			// only a source inside the prefix this WAN delegated can leave through it: an address from
-			// another WAN's prefix would be dropped upstream (Cd1s/mini-router#63). Unmarked, it takes the
-			// default route. The set is filled from the dhcpcd hook's record (pd6Refresh).
-			s += " ip6 saddr @" + pd6Set(c, p.Via)
-		}
+		pre, s := s, ""
 		switch {
 		case dst != nil:
 			s += fmt.Sprintf(" %s daddr %s", kw, cidrStr(dst))
@@ -476,8 +473,44 @@ func policyRules(c *Config, i int, p Policy) []string {
 			s += " ct state new"
 		}
 		// the first policy that matches decides (config order): return ends this chain for the packet
-		s += fmt.Sprintf(" ct mark set %s meta mark set %s return comment %q", mark, mark, p.Name)
-		out = append(out, s)
+		act := fmt.Sprintf(" ct mark set %s meta mark set %s return comment %q", mark, mark, p.Name)
+		if fam == 4 {
+			out = append(out, pre+s+act)
+			continue
+		}
+		// only a source inside the prefix this WAN delegated can leave through it as is: an address from
+		// another WAN's prefix would be dropped upstream (Cd1s/mini-router#63). Unmarked, it takes the
+		// default route. The set is filled from the dhcpcd hook's record (pd6Script).
+		set := pd6Set(c, p.Via)
+		out = append(out, pre+" ip6 saddr @"+set+s+act)
+		if p.NAT6 {
+			// nat6 (#108): other sources go to npt6m_<i>, which marks them only while the WAN has a prefix
+			// (pd6Script); srcnat then translates them into that prefix (npt6n_<i>)
+			out = append(out, fmt.Sprintf("%s ip6 saddr != @%s%s jump npt6m_%d comment %q", pre, set, s, i, p.Name))
+		}
+	}
+	return out
+}
+
+// nat6Rules (hook srcnat): a nat6 policy's connections leaving its WAN from a foreign prefix get the
+// WAN's prefix (npt6n_<i>, filled by pd6Script).
+func nat6Rules(c *Config) []string {
+	var out []string
+	for _, i := range nat6Policies(c) {
+		p := c.Policy[i]
+		_, mark := c.WANTable(p.Via)
+		out = append(out, fmt.Sprintf("oifname %q meta mark %s ip6 saddr != @%s jump npt6n_%d", c.WANByName(p.Via).Ifname(), mark, pd6Set(c, p.Via), i))
+	}
+	return out
+}
+
+// nat6Policies: indexes of the policies with nat6 that route IPv6 through a known WAN.
+func nat6Policies(c *Config) []int {
+	var out []int
+	for i, p := range c.Policy {
+		if p.NAT6 && c.WANByName(p.Via) != nil && slices.Contains(policyFams(p), 6) {
+			out = append(out, i)
+		}
 	}
 	return out
 }
@@ -530,6 +563,15 @@ func netNft(c *Config, hook string, n *Nft) {
 		policyDomainDefs(c, n)
 		for _, name := range pd6WANs(c) {
 			n.W("set %s { type ipv6_addr; flags interval; auto-merge; comment \"prefixes delegated by wan %s\"; }", pd6Set(c, name), name)
+		}
+		for _, i := range nat6Policies(c) {
+			// filled by pd6Script (empty = no prefix: unmarked, not translated)
+			n.W("chain npt6m_%d {\n\t}", i)
+			n.W("chain npt6n_%d {\n\t}", i)
+		}
+	case "srcnat":
+		for _, r := range nat6Rules(c) {
+			n.W("%s", r)
 		}
 	case "forward_first":
 		for _, r := range policyFallbackRules(c) {
