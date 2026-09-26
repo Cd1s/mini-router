@@ -23,6 +23,7 @@ package main
 // /run/mini-router/edge-renew.json (renewal results; tmpfs). Docs: docs/modules/sys.md (反向代理).
 
 import (
+	"crypto/pbkdf2"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -45,6 +46,8 @@ type Edge struct {
 	Port int `yaml:"port,omitempty"`
 	// Open: also accept the port from the WANs (IPv4 + IPv6). Off: LAN zone and tailscale only.
 	Open bool `yaml:"open,omitempty"`
+	// WANPort: with open, this WAN port reaches the same WAN listener too (ISPs that block inbound 443)
+	WANPort int `yaml:"wan_port,omitempty"`
 	// LANDNS: the route hosts resolve to the router's LAN address in dnsmasq (default true), so the LAN
 	// reaches them without the public address (and while the WAN is down).
 	LANDNS *bool       `yaml:"lan_dns,omitempty"`
@@ -54,10 +57,12 @@ type Edge struct {
 
 // EdgeACME: where the certificates come from (Let's Encrypt, DNS-01).
 type EdgeACME struct {
-	Email    string `yaml:"email,omitempty"`    // optional ACME account contact
-	Provider string `yaml:"provider,omitempty"` // DNS-01 through: cloudflare (default)
-	Token    string `yaml:"token_secret"`       // secrets.yaml key of the API token (Zone › DNS › Edit)
-	Staging  bool   `yaml:"staging,omitempty"`  // Let's Encrypt's staging CA (untrusted certificates, for tests)
+	Email    string `yaml:"email,omitempty"`        // optional ACME account contact
+	Provider string `yaml:"provider,omitempty"`     // DNS-01 through: cloudflare (default) | alidns | dnspod
+	Token    string `yaml:"token_secret,omitempty"` // cloudflare: secrets.yaml key of the API token (Zone › DNS › Edit)
+	KeyID    string `yaml:"key_id,omitempty"`       // alidns: AccessKey ID; dnspod: SecretId (as in services.ddns)
+	Key      string `yaml:"key_secret,omitempty"`   // alidns / dnspod: secrets.yaml key of the AccessKey secret / SecretKey
+	Staging  bool   `yaml:"staging,omitempty"`      // Let's Encrypt's staging CA (untrusted certificates, for tests)
 	// Wildcard: domains that get one certificate for domain + *.domain, used by the routes directly
 	// under them (their names never appear in the certificate transparency logs). Other hosts: one each.
 	Wildcard []string `yaml:"wildcard,omitempty"`
@@ -70,7 +75,14 @@ type EdgeRoute struct {
 	Host    string   `yaml:"host"`              // nas.example.com
 	To      string   `yaml:"to"`                // http://192.168.1.10:5000 or https://…:5001 (not verified)
 	Allow   []string `yaml:"allow,omitempty"`   // lan and / or CIDRs; empty = everyone who reaches the port
+	Auth    EdgeAuth `yaml:"auth,omitempty"`    // HTTP basic auth in front of the service
 	Desc    string   `yaml:"desc,omitempty"`
+}
+
+// EdgeAuth: one user; the password is a secret, edge.json only gets its PBKDF2-SHA256 hash.
+type EdgeAuth struct {
+	User     string `yaml:"user,omitempty"`
+	Password string `yaml:"password_secret,omitempty"`
 }
 
 const (
@@ -113,6 +125,18 @@ func edgeRoutes(c *Config) []EdgeRoute {
 		}
 	}
 	return out
+}
+
+// edgeCredential: the DNS-01 credentials as one string (they enter the renewal state's fingerprint:
+// new credentials retry at once).
+func edgeCredential(c *Config) string {
+	a := c.Services.Edge.ACME
+	if a.Provider == "alidns" || a.Provider == "dnspod" {
+		k, _ := c.Secret(a.Key)
+		return a.Provider + "\x00" + a.KeyID + "\x00" + k
+	}
+	tok, _ := c.Secret(a.Token)
+	return tok
 }
 
 func edgeLANDNS(c *Config) bool { return c.Services.Edge.LANDNS == nil || *c.Services.Edge.LANDNS }
@@ -167,6 +191,7 @@ func edgeCerts(c *Config) []edgeCert {
 var (
 	reEdgeEmail = lazyRegexp(`^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,190}$`)
 	reEdgeHost  = lazyRegexp(`^[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
+	reEdgeUser  = lazyRegexp(`^[A-Za-z0-9._@+-]{1,64}$`)
 )
 
 // edgeHostOK: a lower-case host name with at least one dot, no wildcard, no underscore.
@@ -301,8 +326,8 @@ func validateEdge(c *Config, v *Validator) {
 		}
 	}
 	a := e.ACME
-	if a.Provider != "cloudflare" {
-		v.Add("%s.acme.provider: cloudflare, got %q", p, a.Provider)
+	if a.Provider != "cloudflare" && a.Provider != "alidns" && a.Provider != "dnspod" {
+		v.Add("%s.acme.provider: cloudflare | alidns | dnspod, got %q", p, a.Provider)
 	}
 	if a.Email != "" {
 		_, dom, _ := strings.Cut(a.Email, "@")
@@ -310,7 +335,24 @@ func validateEdge(c *Config, v *Validator) {
 			v.Add("%s.acme.email: an e-mail address (or empty), got %q", p, a.Email)
 		}
 	}
-	if e.Enabled || a.Token != "" {
+	if a.Provider == "alidns" || a.Provider == "dnspod" {
+		if a.Token != "" {
+			v.Add("%s.acme.token_secret: not used by provider %s (it takes key_id, key_secret)", p, a.Provider)
+		}
+		if !reDDNSKeyID.MatchString(a.KeyID) {
+			v.Add("%s.acme.key_id: the AccessKey ID / SecretId (8-128 letters and digits), got %q", p, a.KeyID)
+		}
+		if !reDDNSSecret.MatchString(a.Key) {
+			v.Add("%s.acme.key_secret: secret name [a-z0-9_-]{1,40} required, got %q", p, a.Key)
+		} else if k, err := c.Secret(a.Key); err != nil {
+			v.Add("%s.acme.key_secret: %v", p, err)
+		} else if !ddnsSecretOK(k, 16, 128) {
+			v.Add("%s.acme.key_secret: the secret is not an API key secret (16-128 printable characters, no spaces)", p)
+		}
+	} else if a.KeyID != "" || a.Key != "" {
+		v.Add("%s.acme: key_id / key_secret are for provider alidns or dnspod", p)
+	}
+	if a.Provider != "alidns" && a.Provider != "dnspod" && (e.Enabled || a.Token != "") {
 		if !reDDNSSecret.MatchString(a.Token) {
 			v.Add("%s.acme.token_secret: secret name [a-z0-9_-]{1,40} required (a Cloudflare API token with Zone › DNS › Edit), got %q", p, a.Token)
 		} else if tok, err := c.Secret(a.Token); err != nil {
@@ -363,7 +405,60 @@ func validateEdge(c *Config, v *Validator) {
 		if _, _, err := edgeAllow(r.Allow); err != nil {
 			v.Add("%s.allow: %v", rp, err)
 		}
+		if au := r.Auth; au != (EdgeAuth{}) {
+			if !reEdgeUser.MatchString(au.User) {
+				v.Add("%s.auth.user: letters, digits, . _ @ + - (1-64), got %q", rp, au.User)
+			}
+			if !reDDNSSecret.MatchString(au.Password) {
+				v.Add("%s.auth.password_secret: secret name [a-z0-9_-]{1,40} required", rp)
+			} else if pw, err := c.Secret(au.Password); err != nil {
+				v.Add("%s.auth.password_secret: %v", rp, err)
+			} else if len(pw) < 8 || len(pw) > 128 || !safeText(pw) {
+				v.Add("%s.auth.password_secret: the password must be 8-128 printable characters", rp)
+			}
+		}
 	}
+	if e.WANPort != 0 {
+		switch {
+		case !e.Open:
+			v.Add("%s.wan_port: needs open: true", p)
+		case e.WANPort < 1 || e.WANPort > 65535 || e.WANPort == e.Port:
+			v.Add("%s.wan_port: 1-65535 and not port, got %d", p, e.WANPort)
+		case edgeReservedPort(c, e.WANPort) != "":
+			v.Add("%s.wan_port: %d is used by %s", p, e.WANPort, edgeReservedPort(c, e.WANPort))
+		}
+		for _, o := range c.Firewall.Open {
+			if on(o.Enabled) && portIn(o.Port, e.WANPort) && slicesHas(o.Proto, "tcp") {
+				v.Add("%s.wan_port: firewall.open[%s] already opens tcp %d", p, o.Name, e.WANPort)
+			}
+		}
+		for _, f := range c.Firewall.Forwards {
+			if on(f.Enabled) && portIn(f.Port, e.WANPort) && slicesHas(f.Proto, "tcp") {
+				v.Add("%s.wan_port: firewall.forwards[%s] already forwards tcp %d", p, f.Name, e.WANPort)
+			}
+		}
+	}
+}
+
+const edgeAuthIter = 100000
+
+// edgeAuthConf: what the serving process checks basic auth against (no password).
+type edgeAuthConf struct {
+	User string `json:"user"`
+	Salt string `json:"salt"` // hex
+	Iter int    `json:"iter"`
+	Hash string `json:"hash"` // hex PBKDF2-SHA256(password, salt, iter, 32)
+}
+
+// edgeAuthHash: the hash of a route's password. The salt is derived from the route, so a render
+// gives the same file (plan shows no change) until the route or the password changes.
+func edgeAuthHash(r EdgeRoute, pw string) *edgeAuthConf {
+	s := sha256.Sum256([]byte("mr-edge-auth|" + r.Name + "|" + r.Host + "|" + r.Auth.User))
+	k, err := pbkdf2.Key(sha256.New, pw, s[:16], edgeAuthIter, 32)
+	if err != nil {
+		return nil
+	}
+	return &edgeAuthConf{User: r.Auth.User, Salt: hex.EncodeToString(s[:16]), Iter: edgeAuthIter, Hash: hex.EncodeToString(k)}
 }
 
 func slicesHas(xs []string, x string) bool {
@@ -415,11 +510,12 @@ type edgeConf struct {
 }
 
 type edgeConfRoute struct {
-	Name  string   `json:"name"`
-	Host  string   `json:"host"`
-	To    string   `json:"to"`
-	Cert  string   `json:"cert"`
-	Allow []string `json:"allow,omitempty"` // "lan" and CIDRs; empty = everyone
+	Name  string        `json:"name"`
+	Host  string        `json:"host"`
+	To    string        `json:"to"`
+	Cert  string        `json:"cert"`
+	Allow []string      `json:"allow,omitempty"` // "lan" and CIDRs; empty = everyone
+	Auth  *edgeAuthConf `json:"auth,omitempty"`
 }
 
 func edgeConfOf(c *Config) edgeConf {
@@ -437,8 +533,13 @@ func edgeConfOf(c *Config) edgeConf {
 		for _, n := range nets {
 			allow = append(allow, n.String())
 		}
+		var au *edgeAuthConf
+		if r.Auth.Password != "" {
+			pw, _ := c.Secret(r.Auth.Password)
+			au = edgeAuthHash(r, pw)
+		}
 		ec.Routes = append(ec.Routes, edgeConfRoute{Name: r.Name, Host: r.Host, To: r.To,
-			Cert: edgeCertFor(e.ACME, r.Host).Name, Allow: allow})
+			Cert: edgeCertFor(e.ACME, r.Host).Name, Allow: allow, Auth: au})
 	}
 	return ec
 }
@@ -464,7 +565,11 @@ func edgeNft(c *Config, hook string, n *Nft) {
 	case "input":
 		n.W("iifname { %s } tcp dport %d ct status dnat accept comment \"edge\"", quoteList(wans), edgeWANPort)
 	case "dstnat":
-		n.W("iifname { %s } fib daddr type local tcp dport %d redirect to :%d comment \"edge\"", quoteList(wans), e.Port, edgeWANPort)
+		ports := strconv.Itoa(e.Port)
+		if e.WANPort != 0 {
+			ports = fmt.Sprintf("{ %d, %d }", e.Port, e.WANPort)
+		}
+		n.W("iifname { %s } fib daddr type local tcp dport %s redirect to :%d comment \"edge\"", quoteList(wans), ports, edgeWANPort)
 	}
 }
 

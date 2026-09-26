@@ -3,7 +3,7 @@
 
 Starts headless Chrome with the DevTools protocol, loads URL at WIDTH x HEIGHT (device scale 2) with the given
 prefers-color-scheme, waits WAIT_SECONDS of wall-clock time (pages that poll an API need it), captures a PNG.
-Standard library only (a minimal WebSocket client)."""
+Standard library only (a minimal WebSocket client). CDP_PORT=N picks the DevTools port (default 9333)."""
 import base64, json, os, socket, struct, subprocess, sys, tempfile, time, urllib.request
 
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -69,7 +69,7 @@ class WS:
 
 def main():
     url, out, w, h, scheme, wait = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), sys.argv[5], float(sys.argv[6])
-    port = 9333
+    port = int(os.environ.get("CDP_PORT", "9333"))  # concurrent runs: give each its own port
     prof = tempfile.mkdtemp(prefix="cdpshot-")
     p = subprocess.Popen([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", f"--remote-debugging-port={port}",
                           f"--user-data-dir={prof}", f"--window-size={w},{h}", "about:blank"],

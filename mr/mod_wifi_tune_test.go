@@ -461,6 +461,9 @@ func TestSteerPass(t *testing.T) {
 	if st.Count["sent"] != 3 || st.Count["rejected"] != 1 || st.Count["noreply"] != 1 || st.Token != 3 {
 		t.Errorf("counts %+v token %d", st.Count, st.Token)
 	}
+	if x := st.Dev["02:00:00:00:00:0a"]; x == nil || x.Accepted != 1 || x.Rejected != 1 || x.NoReply != 1 || x.Moved != 1 {
+		t.Errorf("per device: %+v", x)
+	}
 
 	// 5 GHz radio in its radar check, or hostapd not answering: nothing is asked
 	ops["phy1"] = radioOp{State: "DFS", BSS: ops["phy1"].BSS}

@@ -95,7 +95,7 @@ func serviceEffect(s string) string {
 		return "WAN " + strings.TrimPrefix(s, "mr-pppoe.") + " 重新拨号：断网约 5–10 秒，公网地址可能改变"
 	case strings.HasPrefix(s, "mr-udhcpc."), s == "mr-dhcpcd":
 		return "WAN 重新获取地址：短暂断网"
-	case s == "dnsmasq":
+	case s == "dnsmasq", s == "mr-parental-dns":
 		return "DNS / DHCP 重启：解析中断约 1 秒"
 	case s == "mr-proxy", s == "mr-proxy-dns":
 		return "代理重启：走代理的连接会断开重连"

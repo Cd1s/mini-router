@@ -146,8 +146,9 @@ func renderNft(c *Config, exists func(string) bool) string {
 		r("%s", l)
 	}
 	if haveFT {
-		if len(acc) > 0 {
+		if len(acc) > 0 || len(devLimited(c)) > 0 {
 			// controlled devices are never offloaded, so a schedule also cuts their existing connections
+			// (and a rate-limited device's packets all pass its policer: devices[].limit, mod_dev_limit.go)
 			r("meta nfproto ipv4 meta l4proto { tcp, udp } ct state established ip saddr != @ac_4 ip daddr != @ac_4 flow add @ft")
 			r("meta nfproto ipv6 meta l4proto { tcp, udp } ct state established ip6 saddr != @ac_6 ip6 daddr != @ac_6 flow add @ft")
 		} else {
@@ -198,14 +199,17 @@ func fwNft(c *Config, hook string, n *Nft) {
 	fwd := fwEnabledForwards(c)
 	switch hook {
 	case "defs":
-		if len(fwAccessEntries(c)) > 0 {
-			// learned addresses of access-controlled devices (see fwAccessForward)
+		for _, r := range presenceRules(c) {
+			n.W("chain %s {\n\t}", presenceChain(r.Name))
+		}
+		if len(fwAccessEntries(c)) > 0 || len(devLimited(c)) > 0 {
+			// learned addresses of access-controlled / rate-limited devices (see fwAccessForward)
 			n.W("set ac_4 { type ipv4_addr; size 4096; flags dynamic,timeout; timeout 6h; }")
 			n.W("set ac_6 { type ipv6_addr; size 4096; flags dynamic,timeout; timeout 6h; }")
-			for _, i := range fwAccessEntries(c) {
-				n.W("set ac%d_4 { type ipv4_addr; size 1024; flags dynamic,timeout; timeout 6h; }", i)
-				n.W("set ac%d_6 { type ipv6_addr; size 1024; flags dynamic,timeout; timeout 6h; }", i)
-			}
+		}
+		for _, i := range fwAccessEntries(c) {
+			n.W("set ac%d_4 { type ipv4_addr; size 1024; flags dynamic,timeout; timeout 6h; }", i)
+			n.W("set ac%d_6 { type ipv6_addr; size 1024; flags dynamic,timeout; timeout 6h; }", i)
 		}
 		if len(fwd) > 0 {
 			// NAT loopback: trusted LAN clients reaching a forwarded port on a WAN address
@@ -368,6 +372,9 @@ func lowerAll(xs []string) []string {
 // fwRuleLines renders one traffic rule (possibly several nft rules: one per address family and
 // per time-window group; with log, a rate-limited log rule precedes each verdict rule).
 func fwRuleLines(c *Config, x FwRule, clk fwClock) []string {
+	if x.When != nil { // filled by fwLoad while the condition holds (presenceScript)
+		return []string{"jump " + presenceChain(x.Name)}
+	}
 	var base []string
 	if z := x.Src; z == "lan" || z == "guest" || z == "wan" {
 		base = append(base, "iifname { "+quoteList(fwZoneIfs(c, z))+" }")
@@ -529,10 +536,15 @@ func fwAccessInput(c *Config, clk fwClock) []string {
 // extends it (a stale address would otherwise stay off the offload path for as long as reloads
 // come more often than the set timeout).
 func fwAccessElements(c *Config, neigh []fwNeigh, prev []fwLearnedElem) string {
-	idx := map[string][]int{}
+	idx := map[string][]string{} // MAC → its sets (without the _4 / _6 suffix)
 	for _, i := range fwAccessEntries(c) {
 		for _, m := range fwAccessMACs(c, c.Firewall.Access[i]) {
-			idx[m] = append(idx[m], i)
+			idx[m] = append(idx[m], fmt.Sprintf("ac%d", i))
+		}
+	}
+	for _, i := range devLimited(c) { // devices[].limit (mod_dev_limit.go)
+		for _, m := range lowerAll(c.Devices[i].MACs) {
+			idx[m] = append(idx[m], fmt.Sprintf("lim%d", i))
 		}
 	}
 	if len(idx) == 0 {
@@ -572,8 +584,8 @@ func fwAccessElements(c *Config, neigh []fwNeigh, prev []fwLearnedElem) string {
 			continue
 		}
 		add("ac_"+fam(ip), ip.String(), 0)
-		for _, i := range ids {
-			add(fmt.Sprintf("ac%d_%s", i, fam(ip)), ip.String(), 0)
+		for _, s := range ids {
+			add(s+"_"+fam(ip), ip.String(), 0)
 		}
 	}
 	keys := make([]string, 0, len(elems))
@@ -653,7 +665,7 @@ func fwSetElems(b []byte) []fwLearnedElem {
 // fwAccessScript returns the `add element` commands that refill the learned access-control sets
 // after a reload: the previous sets' addresses (prev) plus the neighbour table and static leases.
 func fwAccessScript(c *Config, prev []fwLearnedElem) string {
-	if len(fwAccessEntries(c)) == 0 {
+	if len(fwAccessEntries(c)) == 0 && len(devLimited(c)) == 0 {
 		return ""
 	}
 	var neigh []fwNeigh
@@ -704,7 +716,7 @@ func fwLoad(c *Config) error {
 	// arrives in between (sets still empty) puts the connection into the flowtable (hardware
 	// offload), where a later time window can no longer cut it.
 	var elems string
-	if len(fwAccessEntries(c)) > 0 {
+	if len(fwAccessEntries(c)) > 0 || len(devLimited(c)) > 0 {
 		elems = fwAccessScript(c, fwLearned())
 	}
 	// the addresses dnsmasq learned for policy_routes domains (net module): dnsmasq only adds them when
@@ -714,6 +726,7 @@ func fwLoad(c *Config) error {
 	// also replaces the flowtable, so a paused device's offloaded flows come back to the CPU path,
 	// where these rules drop them in both directions.
 	elems += pauseScript(c)
+	elems += presenceScript(c) // presence rules (firewall.rules[].when) whose condition holds
 	loaded := false
 	if elems != "" {
 		if out, err := runStdin(rules+elems, "nft", "-f", "-"); err == nil {

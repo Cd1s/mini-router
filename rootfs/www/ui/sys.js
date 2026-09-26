@@ -66,33 +66,109 @@ const sleep = ms => new Promise(r=>setTimeout(r, ms));
 
 // ---------- DDNS (services.ddns; no daemon: WAN hooks + crond run `mr ddns sync`) ----------
 const ago = t => t ? fmtDur(Date.now()/1000 - t)+"前" : "—";
-const DDNS_BLANK = ()=>({name:"", zone:"", provider:"cloudflare", token_secret:"cf_ddns_token", ipv4:"active", ipv6:"off", ttl:0});
+// provider -> [name, the keys it takes (docs/modules/sys.md), default secret name, how to get the credentials]
+const DDNS_P = {
+  cloudflare:["Cloudflare", ["zone","token_secret","ttl"], "cf_ddns_token", "Token：My Profile › API Tokens › “Edit zone DNS” 模板，只授权这个域。只改记录的地址，代理（橙色云）等设置不变。"],
+  alidns:["阿里云 AliDNS", ["zone","key_id","key_secret","ttl"], "ali_dns_key", "RAM 访问控制新建用户，只授予 AliyunDNSFullAccess，用它的 AccessKey。线路和 TTL 保持不变。"],
+  dnspod:["腾讯云 DNSPod", ["zone","key_id","key_secret","ttl"], "tc_dns_key", "访问管理 CAM 新建子用户，授予 QcloudDNSPodFullAccess，用它的 API 密钥（SecretId / SecretKey）。线路和 TTL 保持不变。"],
+  duckdns:["DuckDNS", ["token_secret"], "duck_token", "域名写 名字.duckdns.org；Token 在 duckdns.org 登录后的首页。"],
+  dyndns2:["dyndns2（No-IP、Dynu、deSEC…）", ["url","username","password_secret"], "ddns_password", "服务商的更新地址和账号（deSEC 的密码是 Token）。"],
+  webhook:["Webhook", ["url","method","token_secret"], "ddns_hook_token", "{name} {type} {ip} 换成域名、A / AAAA 和地址，{token} 换成 Token（URL 里没有 {token} 时 Token 放在 Authorization: Bearer 头）；POST 还带 JSON {name, type, ip}。"],
+};
+const DDNS_KEYS = ["zone","token_secret","key_id","key_secret","url","username","password_secret","method","ttl"];
+// an ipv4 / ipv6 value as [mode, argument]
+const addrMode = (v, v6)=>{
+  v = v || (v6 ? "off" : "active");
+  if (v.startsWith("url:") || v.startsWith("mac:")) return [v.slice(0,3), v.slice(4)];
+  if (v==="off" || v==="active" || v==="router") return [v, ""];
+  if (v6 && v.startsWith("::")) return ["iid", v];
+  if (v6 || /^[0-9.]+$/.test(v)) return ["ip", v];
+  return ["wan:"+v, ""];
+};
+// a url: source by its host (the status table stays narrow)
+const srcShort = s=>{ try { return s.startsWith("url:") ? "url:"+new URL(s.slice(4)).host : s; } catch(e){ return s; } };
+const addrText = (v, v6)=>{
+  const [m, a] = addrMode(v, v6);
+  return {off:dash(""), active:"在用的 WAN", router:"路由器"}[m] || mono(m.startsWith("wan:") ? m.slice(4) : m==="url"||m==="mac" ? srcShort(m+":"+a) : a);
+};
+function addrIn(c, o, key, v6){
+  const [m0, a0] = addrMode(o[key], v6), st = {m:m0, a:a0};
+  const PH = {url: v6 ? "https://api6.ipify.org" : "https://api.ipify.org", mac:"aa:bb:cc:dd:ee:ff", ip: v6 ? "2001:db8::10" : "203.0.113.10", iid:"::10"};
+  const opts = v6 ? [["off","不更新"],["router","路由器自己的地址"],["iid","LAN 设备：前缀 + 后缀"],["mac","LAN 设备：按 MAC"],["url","外部查询（URL）"],["ip","固定地址"]]
+    : [["active","在用的 WAN（自动）"], ...(c.wan||[]).map(w=>["wan:"+w.name, "WAN "+w.name]), ["url","外部查询（URL）"],["mac","LAN 设备：按 MAC"],["ip","固定地址"],["off","不更新"]];
+  const box = h("span",{class:"row"});
+  const set = ()=>{ o[key] = st.m.startsWith("wan:") ? st.m.slice(4) : st.m==="url"||st.m==="mac" ? st.m+":"+st.a.trim() : PH[st.m] ? st.a.trim() : st.m; };
+  const draw = ()=>box.replaceChildren(...[
+    h("select",{style:"width:auto", onchange:e=>{ st.m = e.target.value; st.a = ""; set(); draw(); }}, opts.map(([v,l])=>h("option",{value:v, selected:v===st.m}, l))),
+    PH[st.m] ? h("input",{type:"text", value:st.a, placeholder:PH[st.m], style:"flex:1 1 150px;min-width:0", oninput:e=>{ st.a = e.target.value; set(); }}) : null].filter(Boolean));
+  draw();
+  return box;
+}
+function editDDNS(c, orig, save){
+  const x = clone(orig);
+  x.provider ||= "cloudflare";
+  const tx = (k, ph)=>h("input",{type:"text", value:x[k]??"", placeholder:ph||"", oninput:e=>{ x[k] = e.target.value.trim(); if (!x[k]) delete x[k]; }});
+  const pbox = h("div",{style:"display:contents"});
+  const drawP = ()=>{
+    const P = DDNS_P[x.provider] || DDNS_P.cloudflare, ks = P[1], sk = ks.find(k=>k.endsWith("_secret"));
+    for (const k of DDNS_KEYS) if (!ks.includes(k)) delete x[k];
+    if (x.provider!=="webhook") x[sk] ||= P[2];
+    if (ks.includes("method")) x.method ||= "GET";
+    const f = (k, l, ph, hint)=>ks.includes(k) ? field(l, tx(k, ph), hint) : [];
+    const nameIn = tx(sk, P[2]), secIn = inSecret(x, sk);
+    // the webhook's token is optional: typing one gives it the default name
+    secIn.addEventListener("focus", ()=>{ if (!x[sk]){ x[sk] = P[2]; nameIn.value = P[2]; } });
+    pbox.replaceChildren(...[
+      ...f("zone", "Zone（域）", "example.com", "服务商那里的域名，上面的域名在它下面"),
+      ...f("key_id", x.provider==="alidns" ? "AccessKey ID" : "SecretId"),
+      ...f("url", x.provider==="webhook" ? "URL" : "更新地址", x.provider==="webhook" ? "https://example.com/ddns?host={name}&ip={ip}" : "https://dynupdate.no-ip.com/nic/update"),
+      ...f("username", "用户名"),
+      ...(ks.includes("method") ? field("方法", inSel(x,"method",["GET","POST"])) : []),
+      ...field("密钥引用名", nameIn, "secrets.yaml 里的名字，几条记录可以共用"),
+      ...field({token_secret:"Token", key_secret: x.provider==="alidns" ? "AccessKey Secret" : "SecretKey", password_secret:"密码"}[sk], secIn),
+      ...(ks.includes("ttl") ? field("TTL", inNum(x,"ttl",{min:0, max:86400, style:"max-width:110px"}), "0 = 保持记录原来的（新建：服务商默认）") : []),
+      h("span"), h("div",{class:"hint"}, P[3])].filter(Boolean)); // field() gives null for "no hint"
+  };
+  drawP();
+  const m = modal(orig.name ? "编辑 DDNS · "+orig.name : "添加 DDNS 记录", form(
+      ...field("域名", tx("name","home.example.com")),
+      ...field("服务商", inSel(x,"provider",Object.entries(DDNS_P).map(([k,v])=>[k,v[0]]), drawP)),
+      pbox,
+      ...field("A 记录（IPv4）", addrIn(c, x, "ipv4", false), "运营商内网 / CGNAT 地址不会发布；外部查询从这条 WAN 发出，适合路由器在光猫后面"),
+      ...field("AAAA（IPv6）", addrIn(c, x, "ipv6", true), "LAN 设备的地址外网要访问，还要在 防火墙 › IPv6 入站 放行")),
+    [h("button",{class:"btn",onclick:()=>m.remove()},"取消"), h("button",{class:"btn p",onclick:()=>{
+      if (!x.name) return toast("请填写域名");
+      for (const k of ["ipv4","ipv6"]) if (/^(url|mac):$/.test(x[k]||"") || x[k]==="") return toast("请填写地址来源的内容", 4000);
+      if (!x.ttl) delete x.ttl;
+      if (x.provider==="webhook" && x.token_secret && !S.secrets[x.token_secret] && !S.secretsSet[x.token_secret]) delete x.token_secret;
+      m.remove(); save(x); }},"确定")]);
+}
 function ddnsCard(c, st){
   const sv = c.services;
   const dd = sv.ddns || {enabled:false, interval:10};
   const recs = dd.records || [];
   // the section (and its list) appears in router.yaml on the first edit, not by opening this page
   const attach = ()=>{ if (!dd.records) dd.records = recs; if (!sv.ddns) sv.ddns = dd; touch(); };
-  const v4 = ()=>[["active","在用的 WAN（自动）"],["off","不更新"], ...(c.wan||[]).map(w=>[w.name, w.name])];
-  const t = etable(recs, [
-    {k:"name", l:"域名", ph:"home.example.com"},
-    {k:"zone", l:"Zone（域）", ph:"example.com"},
-    {k:"token_secret", l:"Token 引用名", ph:"cf_ddns_token", w:"130px"},
-    {k:"token_secret", l:"API Token", t:"secret"},
-    {k:"ipv4", l:"A 记录（IPv4）", t:"sel", o:v4},
-    {k:"ipv6", l:"AAAA（IPv6）", ph:"off / router / ::10", w:"130px"},
-    {k:"ttl", l:"TTL", t:"num", w:"80px"},
-  ], ()=>{ attach(); return DDNS_BLANK(); }, {noMove:true});
+  const tb = h("tbody");
+  const draw = ()=>tb.replaceChildren(...(recs.length ? recs.map((x,i)=>h("tr",{},
+    h("td",{}, mono(x.name||""), h("div",{class:"mut",style:"font-size:12px"}, (DDNS_P[x.provider||"cloudflare"]||[x.provider])[0]),
+      h("div",{class:"row",style:"margin-top:4px"},
+        h("button",{class:"btn sm",onclick:()=>editDDNS(c, x, y=>{ recs[i] = y; attach(); draw(); })},"编辑"),
+        h("button",{class:"btn sm d",onclick:()=>{ recs.splice(i,1); attach(); draw(); }},"删除"))),
+    h("td",{}, h("div",{}, "A ", addrText(x.ipv4, false)), h("div",{}, "AAAA ", addrText(x.ipv6, true)))))
+    : [h("tr",{}, h("td",{colspan:2, class:"mut"},"（空）"))]));
+  draw();
+  const add = h("button",{class:"btn sm p",onclick:()=>editDDNS(c, {name:"", provider:"cloudflare", ipv4:"active", ipv6:"off"}, y=>{ recs.push(y); attach(); draw(); })},"+ 添加");
   const stBox = h("div");
   const state = r=>{
-    if (r.error) return h("span",{class:"err",title:r.error}, r.stopped ? "Token 被拒绝，已停止自动重试（改配置或点“立即更新”）：" : "失败（"+ago(r.error_at)+"）：", r.error);
+    if (r.error) return h("span",{class:"err",title:r.error,style:"display:inline-block;min-width:220px"}, r.stopped ? "密钥被拒绝，已停止自动重试（改配置或点“立即更新”）：" : "失败（"+ago(r.error_at)+"）：", r.error);
     if (!r.local) return dash("");
     return r.published===r.local ? h("span",{class:"tag ok"},"已同步") : h("span",{class:"tag warn"},"待更新");
   };
   const drawSt = rows=>{
     rows = rows||[];
     stBox.replaceChildren(rows.length ? roTable(["域名","类型","来源","本机地址","已发布","上次成功","状态"], rows.map(r=>[
-      mono(r.name), r.type, mono(r.source||""), r.local ? mono(r.local) : h("span",{class:"mut"}, r.note||"—"),
+      mono(r.name), r.type, mono(srcShort(r.source||"")), r.local ? mono(r.local) : h("span",{class:"mut"}, r.note||"—"),
       r.published ? mono(r.published) : dash(""), ago(r.last_ok), state(r)])) :
       h("div",{class:"mut",style:"padding:10px 16px"}, "（保存并应用后显示状态）"));
   };
@@ -101,18 +177,17 @@ function ddnsCard(c, st){
     e.target.disabled = true;
     try { const r = await api("sys.ddnsupdate",{force:true}); drawSt(r.records); toast("已检查并更新"); }
     catch(err){ toast(err.message, 5000); } finally { e.target.disabled = false; } }}, "立即更新");
-  return card("DDNS 动态域名（Cloudflare）", [
+  return card("DDNS 动态域名", [
     h("div",{style:"padding:10px 16px 0"}, form(
       ...field("启用", inBool(dd,"enabled",attach)),
       ...field("定时检查（分钟）", h("input",{type:"number", min:0, max:60, value:dd.interval??10, style:"max-width:110px",
         oninput:e=>{ dd.interval = e.target.value===""?10:Number(e.target.value); attach(); }}),
-        "WAN 上线 / 续约 / IPv6 前缀变化时立即更新；此外每隔几分钟核对一次（地址没变就不联网），0 = 只靠 WAN 事件。每天还会向 Cloudflare 核对一次记录。"))),
+        "WAN 上线 / 续约 / IPv6 前缀变化时立即更新；此外每隔几分钟核对一次（地址没变就不联网），0 = 只靠 WAN 事件。每天还会向服务商核对一次记录。"))),
     h("div",{class:"sys-note",style:"padding:0 16px"},
-      "Token：Cloudflare › My Profile › API Tokens › “Edit zone DNS” 模板，只授权这个域。只改记录的地址（和填了的 TTL），代理（橙色云）等设置保持不变；记录不存在时新建（不代理）。",
-      " A 记录用 WAN 的公网 IPv4（运营商内网 / CGNAT 地址不会发布）。AAAA：router = 路由器自己的 IPv6；::10 这样的后缀 = LAN 设备（前缀 + 后缀，外网访问还要在 防火墙 › IPv6 入站 放行）。"),
-    t.el,
+      "服务商：Cloudflare、阿里云、DNSPod、DuckDNS、dyndns2（No-IP 等）或 Webhook。密钥只存在路由器的 secrets.yaml 里。地址变化会记入事件，按“通知”的设置推送。"),
+    h("div",{class:"tw"}, h("table",{}, h("thead",{}, h("tr",{}, ["域名 / 服务商","地址来源"].map(x=>h("th",{},x)))), tb)),
     h("div",{class:"row",style:"padding:10px 16px 0"}, h("b",{},"状态"), h("span",{class:"sp",style:"flex:1"}), upd),
-    stBox], t.add, true);
+    stBox], add, true);
 }
 
 // ---------- HTTPS 反向代理 (services.edge: `mr edge serve` = service mr-edge; certificates: `mr edge renew`) ----------
@@ -126,6 +201,20 @@ function edgeCard(c, st, svc){
   const attach = ()=>{ if (!ed.routes) ed.routes = routes; if (!ed.acme) ed.acme = acme; if (!sv.edge) sv.edge = ed; touch(); };
   const tx = (o, k, ph, w)=>h("input",{type:"text", value:o[k]??"", placeholder:ph||"", style:w?"max-width:"+w:null, oninput:e=>{ o[k]=e.target.value; attach(); }});
   const sw = (checked, set)=>h("label",{class:"sw"}, h("input",{type:"checkbox", checked, onchange:e=>{ set(e.target.checked); attach(); }}), h("span"));
+  // DNS-01 credentials: the same kind as a DDNS record of that provider (the same secret works)
+  const acmeBox = h("div",{style:"display:contents"});
+  const drawAcme = ()=>{
+    const p = acme.provider || "cloudflare";
+    if (p==="cloudflare"){ delete acme.key_id; delete acme.key_secret; acme.token_secret ||= "cf_ddns_token"; }
+    else { delete acme.token_secret; acme.key_secret ||= DDNS_P[p][2]; }
+    acmeBox.replaceChildren(...(p==="cloudflare" ? [
+      ...field("Token 引用名", tx(acme,"token_secret","cf_ddns_token","200px"), "和 DDNS 用同一种 Token（Zone › DNS › Edit），可以直接用同一个"),
+      ...field("API Token", inSecret(acme,"token_secret"))] : [
+      ...field(p==="alidns" ? "AccessKey ID" : "SecretId", tx(acme,"key_id","","260px"), "和 DDNS 用同一套 API 密钥"),
+      ...field("密钥引用名", tx(acme,"key_secret",DDNS_P[p][2],"200px")),
+      ...field(p==="alidns" ? "AccessKey Secret" : "SecretKey", inSecret(acme,"key_secret"))]).filter(Boolean));
+  };
+  drawAcme();
   const t = etable(routes, [
     {k:"name", l:"名称", ph:"nas", w:"90px"},
     {k:"host", l:"域名", ph:"nas.example.com"},
@@ -166,14 +255,14 @@ function edgeCard(c, st, svc){
   const run = svc ? h("span",{class:"tag "+(svc.running?"ok":(svc.wanted?"bad":""))}, !svc.installed?"未安装":svc.running?"运行中":"已停止") : null;
   return card("HTTPS 反向代理（自动证书）", [
     h("div",{style:"padding:10px 16px 0"}, form(
-      ...field("启用", inBool(ed,"enabled",attach), "mr-edge：按域名把 HTTPS 转发到内网服务；证书由 Let's Encrypt 通过 Cloudflare DNS 验证自动申请、每天检查续期（不需要 80 端口）"),
+      ...field("启用", inBool(ed,"enabled",attach), "mr-edge：按域名把 HTTPS 转发到内网服务；证书由 Let's Encrypt 通过 DNS 验证（Cloudflare、阿里云或 DNSPod）自动申请、每天检查续期（不需要 80 端口）"),
       ...field("HTTPS 端口", h("input",{type:"number", min:1, max:65535, value:ed.port??443, style:"max-width:110px",
         oninput:e=>{ ed.port = e.target.value===""?443:Number(e.target.value); attach(); }})),
       ...field("对外网开放", sw(!!ed.open, v=>{ ed.open = v; }), "打开后外网（IPv4 + IPv6）能访问这个端口；每个站点还可以用“允许访问”限制来源。不要再在防火墙里开放同一端口（会被拒绝）"),
       ...field("局域网解析", sw(ed.lan_dns!==false, v=>{ if (v) delete ed.lan_dns; else ed.lan_dns = false; }), "局域网里这些域名直接解析到路由器（不绕公网，WAN 断了也能用）"),
       ...field("证书邮箱", tx(acme,"email","可留空","260px")),
-      ...field("Cloudflare Token 引用名", tx(acme,"token_secret","cf_ddns_token","200px"), "和 DDNS 用同一种 Token（Zone › DNS › Edit），可以直接用同一个"),
-      ...field("API Token", inSecret(acme,"token_secret")),
+      ...field("DNS 验证", inSel(acme,"provider",["cloudflare","alidns","dnspod"].map(k=>[k, DDNS_P[k][0]]), ()=>{ attach(); drawAcme(); })),
+      acmeBox,
       ...field("通配符证书", h("input",{type:"text", value:(acme.wildcard||[]).join(", "), placeholder:"example.com", style:"max-width:260px",
         oninput:e=>{ acme.wildcard = e.target.value.split(/[\s,]+/).filter(Boolean); attach(); }}), "这些域名下一级的站点共用一张 *.域名 证书（子域名不会出现在证书公开日志里）；其余每个域名一张"),
       ...field("测试 CA", sw(!!acme.staging, v=>{ acme.staging = v; }), "Let's Encrypt staging：证书不受浏览器信任，只用来试配置"))),
@@ -425,7 +514,8 @@ function tokenCard(c){
 // ---------- 计划任务 ----------
 const DAYS = [["1","一"],["2","二"],["3","三"],["4","四"],["5","五"],["6","六"],["0","日"]];
 const WEEK = ["周日","周一","周二","周三","周四","周五","周六"]; // cron day of week → name
-const ACTIONS = {reboot:"重启路由器", restart:"重启服务", reconnect:"重新拨号 / 重连 WAN", wol:"唤醒设备 (WOL)"};
+const ACTIONS = {reboot:"重启路由器", restart:"重启服务", reconnect:"重新拨号 / 重连 WAN", wol:"唤醒设备 (WOL)",
+  "wifi-off":"关闭 WiFi", "wifi-on":"打开 WiFi", "leds-off":"关闭指示灯", "leds-on":"打开指示灯"};
 const pad2 = n=>String(n).padStart(2,"0");
 function cronText(spec){
   const f = (spec||"").trim().split(/\s+/);
@@ -470,6 +560,7 @@ function targetOptions(action, svcNames){
   if (action==="restart") return svcNames.filter(n=>n!=="mr-network").map(n=>[n,n]);
   if (action==="reconnect") return (S.cfg.wan||[]).filter(w=>w.proto!=="static").map(w=>[w.name, w.name+"（"+(w.proto==="pppoe"?"PPPoE 重拨":"DHCP 重新获取")+"）"]);
   if (action==="wol") return (S.cfg.dhcp.hosts||[]).filter(x=>x.name).map(x=>[x.name, x.name+"（"+x.mac+"）"]);
+  if (/^wifi-/.test(action)) return [["","全部射频"], ...((S.cfg.wifi||{}).radios||[]).map(r=>[r.phy, r.phy+"（"+r.band+"）"])];
   return [];
 }
 function editSchedule(orig, svcNames, onSave){
@@ -490,8 +581,8 @@ function editSchedule(orig, svcNames, onSave){
   };
   const drawTarget = ()=>{
     const opts = targetOptions(x.action, svcNames);
-    if (!opts.length){ delete x.target; tgt.replaceChildren(h("span",{class:"mut"}, x.action==="reboot"?"—":"（没有可选项）")); return; }
-    if (!opts.some(o=>o[0]===x.target)) x.target = opts[0][0];
+    if (!opts.length){ delete x.target; tgt.replaceChildren(h("span",{class:"mut"}, x.action==="reboot"||/^leds/.test(x.action)?"—":"（没有可选项）")); return; }
+    if (!opts.some(o=>o[0]===(x.target||""))) x.target = opts[0][0];
     tgt.replaceChildren(inSel(x,"target",opts));
   };
   const drawTime = ()=>{
@@ -527,7 +618,7 @@ function editSchedule(orig, svcNames, onSave){
     [h("button",{class:"btn",onclick:()=>m.remove()},"取消"), h("button",{class:"btn p",onclick:()=>{
       x.cron = cronBuild(st);
       if (!/^[A-Za-z0-9_.-]{1,40}$/.test(x.name||"")) return toast("名称：字母、数字、_ . -，1-40 个字符", 4000);
-      if (x.action==="reboot") delete x.target;
+      if (!x.target) delete x.target;
       m.remove(); onSave(x); }},"确定")]);
 }
 registerPage("system", "schedules", "计划任务", 20, async ()=>{
@@ -555,7 +646,8 @@ registerPage("system", "schedules", "计划任务", 20, async ()=>{
   const add = h("button",{class:"btn sm p",onclick:()=>editSchedule({name:"", action:"reboot", cron:"30 4 * * 1"}, svcNames, y=>{ list.push(y); touch(); draw(); })},"+ 添加");
   return h("div",{},
     card("计划任务", [h("div",{class:"mut",style:"padding:10px 16px"},
-      "由 busybox crond 按路由器时区执行，只有固定的几种动作：重启路由器、重启某个服务、重连某条 WAN（PPPoE 重拨 / DHCP 重新获取）、唤醒设备（WOL，对象是 DHCP 静态分配里的主机）。每次执行都记入系统日志和“最近变更”。"),
+      "由 busybox crond 按路由器时区执行，只有固定的几种动作：重启路由器、重启某个服务、重连某条 WAN（PPPoE 重拨 / DHCP 重新获取）、唤醒设备（WOL，对象是 DHCP 静态分配里的主机）、关闭 / 打开 WiFi 和指示灯。每次执行都记入系统日志和“最近变更”。"
+      +"关闭 / 打开是时间段：重启、应用配置或 hostapd 重启后按最近一次触发的动作恢复（例如 23:00 关、7:00 开，半夜重启后 WiFi 仍是关的）。"),
       h("div",{class:"tw"}, h("table",{}, h("thead",{}, h("tr",{}, ["启用","名称","时间","动作","对象",""].map(x=>h("th",{},x)))), tb))], add, true));
 });
 
@@ -637,6 +729,49 @@ function watchApply(title){
     }
   };
   poll();
+}
+
+// 异地备份 (notify.archive, docs/modules/sys.md): type -> [label, [key, label, hint]…]; *_secret keys get a name + value row
+const ARCH = {
+  webdav:["WebDAV", [["url","文件夹地址","https://，例如坚果云 https://dav.jianguoyun.com/dav/备份/（密码用坚果云的“应用密码”）"],
+    ["user","账号"], ["password_secret","密码","archive_dav_password"], ["name","文件名","留空 = 每次一个 router-日期-时间.yaml"]]],
+  s3:["S3 兼容", [["url","Endpoint","https://，例如 R2 https://账号ID.r2.cloudflarestorage.com；阿里云 OSS 填 https://桶名.oss-cn-hangzhou.aliyuncs.com 并留空桶名"],
+    ["region","区域","R2 填 auto"], ["bucket","桶名","留空 = Endpoint 已含桶名"], ["prefix","前缀","例如 backups/"],
+    ["access_key_id","Access Key ID"], ["secret_key_secret","Secret Access Key","archive_s3_key"], ["name","文件名","留空 = 每次一个 router-日期-时间.yaml"]]],
+  github:["GitHub", [["repo","仓库","owner/name，建议私有仓库"], ["branch","分支","留空 = 默认分支"], ["path","文件路径","默认 router.yaml"],
+    ["token_secret","Token","archive_github_token"]]],
+  https:["自定义网址", [["url_secret","URL","archive_url"], ["token_secret","Bearer Token（可选）","archive_token"]]],
+};
+async function archiveCard(){
+  const c = C(), box = h("div"), last = h("div",{class:"sys-note"});
+  const show = r=>last.replaceChildren(!r || !r.time ? tr("还没有备份过。") : r.ok ? h("span",{style:"color:var(--ok)"}, tr("上次备份成功："+new Date(r.time*1000).toLocaleString())) :
+    h("span",{class:"err"}, tr("上次备份失败（"+new Date(r.time*1000).toLocaleString()+"）："), r.error));
+  api("sys.archivetest").then(show).catch(()=>{});
+  const attach = a=>{ c.notify ||= {}; c.notify.archive = a; touch(); };
+  const setType = (a, t)=>{ for (const k of Object.keys(a)) delete a[k]; a.type = t;
+    for (const [k,,d] of ARCH[t][1]) if (k.endsWith("_secret") && !(t==="https" && k==="token_secret")) a[k] = d;
+    if (t==="s3") a.region = "auto"; };
+  const draw = ()=>{
+    const a = c.notify && c.notify.archive;
+    if (!a) return box.replaceChildren(form(...field("开启", inBool({on:false},"on",()=>{ const n = {}; setType(n,"webdav"); attach(n); draw(); }),
+      "每次确认的配置更改后，把 router.yaml（不含机密）传到异地")));
+    const t = ARCH[a.type||"https"] ? a.type||"https" : "https";
+    const rows = [...field("开启", inBool({on:true},"on",()=>{ delete c.notify.archive; touch(); draw(); })),
+      ...field("类型", inSel({type:t},"type",Object.entries(ARCH).map(([k,v])=>[k,v[0]]), v=>{ setType(a,v); touch(); draw(); }))];
+    for (const [k,l,hint] of ARCH[t][1]){
+      if (k.endsWith("_secret")) rows.push(...field(l+" 引用名", inText(a,k,{class:"mono",placeholder:hint}), "secrets.yaml 里的名字"), ...field(l, inSecret(a,k), "只写入 secrets.yaml，页面不会显示"));
+      else rows.push(...field(l, inText(a,k,{class:"mono"}), hint));
+    }
+    if (t==="https") rows.push(...field("方法", inSel(a,"method",[["post","POST"],["put","PUT"]])));
+    box.replaceChildren(form(...rows));
+  };
+  draw();
+  const test = h("button",{class:"btn sm",onclick:async()=>{
+    test.disabled = true;
+    try { show(await api("sys.archivetest",{})); } catch(e){ toast(e.message, 5000); }
+    test.disabled = false; }},"立即备份测试");
+  return card("异地备份", [box, last, h("div",{class:"sys-note"},"WebDAV（坚果云、Nextcloud、NAS）、S3 兼容（Cloudflare R2、阿里云 OSS、MinIO、Backblaze B2）、GitHub 仓库或自定义 https 地址。",
+    "密钥只存在路由器的 secrets.yaml 里。“立即备份测试”用已应用的配置。")], test);
 }
 
 registerPage("system", "backup", "备份与升级", 35, async ()=>{
@@ -754,7 +889,7 @@ registerPage("system", "backup", "备份与升级", 35, async ()=>{
           try { await api("sys.factoryreset",{confirm:"RESET"}); m.remove(); toast("正在恢复出厂设置，路由器将重启…", 10000); } catch(e){ toast(e.message,5000); } }},"恢复出厂设置")]);
       inp.focus(); }},"恢复出厂设置…"));
 
-  return h("div",{}, backupCard, restoreCard, card("固件升级", fwBody), card("恢复出厂设置", resetBody),
+  return h("div",{}, backupCard, await archiveCard(), restoreCard, card("固件升级", fwBody), card("恢复出厂设置", resetBody),
     h("div",{class:"mut"},"每次应用配置前的自动快照在 ", h("a",{href:"#history"},"备份与回滚"), " 页面。"));
 });
 
@@ -806,22 +941,30 @@ registerPage("system", "diag", "网络诊断", 50, ()=>{
     btn.disabled = false; }},"开始");
   const presets = h("div",{class:"row"}, [["1.1.1.1","ping"],["223.5.5.5","ping"],["2606:4700:4700::1111","ping6"],["www.qq.com","nslookup"]].map(([host,tool])=>
     h("button",{class:"btn sm",onclick:()=>{ o.host=host; o.tool=tool; show("diag"); }}, tool+" "+host)));
-  return card("网络诊断", [form(
+  const sp = h("span",{class:"mono"});
+  const sbtn = h("button",{class:"btn",onclick:async()=>{
+    sbtn.disabled = true; sp.textContent = tr("测速中…（约 20 秒）");
+    try { const r = await api("sys.speedtest",{}); sp.textContent = "↓ "+r.down_mbps+" / ↑ "+r.up_mbps+" Mbit/s"; } catch(e){ sp.textContent = e.message; }
+    sbtn.disabled = false; }},"测速");
+  return h("div",{}, card("网络诊断", [form(
     ...field("工具", inSel(o,"tool",[["ping","Ping (IPv4)"],["ping6","Ping (IPv6)"],["traceroute","Traceroute (IPv4)"],["traceroute6","Traceroute (IPv6)"],["nslookup","DNS 查询 (nslookup，经本机 dnsmasq)"]])),
     ...field("目标", inText(o,"host",{placeholder:"域名或 IP", onkeydown:e=>{ if (e.key==="Enter") btn.click(); }})),
     h("span"), h("div",{class:"row"}, btn),
     h("span"), presets),
-    h("div",{style:"margin-top:14px"}, cmd, out)]);
+    h("div",{style:"margin-top:14px"}, cmd, out)]),
+    card("测速 (Cloudflare)", [h("div",{class:"row"}, sbtn, sp), h("div",{class:"sys-note"},"路由器经默认线路下载、上传各约 8 秒（单连接），结果是下限。")]));
 });
 
 // ---------- 体检与事件: mr doctor, the event log, notifications (router.yaml notify) ----------
 const EVT = {wan_down:"WAN 断线", wan_up:"WAN 恢复", failover:"线路切换", apply:"配置更改", rollback:"回滚",
-  login_lock:"登录锁定", new_device:"新设备", boot:"开机", upgrade:"固件升级", doctor:"体检", cert:"证书", wifi:"WiFi 自愈"};
+  login_lock:"登录锁定", new_device:"新设备", boot:"开机", upgrade:"固件升级", doctor:"体检", cert:"证书", wifi:"WiFi 自愈", ddns:"DDNS",
+  update:"新版本", archive:"异地归档", watchcat:"断网自救", device:"设备上下线"};
 const EVT_ALL = Object.keys(EVT);
 const SEV = {risk:["风险","bad"], warn:["警告","warn"], ok:["正常","ok"], skip:["跳过",""], info:["信息",""]};
 const sevTag = s=>{ const m = SEV[s]||[s,""]; return h("span",{class:"tag "+m[1], style:"white-space:nowrap"}, m[0]); };
 const CHECKS = {config:"配置", pending:"待确认更改", wan:"WAN", routes:"路由", dns:"DNS", ipv6:"IPv6", offload:"流量加速",
-  services:"服务", wifi:"无线", clock:"时间", storage:"存储", memory:"内存", conntrack:"连接数", temp:"温度", crash:"内核", ssh:"SSH"};
+  services:"服务", wifi:"无线", clock:"时间", storage:"存储", memory:"内存", conntrack:"连接数", temp:"温度", crash:"内核", ssh:"SSH",
+  upgrade:"新固件", dnsguard:"DNS 绕过"};
 const when = t => t ? new Date(t*1000).toLocaleString() : "—";
 const stamp = t=>{ const d = new Date(t*1000), p = n=>String(n).padStart(2,"0");
   return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+" "+p(d.getHours())+":"+p(d.getMinutes())+":"+p(d.getSeconds()); };
@@ -848,8 +991,16 @@ async function pageDoctor(){
   };
   again.onclick = run;
   run();
+  const heal = h("button",{class:"btn sm",title:"重启已启用但没在运行的服务（每个服务 10 分钟内最多一次）",onclick:async()=>{
+    heal.disabled = true;
+    try {
+      const r = await api("sys.heal",{});
+      toast((r.actions||[]).length ? r.actions.join("；") : "没有需要修复的服务", 6000);
+      run();
+    } catch(e){ toast(e.message, 5000); }
+    heal.disabled = false; }},"一键修复");
   return h("div",{},
-    card("体检（mr doctor）", box, again, true),
+    card("体检（mr doctor）", box, h("span",{class:"row"}, heal, again), true),
     h("div",{class:"sys-note"}, "只读检查：配置与 guard、待确认的更改、WAN / 路由 / DNS / IPv6、流量加速、服务、无线、时间、存储、内存、连接数、温度、内核崩溃、SSH。",
       "“通知”里设了体检间隔时，后台定期体检，新出现或变严重的问题记为事件并推送。命令行：mr doctor。"));
 }
@@ -906,6 +1057,7 @@ async function pageNotify(){
         ...field("Token 引用名", inText(ch,"token_secret",{class:"mono"}), "secrets.yaml 里的名字"),
         ...field("Bot Token", inSecret(ch,"token_secret"), "@BotFather 给的 123456789:AA…，只写入 secrets.yaml"),
         ...field("Chat ID", inText(ch,"chat_id",{class:"mono", placeholder:"123456789 / -1001234567890 / @频道名"}), "先给机器人发一条消息，再从 getUpdates 里找 chat.id"));
+      rows.push(...field("经代理发送", inBool(ch,"via_proxy",attach), "经 sing-box 的本机入口发送（Telegram 被墙时）；代理没开时直接发送"));
       return h("div",{class:"sys-chan"}, form(...rows), h("div",{class:"row",style:"margin-top:8px;justify-content:flex-end"}, test(ch.name),
         h("button",{class:"btn sm d",onclick:()=>{ chans.splice(i,1); attach(); draw(); }},"删除")));
     }) : [h("div",{class:"mut",style:"padding:10px 16px"},"还没有通知渠道。")]));
@@ -932,7 +1084,9 @@ async function pageNotify(){
       ...field("事件类型", evBoxes, "默认除“配置更改”外全部（自己改的配置一般不用提醒）"),
       ...field("每小时上限", num("rate", 10, {min:1, max:60}), "每个渠道每小时最多几条消息，多出的稍后合并发送"),
       ...field("免打扰时段", quiet, "路由器时间，例如 23:00-07:00：期间只发警告 / 风险，其余等结束后发送"),
-      ...field("后台体检（分钟）", num("doctor_interval", chans.length?30:0, {min:0, max:1440}), "每隔多久后台跑一次 mr doctor，新问题记为事件；0 = 关闭。有渠道时默认 30"))),
+      ...field("后台体检（分钟）", num("doctor_interval", chans.length?30:0, {min:0, max:1440}), "每隔多久后台跑一次 mr doctor，新问题记为事件；0 = 关闭。有渠道时默认 30"),
+      ...field("自动修复", inBool(n,"auto_heal",attach), "后台体检时先重启已启用但没在运行的服务（每个服务 10 分钟内最多一次），记为体检事件；需要后台体检"),
+      ...field("检查新版本", inBool(n,"update_check",attach), "每天查一次 GitHub 上的新版本，有新版本记为事件；只提醒，不会下载或安装"))),
     card("发送状态", status, null, true));
 }
 registerPage("status", "doctor", "体检与事件", 60, ()=>tabs([["doctor","体检",pageDoctor], ["events","事件",pageEvents], ["notify","通知",pageNotify]]));

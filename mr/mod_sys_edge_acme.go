@@ -68,9 +68,21 @@ var (
 	// edgeEvent records an event (type cert); edgeSignal tells `mr edge serve` to reload its certificates
 	edgeEvent  = func(c *Config, sev, key, msg string) { eventAdd(c, "cert", sev, key, msg, true) }
 	edgeSignal = edgeSignalServe
-	// edgeDNS01For: the DNS-01 provider for the config (cloudflare)
+	// edgeDNS01For: the DNS-01 provider for the config (cloudflare, alidns, dnspod: the DDNS clients)
 	edgeDNS01For = func(c *Config) (dns01, error) {
-		tok, err := c.Secret(c.Services.Edge.ACME.Token)
+		a := c.Services.Edge.ACME
+		switch a.Provider {
+		case "alidns", "dnspod":
+			k, err := c.Secret(a.Key)
+			if err != nil {
+				return nil, err
+			}
+			if a.Provider == "alidns" {
+				return &aliDNS01{hc: ddnsHTTP(), keyID: a.KeyID, secret: k}, nil
+			}
+			return &tcDNS01{hc: ddnsHTTP(), id: a.KeyID, key: k}, nil
+		}
+		tok, err := c.Secret(a.Token)
 		if err != nil {
 			return nil, err
 		}
@@ -905,7 +917,7 @@ func edgeRenew(c *Config, o edgeRenewOpts) ([]edgeCertStatus, error) {
 	}
 	defer lk.Close()
 	a := c.Services.Edge.ACME
-	tok, _ := c.Secret(a.Token)
+	tok := edgeCredential(c)
 	st := edgeLoadState()
 	only := map[string]bool{}
 	for _, n := range o.names {
@@ -1044,7 +1056,7 @@ type edgeCertStatus struct {
 func edgeStatusCerts(c *Config, st map[string]*edgeCertState) []edgeCertStatus {
 	out := []edgeCertStatus{}
 	a := c.Services.Edge.ACME
-	tok, _ := c.Secret(a.Token)
+	tok := edgeCredential(c)
 	for _, ct := range edgeCerts(c) {
 		r := edgeCertStatus{Name: ct.Name, Domains: ct.Domains}
 		info, _ := edgeReadCert(ct.Name)

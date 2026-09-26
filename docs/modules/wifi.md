@@ -15,7 +15,7 @@ SSID，访客 SSID 可以接到访客网络；终端列表与踢下线；信道�
 | `mr/mod_wifi_api.go` | `wifi.stations` / `wifi.survey` / `wifi.scan` 的解析与 API，`mr wifi …` 命令 |
 | `mr/mod_wifi_steer.go` | 802.11v 频段引导：同名 SSID 配对、hostapd 邻居报告、`BSS_TM_REQ` 与应答、按终端限频 |
 | `mr/mod_wifi_health.go` | 射频健康（debugfs / hwmon，`wifi.health`、`mr doctor`）、自愈状态机、`mr wifi tick` 与它的 cron 行 |
-| `rootfs/etc/init.d/mr-hostapd` | 启动 hostapd：只加载 AP 网卡还存在的射频配置（删掉的射频留下的旧配置文件不会再发射），随后执行 `wifi-post.sh` 和 `mr fw` |
+| `rootfs/etc/init.d/mr-hostapd` + `rootfs/usr/libexec/mr/wifi-hostapd` | 启动 hostapd：只加载 AP 网卡还存在的射频配置（删掉的射频留下的旧配置文件不会再发射）。命令是包装脚本：每次启动（包括 supervise-daemon 的自动重启，#91）8 秒后执行 `wifi-post.sh`、`mr fw`、`mr wifi window`（定时关 WiFi，见 sys 模块 schedules），再 exec hostapd |
 | `rootfs/www/ui/wifi.js` | 网页：无线设置（含“自动调优”）、无线终端（含空口占用）、信道分析、射频健康 |
 | `tools/ci.d/wifi.sh` | CI：hostapd 配置键白名单 + 真实 hostapd 2.11 解析；调优键只出现在该出现的 BSS、cron 行、没有 hostapd 时 tick 也正常退出 |
 
@@ -148,7 +148,7 @@ crond 每分钟运行 `mr wifi tick`，直接用 hostapd 控制 socket：
 4. **请求**：`BSS_TM_REQ <MAC> pref=1 abridged=1 valid_int=200 dialog_token=N neighbor=<5G>`——只建议、**不带
    disassoc_imminent**，终端可以拒绝，拒绝了也照常连着。随后最多等 2 秒终端的应答（hostapd 只把 `BSS-TM-RESP` 作为事件发给
    attach 的监听者，所以这 2 秒里 attach，完了 detach）。
-5. **记录**：`/run/mini-router/wifi-steer.json`：每台设备的次数/结果、计数（建议、接受、拒绝、无应答、出错、之后确实出现在
+5. **记录**：`/run/mini-router/wifi-steer.json`：每台设备的次数/结果（射频健康页按设备列出接受 / 拒绝 / 无应答 / 已换到 5G，最多 64 台，#91）、计数（建议、接受、拒绝、无应答、出错、之后确实出现在
    5G 上的）、最近 20 条；每次请求一行 syslog。不写闪存、不进事件日志（太频繁）。
 
 2 流终端在 2.4G HE40 和 5G HE160 下的 PHY 速率约差 4.2 倍，所以默认门限 -60 dBm（2.4G 上这么好的信号，换到 5G 一般还有

@@ -64,7 +64,9 @@ func schemaEnums() map[string][]string {
 		"ProxyNode.Fingerprint":       opt(proxyFingerprints),
 		"ProxyGroup.Type":             e("urltest", "selector"),
 		"Schedule.Action":             e("reboot", "restart", "reconnect", "wol"),
-		"DDNSRecord.Provider":         e("", "cloudflare"),
+		"DDNSRecord.Provider":         e("", "cloudflare", "alidns", "dnspod", "duckdns", "dyndns2", "webhook"),
+		"DDNSRecord.Method":           e("", "GET", "POST"),
+		"EdgeACME.Provider":           e("", "cloudflare", "alidns", "dnspod"),
 		"APIToken.Scope":              e("read", "operate", "apply"),
 
 		"DNSSovereignty.PrivateRelay": e("", "allow", "block"),

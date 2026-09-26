@@ -198,7 +198,7 @@ func TestEdgeValidate(t *testing.T) {
 	errs := strings.Join(c.Validate(), "\n")
 	for _, s := range []string{
 		"services.edge.port: 22 is used by SSH",
-		`services.edge.acme.provider: cloudflare, got "route53"`,
+		`services.edge.acme.provider: cloudflare | alidns | dnspod, got "route53"`,
 		"services.edge.acme.email",
 		"services.edge.acme.token_secret: the secret is not an API token",
 		`services.edge.acme.wildcard: a lower-case domain like example.com, got "*.example.com"`,

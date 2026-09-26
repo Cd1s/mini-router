@@ -10,7 +10,9 @@ command_args="edge serve -c /run/mr-edge/edge.json"
 supervise_daemon_args="--env GOGC=50 --env GOMEMLIMIT=24MiB"
 extra_started_commands="reload"
 respawn_delay=5
-respawn_max=0
+# a crash loop stops after 10 respawns in 10 minutes: mr doctor reports it, mr doctor --heal restarts it
+respawn_max=10
+respawn_period=600
 
 # Unprivileged when the image has an `mr-edge` user: it may only bind the ports below 1024.
 if id -u mr-edge >/dev/null 2>&1; then

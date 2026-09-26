@@ -23,6 +23,14 @@ for t in home lab; do
 	echo "ok: $t stubby.yml listens on loopback only"
 done
 
+# dns.parental (lab): its dnsmasq config passes --test, the redirect is in the ruleset; nothing for home
+p=$OUT/lab/etc/mini-router/gen/parental-dns.conf
+dnsmasq --test --conf-file="$p"
+grep -qx 'local=/games.example/' "$p" && grep -qx 'address=/www.google.com/216.239.38.120' "$p" || { echo "$p: block list / safe search missing"; exit 1; }
+grep -q 'redirect to :5356 comment "parental-dns"' "$OUT/lab/etc/mini-router/gen/nftables.nft" || { echo "lab ruleset lacks the parental redirect"; exit 1; }
+[ ! -e "$OUT/home/etc/mini-router/gen/parental-dns.conf" ] || { echo "home rendered parental-dns.conf"; exit 1; }
+echo "ok: parental-dns.conf"
+
 conf=$OUT/lab/etc/dnsmasq.conf
 # main LAN = first interface= line; its router address, pool start and netmask from the tagged pool
 br=$(sed -n 's/^interface=//p' "$conf" | head -1)

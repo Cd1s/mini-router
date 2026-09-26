@@ -3,7 +3,8 @@ package main
 // Front-panel LEDs: status = green once the router is up; network = blue while at least one WAN has
 // an IPv4 address, red when none does. U-Boot leaves the status LED red, and nothing else touches it.
 // LEDs are found by name (*:status, *:network or *:wan); RGB (multicolor) LEDs get a colour, single
-// colour LEDs are switched on/off. system.leds: false turns them all off.
+// colour LEDs are switched on/off. system.leds: false turns them all off; so does a leds-off schedule
+// until the next leds-on (mod_sys_cron.go).
 
 import (
 	"os"
@@ -47,7 +48,7 @@ func ledsByRole() (status, network []string) {
 // updateLEDs sets every LED from the current state. Cheap: called from the WAN hooks and `mr led`.
 func updateLEDs(c *Config) {
 	status, network := ledsByRole()
-	on := c.System.LEDs == nil || *c.System.LEDs
+	on := (c.System.LEDs == nil || *c.System.LEDs) && !schedOff(c, "leds-off", "leds-on", "")
 	for _, l := range status {
 		setLED(l, "0 255 0", on)
 	}

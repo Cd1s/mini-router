@@ -50,13 +50,13 @@ type event struct {
 }
 
 // eventTypes: every type, in the order the web UI lists them.
-var eventTypes = []string{"wan_down", "wan_up", "failover", "apply", "rollback", "login_lock", "new_device", "boot", "upgrade", "doctor", "cert", "wifi"}
+var eventTypes = []string{"wan_down", "wan_up", "failover", "apply", "rollback", "login_lock", "new_device", "boot", "upgrade", "doctor", "cert", "wifi", "ddns", "update", "archive", "watchcat", "device"}
 
 // eventLabels: short names for notification lines.
 var eventLabels = map[string]string{
 	"wan_down": "WAN down", "wan_up": "WAN up", "failover": "Failover", "apply": "Change", "rollback": "Rollback",
 	"login_lock": "Login locked", "new_device": "New device", "boot": "Boot", "upgrade": "Firmware", "doctor": "Health check",
-	"cert": "Certificate", "wifi": "WiFi self-heal",
+	"cert": "Certificate", "wifi": "WiFi self-heal", "ddns": "DDNS", "update": "Update", "archive": "Archive", "watchcat": "Watchcat", "device": "Device",
 }
 
 const (
@@ -263,6 +263,7 @@ type eventRun struct {
 	Health     map[string]string `json:"health,omitempty"` // WAN -> up | down (multi-WAN health checker)
 	Doctor     map[string]string `json:"doctor,omitempty"` // finding id -> warn | risk of the last background run
 	DoctorNext float64           `json:"doctor_next,omitempty"`
+	WatchNext  float64           `json:"watch_next,omitempty"` // devices[].watch: the next presence sample (dev module)
 	NotifyDue  float64           `json:"notify_due,omitempty"`
 }
 
@@ -286,7 +287,7 @@ func eventRunUpdate(f func(s *eventRun)) {
 		logf("event: %v", err)
 	}
 	due := 0.0
-	for _, t := range []float64{s.DoctorNext, s.NotifyDue} {
+	for _, t := range []float64{s.DoctorNext, s.NotifyDue, s.WatchNext} {
 		if t > 0 && (due == 0 || t < due) {
 			due = t
 		}
@@ -469,6 +470,7 @@ func eventChange(r revision) {
 	switch {
 	case r.Result == "applied" || r.Result == "confirmed":
 		eventAdd(nil, "apply", "info", key, what+" "+r.Result, true)
+		archiveAfterChange()
 	case strings.HasPrefix(r.Result, "rolled back"):
 		eventAdd(nil, "rollback", "warn", key, what+" "+r.Result, !strings.Contains(r.Result, "at boot"))
 	}
@@ -655,7 +657,8 @@ func crashLine(s string) string {
 
 // eventBoot records why the router (re)started, once per boot. mr-bootlog runs it as the last boot
 // service, before NTP may have synced: the clock is then mr-clock's last saved time, so the downtime
-// is only given when NTP already agrees.
+// is only given when NTP already agrees. c is nil when router.yaml does not load (recorded, nothing
+// scheduled). The first boot of a new version saves what `mr plan` would change (mod_sys_update.go).
 func eventBoot(c *Config) error {
 	id := eventBootID()
 	var prev bootState
@@ -700,13 +703,22 @@ func eventBoot(c *Config) error {
 		sev, msg = "warn", "booted after an unexpected restart (power cut, hang or hardware watchdog)"
 	}
 	eventAdd(c, "boot", sev, "", msg, false)
+	if c == nil {
+		eventAdd(nil, "boot", "risk", "config", "router.yaml / secrets.yaml do not load: mr validate", false)
+	}
 	if upgraded {
 		eventAdd(c, "upgrade", "info", "", "mr "+prev.Version+" → "+version, false)
+		if c != nil {
+			upgradePlanKick()
+		}
 	}
 	st := bootState{BootID: id, Version: version, Time: eventNow().Unix(), Pstore: ids}
 	b, _ := json.Marshal(st)
 	if err := writeAtomic(eventBootFile, b, 0600); err != nil {
 		return err
+	}
+	if c == nil {
+		return nil
 	}
 	eventSchedule(c)
 	if len(c.Notify.Channels) > 0 { // the boot event and what was logged before OpenRC (a rollback at boot)
@@ -743,6 +755,12 @@ func eventSchedule(c *Config) {
 		if len(c.Notify.Channels) == 0 {
 			s.NotifyDue = 0
 		}
+		switch {
+		case len(devWatched(c)) == 0:
+			s.WatchNext = 0
+		case s.WatchNext == 0 || s.WatchNext > up+60:
+			s.WatchNext = up
+		}
 	})
 }
 
@@ -762,8 +780,16 @@ func eventTick(c *Config) error {
 	if iv := notifyDoctorInterval(c); iv > 0 {
 		if s := eventRunRead(); s.DoctorNext > 0 && up >= s.DoctorNext {
 			eventRunUpdate(func(s *eventRun) { s.DoctorNext = up + float64(iv*60) })
-			doctorEvents(c, runDoctor(c, newDocEnv()))
+			e := newDocEnv()
+			if c.Notify.AutoHeal {
+				doctorHeal(c, e)
+			}
+			doctorEvents(c, runDoctor(c, e))
 		}
+	}
+	if s := eventRunRead(); s.WatchNext > 0 && up >= s.WatchNext || len(devWatched(c)) == 0 && fileExists(devWatchFile) {
+		eventRunUpdate(func(s *eventRun) { s.WatchNext = up + 55 }) // mon-collect samples once a minute
+		devWatchPass(c)
 	}
 	eventSchedule(c)
 	if len(c.Notify.Channels) == 0 {

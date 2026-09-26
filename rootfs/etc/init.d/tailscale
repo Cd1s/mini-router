@@ -7,7 +7,9 @@ command=/usr/sbin/tailscaled
 command_args="--port ${TS_PORT:-41641} --state /etc/tailscale/tailscaled.state"
 supervise_daemon_args="--env TS_DEBUG_FIREWALL_MODE=nftables --env GOGC=50 --env GOMEMLIMIT=24MiB"
 respawn_delay=5
-respawn_max=0
+# a crash loop stops after 10 respawns in 10 minutes: mr doctor reports it, mr doctor --heal restarts it
+respawn_max=10
+respawn_period=600
 depend() {
 	need net
 	after mr-firewall
@@ -15,5 +17,17 @@ depend() {
 start_pre() {
 	mkdir -p /var/run/tailscale
 	/usr/sbin/tailscaled --cleanup >/dev/null 2>&1
+	return 0
+}
+# TS_EXIT_NODE: services.tailscale.exit_node.node — set it once tailscaled answers, or clear the one mr set before
+start_post() {
+	[ -n "${TS_EXIT_NODE:-}" ] || [ -e /etc/tailscale/mr-exit-node ] || return 0
+	(
+		for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+			sleep 2
+			tailscale set --exit-node="${TS_EXIT_NODE:-}" && break
+		done
+		if [ -n "${TS_EXIT_NODE:-}" ]; then : > /etc/tailscale/mr-exit-node; else rm -f /etc/tailscale/mr-exit-node; fi
+	) > /dev/null 2>&1 &
 	return 0
 }

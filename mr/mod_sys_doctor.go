@@ -8,14 +8,16 @@ package main
 //
 // Checks: config (validates, guard, edits not applied), pending (a change waiting for confirmation, a
 // failed boot rollback), wan (address, health, CGNAT behind port forwards, overlap with a LAN subnet), routes (main default route,
-// per-WAN tables), dns (a lookup through dnsmasq on 127.0.0.1), ipv6 (delegated prefix on the LAN), offload
-// (flowtable, hardware flag, PPE entries), services (wanted vs running), wifi (radios / BSSes up; radio
+// per-WAN tables), dns (a lookup through dnsmasq on 127.0.0.1), ipv6 (WAN IPv6 default route, delegated prefix
+// on the LAN), offload (flowtable, hardware flag, PPE entries), dnsguard (DoT / DoH refused by
+// dns.sovereignty), upgrade (what a new firmware's first-boot plan found), services (wanted vs running), wifi (radios / BSSes up; radio
 // health from the wifi module: temperature / throttling, airtime fairness, firmware restarts, TX stalls), clock
 // (plausible, NTP synced), storage (config flash, /tmp), memory, conntrack, temp, crash (pstore records,
 // oops / OOM in this boot's kernel log), ssh (password logins), certs (the reverse proxy's certificates).
 //
-// No arbitrary commands: the only programs run are `ip -j`, `nft list flowtable inet mr ft` and
-// `rc-service NAME status` for the services the config enables; everything else is read from /proc,
+// No arbitrary commands: the only programs run are `ip -j`, `nft list flowtable inet mr ft`, `nft list chain inet mr
+// dns_guard` and `rc-service NAME status` for the services the config enables (--heal: `rc-service NAME
+// restart`, mod_sys_update.go); everything else is read from /proc,
 // /sys, /run and the config. The last result is kept in /run/mini-router/doctor.json (`mr status` shows
 // its problems on the overview).
 
@@ -78,6 +80,9 @@ type docEnv struct {
 	pstore    func() ([]string, string)
 	wifi      func(c *Config) []string
 	wifiRadio func(c *Config) []docFinding // radio health (mod_wifi_health.go); nil = not checked
+	v6default func() bool                  // an IPv6 default route in the main table; nil = not checked
+	nftChain  func(name string) string     // nft list chain inet mr NAME ("" = none)
+	restart   func(svc string) error       // --heal
 }
 
 // doctorFile keeps the last result (tmpfs).
@@ -164,6 +169,15 @@ var newDocEnv = func() *docEnv {
 		pstore:    pstoreRecords,
 		wifi:      wifiNotReady,
 		wifiRadio: wifiDoctor,
+		v6default: func() bool { l, _ := ipJSON("-6", "route", "show", "default").([]any); return len(l) > 0 },
+		nftChain: func(name string) string {
+			out, err := run("nft", "list", "chain", "inet", "mr", name)
+			if err != nil {
+				return ""
+			}
+			return out
+		},
+		restart: func(s string) error { _, err := run("rc-service", s, "restart"); return err },
 	}
 }
 
@@ -172,7 +186,7 @@ var doctorChecks = []struct {
 	name string
 	f    func(c *Config, e *docEnv) []docFinding
 }{
-	{"config", docConfig}, {"pending", docPending}, {"wan", docWAN}, {"routes", docRoutes}, {"dns", docDNS},
+	{"config", docConfig}, {"upgrade", docUpgrade}, {"pending", docPending}, {"wan", docWAN}, {"routes", docRoutes}, {"dns", docDNS}, {"dnsguard", docDNSGuard},
 	{"ipv6", docIPv6}, {"offload", docOffload}, {"services", docServices}, {"wifi", docWiFi}, {"clock", docClock},
 	{"storage", docStorage}, {"memory", docMemory}, {"conntrack", docConntrack}, {"temp", docTemp},
 	{"crash", docCrash}, {"ssh", docSSH}, {"certs", docCerts},
@@ -396,21 +410,51 @@ func docDNS(c *Config, e *docEnv) []docFinding {
 
 func docIPv6(c *Config, e *docEnv) []docFinding {
 	up := docWANsUp(c, e)
-	var pd []string
+	var v6, pd []string
 	for _, w := range c.WAN {
-		if _, isUp := up[w.Name]; isUp && w.IPv6 && w.IPv6PD {
-			pd = append(pd, w.Name)
+		if _, isUp := up[w.Name]; isUp && w.IPv6 {
+			v6 = append(v6, w.Name)
+			if w.IPv6PD {
+				pd = append(pd, w.Name)
+			}
 		}
 	}
+	var out []docFinding
+	if len(v6) > 0 && e.v6default != nil && !e.v6default() {
+		out = append(out, docFinding{ID: "ipv6.route", Sev: "warn", Title: "IPv6", Detail: "no IPv6 default route although " + strings.Join(v6, ", ") + " has ipv6 on: IPv6 destinations are unreachable",
+			Fix: "mr routes; rc-service mr-dhcpcd status (router advertisements from the ISP?); grep dhcpcd /var/log/messages | tail"})
+	}
 	if len(pd) == 0 || !c.LAN.IPv6RA {
+		if len(out) > 0 {
+			return out
+		}
 		return []docFinding{{Sev: "skip", Title: "IPv6", Detail: "no WAN that is up asks for a delegated prefix (ipv6_pd) for the LAN (lan.ipv6_ra)"}}
 	}
 	as := e.global6(c.LAN.Bridge)
 	if len(as) == 0 {
-		return []docFinding{{Sev: "warn", Title: "IPv6", Detail: fmt.Sprintf("%s has no global IPv6 address: no delegated prefix from %s", c.LAN.Bridge, strings.Join(pd, ", ")),
-			Fix: "rc-service mr-dhcpcd status; grep dhcpcd /var/log/messages | tail; some ISPs need a reconnect: rc-service mr-pppoe." + pd[0] + " restart"}}
+		return append(out, docFinding{Sev: "warn", Title: "IPv6", Detail: fmt.Sprintf("%s has no global IPv6 address: no delegated prefix from %s", c.LAN.Bridge, strings.Join(pd, ", ")),
+			Fix: "rc-service mr-dhcpcd status; grep dhcpcd /var/log/messages | tail; some ISPs need a reconnect: rc-service mr-pppoe." + pd[0] + " restart"})
 	}
-	return []docFinding{docOK("IPv6", fmt.Sprintf("%s has %s", c.LAN.Bridge, as[0]))}
+	return append(out, docOK("IPv6", fmt.Sprintf("%s has %s", c.LAN.Bridge, as[0])))
+}
+
+var reNftPackets = lazyRegexp(`counter packets ([0-9]+)`)
+
+// docDNSGuard: what dns.sovereignty's refusals (the dns_guard chain) caught since the firewall loaded —
+// LAN devices that tried to bypass the router's DNS with DoT / DoQ / known DoH resolvers.
+func docDNSGuard(c *Config, e *docEnv) []docFinding {
+	s := ""
+	if e.nftChain != nil {
+		s = e.nftChain("dns_guard")
+	}
+	if s == "" {
+		return []docFinding{{Sev: "skip", Title: "DNS bypass", Detail: "no DoT / DoH refusals (dns.sovereignty block_dot, doh_blocklist_file)"}}
+	}
+	n := 0
+	for _, m := range reNftPackets.FindAllStringSubmatch(s, -1) {
+		n += atoi(m[1])
+	}
+	return []docFinding{docOK("DNS bypass", fmt.Sprintf("dns_guard refused %d DoT / DoQ / DoH packet(s) since the firewall loaded", n))}
 }
 
 func docOffload(c *Config, e *docEnv) []docFinding {
@@ -446,8 +490,8 @@ func docServices(c *Config, e *docEnv) []docFinding {
 			out = append(out, docFinding{ID: "services." + s, Sev: "warn", Title: "Service " + s, Detail: "wanted by the config but not installed (/etc/init.d/" + s + ")",
 				Fix: "an image or package without it: upgrade the firmware, or switch it off in router.yaml"})
 		case !r:
-			out = append(out, docFinding{ID: "services." + s, Sev: "risk", Title: "Service " + s, Detail: "not running",
-				Fix: "rc-service " + s + " start; grep " + s + " /var/log/messages | tail"})
+			out = append(out, docFinding{ID: "services." + s, Sev: "risk", Title: "Service " + s, Detail: "not running (stopped, or gave up after repeated crashes)",
+				Fix: "mr doctor --heal (or rc-service " + s + " restart); grep " + s + " /var/log/messages | tail"})
 		}
 	}
 	if len(out) == 0 {
@@ -729,16 +773,26 @@ func doctorSummary() map[string]any {
 
 // ---- mr doctor, API ----
 
-// doctorCommand: `mr doctor [--json]`.
+// doctorCommand: `mr doctor [--json] [--heal]`.
 func doctorCommand(c *Config, args []string) error {
-	asJSON := false
+	asJSON, heal := false, false
 	for _, a := range args {
-		if a != "--json" {
-			return errors.New("usage: mr doctor [--json]")
+		switch a {
+		case "--json":
+			asJSON = true
+		case "--heal":
+			heal = true
+		default:
+			return errors.New("usage: mr doctor [--json] [--heal]")
 		}
-		asJSON = true
 	}
-	r := runDoctor(c, newDocEnv())
+	e := newDocEnv()
+	if heal {
+		for _, l := range doctorHeal(c, e) {
+			fmt.Fprintln(os.Stderr, "heal:", l)
+		}
+	}
+	r := runDoctor(c, e)
 	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", " ")
@@ -768,8 +822,15 @@ func doctorText(r docResult) string {
 	return b.String()
 }
 
-// apiSysDoctor: GET → runs the checks now (a few seconds) and returns the result.
+// apiSysDoctor: GET → runs the checks now (a few seconds) and returns the result. API tokens get a
+// result of the last 10 s when there is one (a polling script must not run rc-service all the time).
 func apiSysDoctor(r apiReq) apiResp {
+	if strings.HasPrefix(r.via, "api:") {
+		var cached docResult
+		if b, err := os.ReadFile(doctorFile); err == nil && json.Unmarshal(b, &cached) == nil && time.Now().Unix()-cached.Time < 10 && cached.Time <= time.Now().Unix() {
+			return apiResp{body: cached}
+		}
+	}
 	c, err := loadConfig(sysConfigPath, sysSecretsPath)
 	if err != nil {
 		return apiResp{body: docResult{Time: time.Now().Unix(), Risk: 1, Checks: []docFinding{{ID: "config.load", Check: "config", Sev: "risk",

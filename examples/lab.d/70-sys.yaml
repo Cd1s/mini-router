@@ -14,9 +14,14 @@ system:
     net.ipv4.igmp_max_memberships: "100"
     net.netfilter.nf_conntrack_max: "131072"  # overrides the default 100000 (applied at boot after `modules`)
   zram: true
+  watchcat: {enabled: true, after: 10, reboot_hours: 6}   # all WANs down 10 min: redial → restart mr-network → reboot
+  traffic_stats: true           # monthly traffic per device / WAN device (mon module)
 
 services:
-  tailscale: {enabled: true, port: 41642}
+  tailscale:
+    enabled: true
+    port: 41642
+    exit_node: {node: exit-sg, devices: [travel-laptop], kill_switch: true}   # travel-laptop leaves via the exit node only
   lucky: {enabled: true, port: 16601}
   dstatus: {enabled: true}
   stubby: {enabled: true}
@@ -36,16 +41,23 @@ services:
       - {name: home.example.com, zone: example.com, token_secret: cf_ddns_token, ipv4: active, ipv6: router}
       - {name: "*.example.com", zone: example.com, token_secret: cf_ddns_token, ipv4: wan2}
       - {name: nas.example.com, zone: example.com, token_secret: cf_ddns_token, ipv4: "off", ipv6: "::10", ttl: 300}
+      # the other providers (secrets: mr/testdata/secrets.d/sys.yaml) and address sources
+      - {name: cn.example.net, provider: alidns, zone: example.net, key_id: LTAI0000labnotreal00, key_secret: ali_dns_key, ipv4: "url:https://ip4.example.org/", ipv6: "mac:02:00:00:00:00:10"}
+      - {name: example.org, provider: dnspod, zone: example.org, key_id: labDnspodIdNotReal00, key_secret: tc_dns_key, ipv4: "mac:02:00:00:00:00:10", ttl: 600}
+      - {name: labhome.duckdns.org, provider: duckdns, token_secret: duck_token, ipv4: active, ipv6: router}
+      - {name: dyn.example.org, provider: dyndns2, url: "https://dyn.example.org/nic/update", username: lab-user, password_secret: dyn_password, ipv4: 203.0.113.10}
+      - {name: hook.example.org, provider: webhook, url: "https://hooks.example.org/ddns?host={name}&type={type}&ip={ip}", method: POST, token_secret: hook_token, ipv4: "off", ipv6: "url:https://ip6.example.org/"}
   edge:                                     # HTTPS reverse proxy: `mr edge serve` (service mr-edge) + Let's Encrypt via DNS-01
     enabled: true
     port: 8443                              # the lab keeps firewall.open lucky-https (tcp 443); the home migration uses 443
     open: true                              # WANs: nft redirects tcp 8443 on the router's addresses to the WAN listener (44300)
+    wan_port: 10443                         # … and tcp 10443 too (ISPs that block inbound 443)
     acme: {email: admin@example.com, token_secret: cf_ddns_token, staging: true, wildcard: [example.com]}
     routes:                                 # *.example.com: one certificate; cam.lab.example.org: its own
       - {name: nas, host: nas.example.com, to: "http://192.168.1.10:5000"}
       - {name: ha, host: ha.example.com, to: "http://192.168.1.20:8123", allow: [lan, 198.51.100.0/24]}
       - {name: cam, host: cam.lab.example.org, to: "https://192.168.30.40:443", allow: [lan]}
-      - {name: tailnet-app, host: app.example.com, to: "http://100.101.102.103:3000"}
+      - {name: tailnet-app, host: app.example.com, to: "http://100.101.102.103:3000", auth: {user: alice, password_secret: edge_nas_pw}}   # basic auth
       - {name: lucky-ui, host: lucky.example.com, to: "http://192.168.1.6:16601", allow: [lan]}
       - {name: retired, enabled: false, host: old.example.com, to: "http://192.168.1.99:80"}
 

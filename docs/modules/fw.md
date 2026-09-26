@@ -153,6 +153,22 @@ trusted. POSIX TZ strings with DST rules (`CET-1CEST,M3.5.0,M10.5.0/3`) are supp
 in force when the firewall is loaded is used, so a DST change takes effect at the next reload (daily
 PPPoE reconnect, apply, `mr fw`).
 
+### Presence (`when`)
+
+```yaml
+firewall:
+  rules:
+    - {name: cam-off-at-home, action: drop, src: lan, dest: wan, src_mac: ["aa:bb:cc:00:00:61"], when: {present: [phone]}}
+    - {name: away, action: reject, dest: router, proto: [tcp], dest_port: "22", when: {absent: [phone, "group:kids"]}}
+```
+
+A rule with `when` is active only while every `present` device is at home and every `absent` one is not
+(devices, `group:NAME` or MACs). A device is present while one of its MACs was seen in the last 10 minutes
+(WiFi station list, REACHABLE / DELAY / PROBE neighbours), so it turns absent about 10 minutes after it left.
+`mr presence tick` (crond, every minute) keeps `/run/mini-router/presence.json` and reloads the firewall only
+when a rule's state changes. The rendered ruleset has `jump when_<hash>` plus an empty chain per rule, so it
+never depends on who is home; `fwLoad` fills the chains of the active rules in the same transaction.
+
 ### How device access control works
 
 1. Every packet a listed device sends through the router records its IPv4/IPv6 source in dynamic

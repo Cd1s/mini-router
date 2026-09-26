@@ -84,6 +84,7 @@ type FwRule struct {
 	Proto    []string `yaml:"proto,omitempty"`     // tcp | udp | icmp; empty = any
 	DestPort string   `yaml:"dest_port,omitempty"` // "25", "8000-8100", "80,443" (tcp/udp only)
 	Schedule []FwTime `yaml:"schedule,omitempty"`  // active only in these windows; empty = always
+	When     *FwWhen  `yaml:"when,omitempty"`      // active only while devices are present / absent (mod_fw_presence.go)
 	Counter  bool     `yaml:"counter,omitempty"`
 	Log      bool     `yaml:"log,omitempty"` // rate-limited kernel log (prefix "mr-rule <name>: ")
 	Desc     string   `yaml:"desc,omitempty"`
@@ -112,6 +113,7 @@ func init() {
 		Defaults:   fwDefaults,
 		Validate:   fwValidate,
 		Nft:        fwNft,
+		Commands:   map[string]func(c *Config, args []string) error{"presence": presenceCommand},
 		TokenScope: map[string]string{"fw.stats": "read"},
 		API: map[string]func(r apiReq) apiResp{
 			"fw.stats": fwAPIStats,
@@ -495,6 +497,7 @@ func fwCheckRule(c *Config, v *Validator, p string, r FwRule) {
 		}
 	}
 	fwCheckSchedule(v, p, r.Schedule)
+	presenceValidate(c, v, p, r.When)
 }
 
 func prefixAll(pre string, xs []string) []string {

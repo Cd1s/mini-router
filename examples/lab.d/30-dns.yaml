@@ -71,3 +71,7 @@ dns:
     lists: ["https://127.0.0.1:8453/ads.txt", "https://127.0.0.1:8453/hosts.txt"]
     allow: [cdn.ads.example]
     max_domains: 200000
+  parental:                     # parental control: its own dnsmasq for these devices (35-dev.yaml)
+    devices: [kid-phone]
+    safe_search: true
+    block: [games.example, video.example]

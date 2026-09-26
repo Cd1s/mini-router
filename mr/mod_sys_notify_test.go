@@ -151,13 +151,13 @@ func TestNotifyValidate(t *testing.T) {
 			t.Errorf("a validation message shows a secret value (%s)", sec)
 		}
 	}
-	// defaults: rate, every event but apply (cert: the reverse proxy's certificates, wifi: radio self-heal),
+	// defaults: rate, every event but apply (cert: the reverse proxy's certificates, wifi: radio self-heal, ddns: published changes),
 	// a background doctor while channels exist, json webhooks
 	c.Notify = Notify{Channels: []NotifyChannel{{Name: "hook", Type: "webhook", URL: "hook_ok"}}}
 	c.defaults()
 	mustValid(t, c)
 	n := c.Notify
-	if n.Rate != 10 || strings.Join(n.Events, ",") != "wan_down,wan_up,failover,rollback,login_lock,new_device,boot,upgrade,doctor,cert,wifi" ||
+	if n.Rate != 10 || strings.Join(n.Events, ",") != "wan_down,wan_up,failover,rollback,login_lock,new_device,boot,upgrade,doctor,cert,wifi,ddns,update,archive,watchcat,device" ||
 		n.Doctor == nil || *n.Doctor != 30 || n.Channels[0].Format != "json" {
 		t.Errorf("defaults: %+v", n)
 	}

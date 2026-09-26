@@ -208,6 +208,7 @@ type monNeigh struct {
 	Addr    netip.Addr
 	MAC     string
 	Ifindex int
+	State   uint16 // NUD_* flags
 }
 
 // Injected for tests: ifindex + prefixes of a netdev, every local address, the neighbour table.
@@ -374,10 +375,13 @@ func (d *monDevice) finish(dt float64) {
 	d.sortKeyRate = d.UpRate + d.DownRate
 }
 
-func monDevices(c *Config) (map[string]any, error) {
+func monDevices(c *Config) (map[string]any, error) { return monDevicesAt(c, monPath(monFlowFile)) }
+
+// monDevicesAt: mon.devices with its own rate snapshot file (the monthly counters keep theirs).
+func monDevicesAt(c *Config, flowFile string) (map[string]any, error) {
 	names := monLoadNames(c)
 	now := monUptime()
-	prev, prevUp, havePrev := monLoadFlows(monPath(monFlowFile))
+	prev, prevUp, havePrev := monLoadFlows(flowFile)
 	dt := now - prevUp
 	if !havePrev || dt < 0.5 || dt > 120 {
 		dt = 0 // first poll (or a long pause): this call only sets the baseline
@@ -433,7 +437,7 @@ func monDevices(c *Config) (map[string]any, error) {
 		res["devices"] = []*monDevice{}
 		return res, nil
 	}
-	if err := monSaveFlows(monPath(monFlowFile), now, next); err != nil {
+	if err := monSaveFlows(flowFile, now, next); err != nil {
 		res["warning"] = "rate snapshot not saved: " + err.Error()
 	}
 	list := make([]*monDevice, 0, len(devs))
@@ -818,7 +822,7 @@ func monParseNeigh(b []byte) (monNeigh, bool) {
 		return monNeigh{}, false
 	}
 	var n monNeigh
-	n.Ifindex = ifindex
+	n.Ifindex, n.State = ifindex, state
 	for a := b[ndmsgLen:]; len(a) >= 4; {
 		l := int(binary.NativeEndian.Uint16(a[0:2]))
 		typ := binary.NativeEndian.Uint16(a[2:4]) & 0x3fff

@@ -8,7 +8,9 @@ cfg=/etc/mini-router/gen/proxy-dns.conf
 command=/usr/sbin/dnsmasq
 command_args="--keep-in-foreground --pid-file= --user=dnsmasq --group=dnsmasq --conf-file=$cfg"
 respawn_delay=2
-respawn_max=0
+# a crash loop stops after 10 respawns in 10 minutes: mr doctor reports it, mr doctor --heal restarts it
+respawn_max=10
+respawn_period=600
 
 depend() {
 	need mr-network

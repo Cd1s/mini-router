@@ -7,10 +7,10 @@ exist, `mr edge serve` only while the reverse proxy is on).
 
 | | |
 |---|---|
-| Go | `mr/mod_sys.go` (module, types, validation, render), `mod_sys_time.go` (POSIX TZ parser, TZif writer, NTP, `sys.time`), `mod_sys_ssh.go` (dropbear, managed `authorized_keys`), `mod_sys_cron.go` (schedules, `mr sys run`), `mod_sys_ddns.go` (DDNS: addresses, state, Cloudflare client, `mr ddns`), `mod_sys_edge.go` (reverse proxy: config, validation, edge.json, firewall / dnsmasq lines, Verify), `mod_sys_edge_acme.go` (ACME client, DNS-01, certificate files, `mr edge renew / status`, API), `mod_sys_edge_serve.go` (`mr edge serve`), `mod_sys_wol.go` (Wake-on-LAN: `mr wol`, `sys.wol`), `mod_sys_backup.go` (backup / restore), `mod_sys_fw.go` (firmware upload, sysupgrade / factory-reset hooks), `mod_sys_api.go` (diag, service, services, logs, `mr sys`), `mod_sys_doctor.go` (`mr doctor`, `sys.doctor`), `mod_sys_event.go` (event log, `mr event`, `sys.events`), `mod_sys_notify.go` (`notify:`, Telegram / webhooks, `mr notify`, `sys.notifytest`), `mod_sys_linux.go` / `mod_sys_other.go` (NTP sync state) |
+| Go | `mr/mod_sys.go` (module, types, validation, render), `mod_sys_time.go` (POSIX TZ parser, TZif writer, NTP, `sys.time`), `mod_sys_ssh.go` (dropbear, managed `authorized_keys`), `mod_sys_cron.go` (schedules, `mr sys run`), `mod_sys_ddns.go` (DDNS: config, validation, state, sync, Cloudflare client, `mr ddns`), `mod_sys_ddns_src.go` (address sources: WAN, prefix, `url:`, `mac:`, fixed), `mod_sys_ddns_sign.go` (AliDNS ACS3 / DNSPod TC3 clients, also DNS-01), `mod_sys_ddns_url.go` (DuckDNS, dyndns2, webhook), `mod_sys_edge.go` (reverse proxy: config, validation, edge.json, firewall / dnsmasq lines, Verify), `mod_sys_edge_acme.go` (ACME client, DNS-01, certificate files, `mr edge renew / status`, API), `mod_sys_edge_serve.go` (`mr edge serve`), `mod_sys_wol.go` (Wake-on-LAN: `mr wol`, `sys.wol`), `mod_sys_backup.go` (backup / restore), `mod_sys_fw.go` (firmware upload, sysupgrade / factory-reset hooks), `mod_sys_api.go` (diag, service, services, logs, `mr sys`), `mod_sys_doctor.go` (`mr doctor`, `sys.doctor`), `mod_sys_event.go` (event log, `mr event`, `sys.events`), `mod_sys_notify.go` (`notify:`, Telegram / webhooks, `mr notify`, `sys.notifytest`), `mod_sys_linux.go` / `mod_sys_other.go` (NTP sync state) |
 | UI | `rootfs/www/ui/sys.js` — 服务 (group 服务, with the DDNS and HTTPS 反向代理 cards); 系统设置, 管理与 SSH, 计划任务, 备份与升级, 日志, 网络诊断 (group 系统); 体检与事件 (group 状态: 体检 / 事件 / 通知). The overview (`core.js`) shows the last health check's problems and the newest events. The 唤醒 (WOL) buttons sit on the dns module's pages (`dns.js`: 终端设备, DHCP 静态分配) |
 | rootfs | `rootfs/etc/init.d/{tailscale,mr-panel,mr-zram,lucky,lucky-dns-inotify,dstatus-agent,mr-edge}` (tailscale and mr-panel now read their conf.d); the image and `install.sh` create the user `mr-edge`; events: `mr-bootlog` (`mr event boot` / `shutdown`), `usr/libexec/mr/mon-collect` (the mon module's sampler starts `mr event tick`), NTP sync marker: `mr-clock` + `usr/libexec/mr/clock-save` |
-| Checks | `mr/mod_sys_test.go`, `mr/mod_sys_ddns_test.go` (fake Cloudflare API), `mr/mod_sys_wol_test.go`, `mr/mod_sys_edge_test.go`, `mod_sys_edge_acme_test.go` (in-process ACME server + fake Cloudflare), `mod_sys_edge_serve_test.go`, `mr/mod_sys_{doctor,event,notify}_test.go` (fake system, fake Telegram / webhook; `TestMain` keeps every test's events off the host), `tools/ci.d/sys.sh` (incl. WOL through a bridge in network namespaces; events and a local webhook with real processes; `mr doctor` on the build host), `tools/ci.d/sys-edge.sh` (the proxy process in network namespaces, WAN side through the rendered nft lines, memory), `tools/ci.d/mon.sh` (the sampler's tick trigger), `tools/ci.d/net.sh` (WAN / failover events from the real hooks), lab fragment `examples/lab.d/70-sys.yaml` (+ `mr/testdata/secrets.d/sys.yaml`) |
+| Checks | `mr/mod_sys_test.go`, `mr/mod_sys_ddns_test.go` (fake Cloudflare API), `mod_sys_ddns_sign_test.go` (ACS3 / TC3 against the providers' worked examples; fake AliDNS / DNSPod that verify every signature), `mod_sys_ddns_url_test.go` (fake DuckDNS / dyndns2 / webhook / lookup; `mac:` sources; events), `mr/mod_sys_wol_test.go`, `mr/mod_sys_edge_test.go`, `mod_sys_edge_acme_test.go` (in-process ACME server + fake Cloudflare), `mod_sys_edge_serve_test.go`, `mr/mod_sys_{doctor,event,notify}_test.go` (fake system, fake Telegram / webhook; `TestMain` keeps every test's events off the host), `tools/ci.d/sys.sh` (incl. WOL through a bridge in network namespaces; events and a local webhook with real processes; `mr doctor` on the build host), `tools/ci.d/sys-edge.sh` (the proxy process in network namespaces, WAN side through the rendered nft lines, memory), `tools/ci.d/mon.sh` (the sampler's tick trigger), `tools/ci.d/net.sh` (WAN / failover events from the real hooks), lab fragment `examples/lab.d/70-sys.yaml` (+ `mr/testdata/secrets.d/sys.yaml`) |
 | Mock | `tools/mock/fixtures/sys.*.json` (incl. `sys.ddns.json`, `sys.ddnsupdate.post.json`, `sys.wol.post.json`, `sys.edge.json`, `sys.edgerenew.post.json`, `sys.doctor.json`, `sys.events.json`, `sys.notifytest.post.json`), `service.post.json`, `diag.post.json`, `config.d/sys.json`; `status.json` has `doctor` and `events` |
 
 ## Cost
@@ -58,11 +58,16 @@ services:
     records:
       - name: home.example.com         # host name to keep updated (also *.example.com)
         zone: example.com              # the zone at the provider
-        provider: cloudflare           # default; the only one so far
+        provider: cloudflare           # default | alidns | dnspod | duckdns | dyndns2 | webhook
         token_secret: cf_ddns_token    # secrets.yaml: API token, permission Zone › DNS › Edit on this zone
-        ipv4: active                   # A: active (default) | <wan name> | "off"
-        ipv6: router                   # AAAA: "off" (default) | router | "::10" (a LAN device)
+        ipv4: active                   # A: active (default) | <wan name> | "off" | url:https://… | mac:MAC | a public address
+        ipv6: router                   # AAAA: "off" (default) | router | "::10" (a LAN device) | url: | mac: | an address
         ttl: 0                         # 60-86400; 0 = automatic
+      - {name: cn.example.net, provider: alidns, zone: example.net, key_id: LTAI…, key_secret: ali_dns_key, ipv4: "url:https://api.ipify.org"}
+      - {name: example.org, provider: dnspod, zone: example.org, key_id: AKID…, key_secret: tc_dns_key}
+      - {name: myhome.duckdns.org, provider: duckdns, token_secret: duck_token, ipv6: router}
+      - {name: nas.example.org, provider: dyndns2, url: "https://dynupdate.no-ip.com/nic/update", username: me@example.org, password_secret: noip_pw}
+      - {name: hook.example.org, provider: webhook, url: "https://h.example.org/ddns?host={name}&type={type}&ip={ip}", method: GET, token_secret: hook_token}
   edge:                      # HTTPS reverse proxy + certificates (see "HTTPS reverse proxy" below)
     enabled: true
     port: 443
@@ -77,13 +82,16 @@ schedules:                   # busybox crond; fixed actions only
   - {name: redial-wan2, cron: "0 */6 * * *", action: reconnect, target: wan2}
   - {name: wake-nas, cron: "0 7 * * 1-5", action: wol, target: nas}   # dhcp.hosts name (or a MAC)
   - {name: paused, enabled: false, cron: "0 3 1 * *", action: reboot}
+  - {name: wifi-night, cron: "0 23 * * *", action: wifi-off}             # every radio, or target: phy1
+  - {name: wifi-day, cron: "0 7 * * *", action: wifi-on}
+  - {name: dark, cron: "30 22 * * *", action: leds-off}                  # leds-on turns them on again
 
 notify:                      # events pushed to the phone; no daemon (see "Health checks, events, notifications")
   channels:                  # at most 4
     - {name: phone, type: telegram, token_secret: notify_tg_token, chat_id: "123456789"}   # or -100… (group), @channel
     - {name: ntfy, type: webhook, url_secret: notify_ntfy_url, format: text}              # ntfy: plain text + Title header
     - {name: ha, type: webhook, url_secret: notify_ha_url}                                # json (default): Gotify, Bark, HA, Slack …
-  events: [wan_down, wan_up, failover, rollback, login_lock, new_device, boot, upgrade, doctor, cert, wifi]   # default: all but apply
+  events: [wan_down, wan_up, failover, rollback, login_lock, new_device, boot, upgrade, doctor, cert, wifi, ddns, update, archive, watchcat, device]   # default: all but apply
   rate: 10                   # messages per channel and hour (1-60); the rest goes out together later
   quiet_hours: "23:00-07:00" # router time: only warn / risk events then, the others wait
   doctor_interval: 30        # minutes between background `mr doctor` runs (5-1440, 0 = off); default 30 with channels
@@ -103,12 +111,26 @@ Validation (the security boundary — everything below ends up in a file, a cron
   `a-b`, `*/n`, `a-b/n`, lists; no names, no `@reboot`), minute a single number (every task runs at
   most once per hour), for `reboot` the hour too (at most once per day). `restart` targets must be a
   service this config enables (not `mr-network`); `reconnect` targets a PPPoE / DHCP WAN; `wol` targets a
-  `dhcp.hosts` name (letters, digits, `-`) or a unicast MAC.
-* `ddns`: at most 16 records; `name` a DNS name with at least one dot (a leading `*.` allowed), unique, inside
-  `zone` (the zone itself or a subdomain); `provider` `cloudflare`; `token_secret` a secret name `[a-z0-9_-]{1,40}`
-  that exists, whose value looks like an API token (20–256 of `A-Za-z0-9 - _ . ~ + / =`: it goes into an HTTP
-  header); `ipv4` `active`, `off` or a configured WAN; `ipv6` `off`, `router` or `::IID` (upper 64 bits zero,
-  lower 64 not); not both off; `ttl` 0 or 60–86400; `interval` 0 or 5–60; `enabled` needs records.
+  `dhcp.hosts` name (letters, digits, `-`) or a unicast MAC; `wifi-off` / `wifi-on` take no target or a
+  `wifi.radios` phy; `leds-off` / `leds-on` no target.
+* Windows (#29): `wifi-off` / `wifi-on` (hostapd `DISABLE` / `ENABLE` over the control socket) and `leds-off` /
+  `leds-on` are states, not one-shot commands. The state is the newest of those schedules that fired in the last
+  8 days (router time), worked out again when the action runs, after every apply, after every hostapd start
+  (`usr/libexec/mr/wifi-hostapd`, respawns too) and whenever the LEDs are set (WAN hooks, `mr led`): a reboot at
+  night keeps WiFi and LEDs off. `ENABLE` only goes to radios the window disabled itself (marker
+  `/run/mini-router/wifi-off.<phy>`); a radio off by schedule does not fail the post-apply check or `mr doctor`.
+* `ddns`: at most 16 records; `name` a DNS name with at least one dot (a leading `*.` allowed, not for duckdns / dyndns2),
+  unique, inside `zone` (the zone itself or a subdomain; duckdns: `<label>.duckdns.org`); `provider` one of `cloudflare`
+  `alidns` `dnspod` `duckdns` `dyndns2` `webhook`, and only the keys that provider takes (`zone token_secret ttl` |
+  `zone key_id key_secret ttl` | `token_secret` | `url username password_secret` | `url method token_secret`; any other
+  key set is an error); every `*_secret` a secret name `[a-z0-9_-]{1,40}` that exists — a Cloudflare / DuckDNS token 20–256
+  of `A-Za-z0-9 - _ . ~ + / =`, an AliDNS / DNSPod key secret 16–128 printable characters, a dyndns2 password / webhook
+  token 1–256 (no spaces: they go into a header or a signature); `key_id` 8–128 letters and digits; `url` https only,
+  ≤ 1024 ASCII characters without spaces, quotes, `user@`, `#` (webhook: placeholders `{name} {type} {ip} {token}` only,
+  `{token}` needs `token_secret`); `username` no spaces or `:`; `method` GET | POST; `ipv4` `active`, `off`, a configured
+  WAN, `url:https://…`, `mac:` + a unicast MAC or a public IPv4 address (never private / CGNAT / reserved); `ipv6` `off`,
+  `router`, `::IID` (upper 64 bits zero, lower 64 not), `url:`, `mac:` or a global address (not ULA); not both off; `ttl` 0 or
+  60–86400; `interval` 0 or 5–60; `enabled` needs records.
 * `notify`: at most 4 channels; `name` `[a-z][a-z0-9_-]{0,14}` and unique; `telegram` needs `token_secret` (a secret
   that exists and looks like a bot token, `digits:[A-Za-z0-9_-]{20,80}`) and `chat_id` (a number, `-100…`, or `@name`),
   no `url_secret` / `format`; `webhook` needs `url_secret` (one line, no spaces, ≤ 2048 characters, `http://` or
@@ -186,6 +208,9 @@ tries. A config change (zone, name, TTL, token) starts that record's state afres
 | `ipv4: <wan>` | that WAN's address (same rule) |
 | `ipv6: router` | the router's own global address: the main LAN bridge's address from the delegated prefix (`<prefix>::1`, stable while the prefix is), else a WAN's global address. Temporary, deprecated, tentative and ULA addresses are skipped |
 | `ipv6: "::10"` | that interface ID on the main LAN's delegated /64 — a LAN device with a fixed interface ID (static token / EUI-64). Inbound traffic to it also needs `firewall.ipv6_allow` |
+| `url:https://…` | an external lookup ("what is my IP"): the first address of the family in the answer (plain text, JSON, HTML). IPv4 is fetched over tcp4 **from the address of the WAN `active` would pick** (a private / CGNAT address counts here), so the WAN's `from <address>` policy rule sends it through that WAN and the answer is that WAN's public address — for a router behind a modem that does NAT; without a WAN address, the default route. IPv6 over tcp6 on the default route. One lookup per URL and sync (so an unchanged address costs this one request); `mr ddns status` / the web UI never look up, they show the last sync's result. A private / CGNAT answer is not published |
+| `mac:aa:bb:…` | a LAN device: IPv4 from its DHCP lease (newest), else the neighbour table, else its fixed address (normally private, so not published — for LANs with public IPv4); IPv6 its global address inside a LAN bridge's /64 from the neighbour table: the EUI-64 one, else the one published before while it is still there, else the lowest (devices with rotating privacy addresses: give them a stable address or use `::IID`) |
+| a fixed address | published as is (IPv4 public only) |
 
 Removing a record from the config stops updating it; mr never deletes DNS records.
 
@@ -203,8 +228,41 @@ control characters, the state file (`/run/mini-router/ddns.json`, 0600, tmpfs) k
 config + token to notice changes, and `mr ddns status`, `sys.ddns`, `sys.ddnsupdate` and `mr status` never contain
 it (tested).
 
-**A second provider** is one function (`upsert`: make every record of that name and type hold the address) in
-`ddnsProviders`, plus its name in the validation.
+**Other providers** (one function each in `ddnsProviders`; its keys in `ddnsKeys`):
+
+* **AliDNS** (Alibaba Cloud DNS, API 2015-01-09, `https://alidns.aliyuncs.com`, signature ACS3-HMAC-SHA256; a RAM user with
+  AliyunDNSFullAccess): `DescribeSubDomainRecords` (DomainName = zone, SubDomain = name, Type), then `UpdateDomainRecord`
+  for every record of that RR and type that differs — its `Line` and `TTL` sent back unchanged (UpdateDomainRecord would
+  reset a left-out TTL to 600), a locked record is an error — or `AddDomainRecord` on the default line. Parameters in the
+  query string of a POST, empty body.
+* **DNSPod** (Tencent Cloud API 3.0, version 2021-03-23, `https://dnspod.tencentcloudapi.com`, TC3-HMAC-SHA256; a CAM
+  sub-user with QcloudDNSPodFullAccess — the API 3.0 SecretId / SecretKey, not the old DNSPod token): `DescribeRecordList`
+  (`ErrorOnEmpty: no`; `ResourceNotFound.NoDataOfRecord` counts as empty), `ModifyRecord` with the record's line, line id,
+  TTL, status and weight, or `CreateRecord` on line 默认 / id 0. `AuthFailure.SignatureExpire` (clock) is retried, other
+  `AuthFailure.*` / `UnauthorizedOperation.*` stop the record.
+* Both signatures follow the providers' documents and are tested against their worked examples (ACS3: help.aliyun.com
+  "V3 版本请求体&签名机制", RunInstances → `06563a9e…`; TC3: cloud.tencent.com/document/api/1427/56189, CVM
+  DescribeInstances at 1551113065 → `10b1a37a…`, with the derived keys). The key secret only enters the HMAC.
+* **DuckDNS**: `GET https://www.duckdns.org/update?domains=<sub>&token=…&ip=…[&ipv6=…]&verbose=true`; OK + UPDATED /
+  NOCHANGE, KO stops the record. A record with both types sends both in one request (DuckDNS would otherwise take IPv4
+  from the connection); AAAA only sends the IPv6 address in `ip=`.
+* **dyndns2** (No-IP, Dynu, deSEC, …): `GET <url>?hostname=<name>&myip=<IPv4>&myipv6=<IPv6>` with basic auth; both types in
+  one request like DuckDNS. `good` / `nochg` succeed; `badauth`, `!donator`, `nohost`, `notfqdn`, `numhost`, `abuse`,
+  `badagent`, `!yours` (and HTTP 401 / 403) stop the record; `911`, `dnserr` retry. Extra fixed parameters can stay in the URL
+  (deSEC: `myipv6=preserve` for an IPv4-only record).
+* **webhook**: GET or POST of `url` with `{name} {type} {ip} {token}` replaced (URL-escaped); POST also sends
+  `{"name","type","ip"}` as JSON. `token_secret` without `{token}` in the URL goes into `Authorization: Bearer`. 2xx = done,
+  401 / 403 stop. There is nothing to read back: the daily check does not resend it (a change or 立即更新 does).
+* Huawei Cloud (SDK-HMAC-SHA256) is not built in: its documents publish no worked signature example to test against.
+
+**Events.** Each sync adds at most three `ddns` events (the event log keeps 10 per type and hour): `updated home.example.com
+A 192.0.2.11 (was 192.0.2.10); …` (info) when a record was written, `update failing: <name> <type>: <error>; …` (warn) the
+third failure in a row or at once when credentials are refused — once per failure streak — and `updated again: …` (info).
+`notify` sends them by default (`ddns` is in the default `events`). A daily check that finds nothing to fix is no event.
+
+**ACME DNS-01** for the reverse proxy (`services.edge.acme.provider: alidns | dnspod` with `key_id` + `key_secret`, the same
+keys as a DDNS record): AliDNS finds the zone with `GetMainDomainName`, adds the TXT record (TTL 600) and deletes it by id;
+DNSPod picks the longest of the account's domains (`DescribeDomainList`) the name ends in, `CreateRecord` / `DeleteRecord`.
 
 ## HTTPS reverse proxy (services.edge)
 
@@ -222,7 +280,7 @@ services:
     lan_dns: true             # default: the route hosts resolve to the router's LAN address on the LAN
     acme:
       email: admin@example.com          # optional ACME contact
-      provider: cloudflare              # DNS-01 through the Cloudflare API (default; the only one so far)
+      provider: cloudflare              # DNS-01 through: cloudflare (default) | alidns | dnspod (key_id + key_secret, as in DDNS)
       token_secret: cf_ddns_token       # secrets.yaml: API token with Zone › DNS › Edit — the DDNS token works
       staging: false                    # true: Let's Encrypt's staging CA (untrusted certificates, for trying it out)
       wildcard: [example.com]           # one certificate example.com + *.example.com for the hosts directly under it
@@ -269,7 +327,7 @@ response timeouts (uploads, long polls, WebSockets). Counters per route (request
 **Certificates.** ACME (RFC 8555) with the Go standard library only (ES256 JWS; no `x/crypto/acme` dependency): the
 account key (ECDSA P-256, one per CA, `/etc/mini-router/state/acme/`, 0700 / 0600 root), order, DNS-01 — a TXT record
 `_acme-challenge.<host>` created through the Cloudflare API with the DDNS client's code (the zone is the longest suffix
-of the host the token can see), a wait until every authoritative name server of the zone answers it (asked directly,
+of the host the token can see; AliDNS / DNSPod: see "DDNS"), a wait until every authoritative name server of the zone answers it (asked directly,
 no cache on the way; when they cannot be asked, e.g. port 53 blocked, the CA is asked anyway after 2 minutes), the
 challenge, polling, finalize with a new ECDSA P-256 key, the chain checked (leaf = our key, every domain named, valid
 now), then `/etc/mini-router/state/edge/<cert>.pem` (chain + key) written atomically, 0600, owned by the service user,
@@ -290,7 +348,7 @@ config like any other (a token with apply scope can change them; they can only p
 
 **Validation.** `port` 1–65535, not SSH / 53 / 67 / 80 / 123 / 547 / 44300 / lucky's UI port (while lucky is on);
 `enabled` needs an enabled route and a `token_secret` naming an existing secret that looks like an API token; `provider`
-`cloudflare`; `email` an address or empty; `wildcard` lower-case domains, at most 8; routes: at most 32, `name`
+`cloudflare`, `alidns` or `dnspod` (these two: `key_id` + `key_secret` as in DDNS, no `token_secret`); `email` an address or empty; `wildcard` lower-case domains, at most 8; routes: at most 32, `name`
 `[A-Za-z0-9_.-]{1,40}` unique, `host` a lower-case DNS name with a dot (no wildcard, no `_`) unique, `to`
 `http(s)://IP[:port][/]` without user, path or query, the IP the router itself (loopback, a router address), a host
 in a LAN-side network, a tailnet address (100.64/10) or an IPv6 ULA — never the proxy's own ports; `allow` `lan` or
@@ -304,6 +362,69 @@ cannot reach the router's ports.
 
 **Changes to the real home output:** none — `services.edge` is absent there, so no file, service, firewall line,
 dnsmasq line or cron line appears (tested).
+
+### Basic auth and a second WAN port
+
+```yaml
+services:
+  edge:
+    open: true
+    wan_port: 8443            # the WANs' tcp 8443 reaches the same WAN listener as port (ISPs that block inbound 443)
+    routes:
+      - {name: nas, host: nas.example.com, to: "http://192.168.1.10:5000",
+         auth: {user: alice, password_secret: edge_nas_pw}}   # HTTP basic auth in front of the service
+```
+
+- The password lives in secrets.yaml (8-128 printable characters). `mr` writes only its PBKDF2-SHA256 hash
+  (100 000 iterations, salt derived from the route) into edge.json; the serving process checks
+  `Authorization: Basic` against it, keeps up to 32 verified credentials per route in memory and runs one
+  PBKDF2 at a time. Wrong or missing credentials: 401 with a `WWW-Authenticate` challenge (counted as denied).
+  The service never sees the header. API tokens cannot add or change `*_secret` references.
+- `wan_port` needs `open`, must differ from `port`, and may not be a reserved port or one that
+  `firewall.open` / `firewall.forwards` already use. Only the nft redirect changes.
+- Not done: throttling of failed attempts per source, ACME ARI.
+
+## Watchcat (system.watchcat)
+
+```yaml
+system:
+  watchcat: {enabled: true, after: 10, reboot_hours: 6, targets: [1.1.1.1, 223.5.5.5]}
+```
+
+`mr watchcat tick` runs from crond every minute. With multi-WAN health checking it reads wan-state.json
+(all WANs `down`); without it, one ping round to `targets` (default: `multiwan.targets`, else 1.1.1.1 and
+223.5.5.5). After `after` minutes down it escalates with doubling backoff (`after`, 2×, 4×, 8×): redial every
+PPPoE / DHCP WAN → `rc-service mr-network restart` → reboot. At most one watchcat reboot per `reboot_hours`
+(the time is kept in `/etc/mini-router/state/watchcat-reboot`); after that the reboot step is a network restart.
+Nothing happens while a change waits for confirmation or in the first 10 minutes after boot. Each step and the
+recovery is an event of type `watchcat` (断网自救). State: `/run/mini-router/watchcat.json`.
+
+## Tailscale exit node for LAN devices
+
+```yaml
+services:
+  tailscale:
+    enabled: true
+    exit_node: {node: 100.101.102.103, devices: [laptop, "group:kids"], kill_switch: false}  # devices empty = whole LAN zone
+```
+
+Checked on the router (tailscale 1.102, NetfilterMode on): tailscale owns ip rules 5210-5270 and table 52
+(its routes; with an exit node also the default route), its nft tables masquerade only its own 0x40000 mark.
+`/etc/conf.d/tailscale` gets `TS_EXIT_NODE`; the init script's `start_post` runs `tailscale set --exit-node`
+(and clears it after the key is removed). network.sh adds, for IPv4 and IPv6:
+
+| pref | rule |
+|---|---|
+| 5201 | `fwmark 0x4000000 lookup main suppress_prefixlength 0` (LAN / static routes stay direct) |
+| 5202 | `fwmark 0x4000000 lookup 52` (the exit node's default) |
+| 5203 | `fwmark 0x4000000 unreachable` (only with `kill_switch`) |
+| 5208 | `lookup 52 suppress_prefixlength 0` (everyone else: tailnet routes, not the exit default) |
+| 5209 / 5280 | `goto 5280` / `lookup main suppress_prefixlength 0` (skip tailscale's 5210-5270) |
+
+nft chain `ts_exit` (prerouting mangle+2) sets the mark by MAC and keeps it in the connmark (replies from
+tailscale0 then pass strict rp_filter); srcnat masquerades marked traffic on tailscale0. Without the kill switch
+a device uses the normal WAN while no exit node is set or reachable. The router's own traffic never uses the
+exit node. Removing the key leaves the (inert) rules until the next boot.
 
 ## Wake-on-LAN
 
@@ -360,7 +481,9 @@ boot) are the ones a RAM log loses. Types and where they come from:
 | `new_device` | `mr event tick`: a DHCPv4 client whose MAC was never seen (`dhcp.hosts` count as known). The list of seen MACs is on flash (`devices.seen`, newest 2048, appended; a reboot reports nothing); the first day after it is created only learns (the lease file is in RAM, the house's devices come back one by one). At most 5 per scan one by one, the rest in one line. Host names come from the network: cleaned, capped | info |
 | `boot` / `upgrade` | `mr event boot` (mr-bootlog, the last boot service): clean restart (a mark written by `mr event shutdown` when OpenRC stops the system — reboot and power-off both run the shutdown runlevel; a restart of the service writes none, and a mark of the running boot is dropped; the reason from the change log, e.g. `schedule: reboot`; the downtime once NTP agrees), kernel crash (a new ramoops record in `/sys/fs/pstore`), new firmware (the kexec upgrade leaves no mark), otherwise unexpected restart (power cut, hang, hardware watchdog). A mark left by an older boot is ignored | info / warn |
 | `doctor` | the background `mr doctor` run: a finding that is new or worse since the last run, and "fine again". Standing choices and moments of an apply (`ssh` password logins, `offload: off`, `config.unapplied`, a change waiting for confirmation) are left out; the state is in `/run` (a reboot reports what is still wrong once more) | warn / risk / info |
+| `ddns` | `mr ddns sync` (see "DDNS"): records written with a new address, a record failing 3 times in a row or refused, and working again | info / warn |
 | `wifi` | the wifi module's self-heal (`wifi.self_heal`, `mr wifi tick`, see `docs/modules/wifi.md`): a radio's TX stalled with stations associated — firmware recovery triggered, hostapd restarted, gave up (no automatic reboot) — and TX moving again | warn / risk / info |
+| `device` | `devices[].watch` (dev module, `docs/modules/dev.md`): a watched device came online / was not seen for 10 minutes | info |
 
 Flash writes are bounded: at most 10 lines of one type are kept per hour (a flapping WAN, a DHCP flood with random
 MACs, a password-guessing botnet only reach syslog after that), so the worst case is ~100 appends of ≤ 300 bytes and two
@@ -393,8 +516,56 @@ down simply wait for the next working send.
   send. The bot token (in the API URL) and the webhook URL (usually a key in it) live only in secrets.yaml: error texts
   drop the request URL and every form of the secret before they are shortened, and nothing of them reaches a state file,
   a log, `mr notify status`, `sys.events` or the web UI (tested with a local receiver in CI).
-* The router's own traffic does not use the proxy; a Telegram API that is blocked where the router is needs a webhook
-  relay for now.
+* The router's own traffic does not use the proxy. A channel with `via_proxy: true` (for a blocked Telegram API) is
+  sent through a loopback-only sing-box `mixed` inbound (`127.0.0.1:7894`, rendered only while such a channel exists;
+  its traffic follows the proxy rules, else the first group / node) — directly while the proxy is off or not listening.
+
+**Doctor extras (#82)** — `ipv6.route`: a WAN with `ipv6` up but no IPv6 default route; `dnsguard`: the packets
+`dns.sovereignty`'s `dns_guard` chain refused (DoT / DoQ / DoH bypass attempts; skip without it); `upgrade` (below).
+`mr doctor --heal` restarts every wanted, installed service that is not running (not `mr-network` / `mr-firewall`), each
+at most once per 10 minutes (`/run/mini-router/heal.json`); logged to syslog and the change log, recorded as `doctor`
+events `heal.<service>`. API tokens get `sys.doctor` from the last 10 s when there is a result that fresh.
+The web UI's 一键修复 (体检 tab) is `POST sys.heal` (the same step; token scope `operate`), and `notify.auto_heal: true`
+makes the background doctor (`notify.doctor_interval`) run it before its checks.
+`mr event boot` / `shutdown` run even when router.yaml does not load (the boot then also records a `risk` "config"
+line; nothing is scheduled).
+
+**Crash loops** — the supervise-daemon services (`mr-edge`, `mr-mon`, `mr-proxy`, `mr-proxy-dns`, `mr-wanmon`,
+`mr-panel`, tailscale, lucky, dstatus-agent, igmpproxy) give up after 10 respawns in 10 minutes
+(`respawn_max=10`, `respawn_period=600`); the service is then not running, `mr doctor` reports it (the background run
+makes it an event) and `--heal` restarts it. The WAN clients (`mr-pppoe`, `mr-udhcpc`, `mr-dhcpcd`) and `mr-hostapd`
+never give up: they are the way back in.
+
+**New firmware, updates, archive (#20)** — all opt-in or read-only, nothing is ever installed or applied by itself:
+
+* The first boot of a new `MR_VERSION` (`mr event boot`) runs `mr plan -v` in the background into
+  `/run/mini-router/upgrade-plan.txt` (secrets masked). While it lists generated files, `mr doctor` has a warning
+  `upgrade` "the new version would change N generated file(s)" (overview, event); the next apply removes the file.
+* `notify.update_check: true` — crond runs `mr notify update-check` once a day (minute and hour fixed per router):
+  `GET api.github.com/repos/Cd1s/mini-router/releases/latest` (verified TLS, no proxy, no redirects, answer capped at
+  512 KiB). A newer release (a `vX.Y.Z` install compares versions, a firmware image build its date with the release
+  date) is one `update` event per tag (`/etc/mini-router/state/update.json`).
+* `notify.archive` — after a change is accepted (applied without `--confirm`, or confirmed) a detached
+  `mr notify archive` sends router.yaml as it is on flash (never secrets.yaml) to one target (`mod_sys_archive.go`,
+  `type:`):
+
+  | type | keys | request |
+  |---|---|---|
+  | `https` (default) | `url_secret`, `token_secret`?, `method: post\|put` | the URL, `Authorization: Bearer` when a token is set |
+  | `webdav` | `url` (folder), `user`, `password_secret`, `name`? | `PUT url/name`, Basic auth (坚果云 `https://dav.jianguoyun.com/dav/folder/` + 应用密码, Nextcloud, NAS) |
+  | `s3` | `url` (endpoint), `region`, `bucket`?, `prefix`?, `access_key_id`, `secret_key_secret`, `name`? | `PUT /bucket/prefix+name`, AWS Signature V4; without `bucket` the endpoint is the bucket's own host (Aliyun OSS: `https://BUCKET.oss-cn-hangzhou.aliyuncs.com`); R2 `region: auto` |
+  | `github` | `repo` (owner/name), `branch`?, `path`? (router.yaml), `token_secret` | contents API: GET the sha, PUT base64 content (a fine-grained token with Contents: write on that repo) |
+
+  `name` empty = `router-YYYYMMDD-HHMMSS.yaml` (one file per change), else that fixed name. Verified TLS, no
+  redirects, answers capped at 64 KiB, 30 s. URLs are https only, without credentials or query (the `https` type's
+  URL is itself a secret). A failure is an `archive` event (warn); a confirm never waits for it; secrets and URLs never
+  appear in errors. The last result is in `/etc/mini-router/state/archive.json`; the web UI (备份与升级 › 异地备份)
+  shows it and 立即备份测试 is `POST sys.archivetest` (session only; `GET` = the last result).
+
+| Type | Source | Severity |
+|---|---|---|
+| `update` | `mr notify update-check`: a newer release | info |
+| `archive` | `mr notify archive`: router.yaml could not be sent | warn |
 
 ### Boot order for `net.netfilter.*`
 
@@ -423,6 +594,7 @@ ruleset uses conntrack), so there is no cost before the firewall. The mon module
 | `sys.logs` | GET / POST | `{level 0-7, tag, q, limit ≤ 5000}` → `lines[]` `[time, level, facility, tag, message]` newest first, `total`, `tags{}` (source `/var/log/messages{.0,}`, `logread` if absent) |
 | `sys.schedulecheck` | POST | `{cron, action}` → `{ok, cron \| error}` (editor feedback, no side effects) |
 | `sys.ddns` | GET | `{enabled, interval, records[]}` — per record and type: `name, type, source, local, published, note, last_ok, changed, checked, error, error_at, retry, stopped, fails` (local addresses as of now; no provider request; never the token or zone id) |
+| `sys.speedtest` | POST | the router's own download / upload through its default route against speed.cloudflare.com (`__down` / `__up`, one connection, ~8 s each; `mod_sys_speedtest.go`) → `{down_mbps, up_mbps, time}`; a lower bound (single stream, TLS on the router's CPU); one at a time; 502 on failure. Button on 系统 › 网络诊断 |
 | `sys.wol` | POST | `{target: MAC \| dhcp.hosts name, network (optional)}` → `{mac, host, network, dev, broadcast}`; 400 for a bad target / network, 500 if sending failed |
 | `sys.edge` | GET | `{enabled, port, open, staging, serving, started, renewing, routes[] {name, host, to, allow, cert, wan, requests, errors, denied}, certs[] {name, domains, state (ok \| due \| missing \| expired \| names changed \| other CA), not_before, not_after, issuer, last_try, last_ok, error, error_at, retry}}` — never a key or the token; token scope `read` |
 | `sys.edgerenew` | POST | `{}` → `{started: true}`: `mr edge renew` in the background (what is due or missing, ignoring the backoff); 409 while off or while a renewal runs; poll `sys.edge` (`renewing`). Session only |
@@ -462,15 +634,16 @@ List files that exist on the router but not in the backup are left alone.
 ## CLI
 
 ```
-mr sys run reboot | restart SERVICE | reconnect WAN | wol HOST   # what crond runs (checked against the config, logged)
+mr sys run reboot | restart SERVICE | reconnect WAN | wol HOST | wifi-off|wifi-on [RADIO] | leds-off|leds-on   # what crond runs (checked against the config, logged)
 mr wol MAC|HOST [NETWORK]                                # Wake-on-LAN (JSON: mac, host, network, dev, broadcast)
+mr speedtest                                             # {down_mbps, up_mbps, time}: Cloudflare, ~20 s, a lower bound
 mr sys backup [-secrets] FILE|-                          # same archive as the web UI
 mr sys restore [-confirm 60-600] FILE                     # same checks and apply job; then `mr confirm`
 mr sys keys                                              # authorized_keys: managed / other, fingerprints
 mr ddns status                                           # records: local / published address, last result (offline)
 mr ddns update [--force] [NAME...]                       # update now (ignores backoff); --force also re-checks at the provider
 mr ddns sync [--hook|--cron]                             # what the WAN hooks (5 s debounce) / crond run
-mr doctor [--json]                                       # health and security checks, problems first with their fix
+mr doctor [--json] [--heal]                              # health and security checks, problems first with their fix (--heal: restart stopped services)
 mr event list [--json] [N]                               # the newest N events (default 50, at most 200)
 mr event tick | boot | shutdown                          # what mr-mon's sampler / mr-bootlog run
 mr notify status                                         # channels: pending, last success, last error, retry, held
@@ -519,11 +692,16 @@ warn); issued and failed certificates are events of type `cert`.
   运行状态、开关（改完点底部“保存并应用”）、“重启”按钮（立即生效）。Tailscale 卡片显示本机地址、在线节点，
   下面有节点表（直连 / 中继、流量、最后在线）；路由器还没登录 Tailscale 时会给出登录链接。Lucky 卡片有
   “打开 Lucky 管理界面”链接。页面底部是其它模块的服务（dnsmasq、hostapd、PPPoE …），也能单独重启。
-- **服务 › DDNS 动态域名**（同一页下方）：开关、定时检查间隔；记录表每行一个域名：Zone、Token 引用名和 Token
-  （只写入 secrets.yaml，页面不会显示）、A 记录（在用的 WAN / 指定 WAN / 不更新）、AAAA（`off` / `router` /
-  `::10` 这样的 LAN 设备后缀）、TTL。改完点“保存并应用”，应用后会立即同步一次。下面的状态表显示每条记录的本机
-  地址、已发布地址、上次成功时间和错误；“立即更新”马上向 Cloudflare 核对并更新（忽略退避）。更新失败时总览页有提示。
+- **服务 › DDNS 动态域名**（同一页下方）：开关、定时检查间隔；记录表每行一个域名，“编辑”打开对话框：服务商
+  （Cloudflare、阿里云 AliDNS、腾讯云 DNSPod、DuckDNS、dyndns2（No-IP / Dynu / deSEC）、Webhook），选了服务商只显示它
+  需要的项（Zone、AccessKey ID / SecretId、更新地址、用户名、方法、密钥引用名和密钥——只写入 secrets.yaml，页面不会显示）；
+  A 记录（在用的 WAN / 指定 WAN / 外部查询 URL / LAN 设备 MAC / 固定地址 / 不更新）、AAAA（不更新 / 路由器 / `::10` 这样
+  的 LAN 设备后缀 / MAC / URL / 固定地址）、TTL。改完点“保存并应用”，应用后会立即同步一次。下面的状态表显示每条记录的本机
+  地址、已发布地址、上次成功时间和错误；“立即更新”马上向服务商核对并更新（忽略退避）。更新失败时总览页有提示；地址变化、
+  连续失败和恢复记入事件（类型 DDNS），按“通知”设置推送。
   Cloudflare Token：My Profile › API Tokens › Create Token › “Edit zone DNS” 模板，Zone Resources 只选这个域。
+  阿里云：RAM 访问控制新建用户，只授予 AliyunDNSFullAccess；腾讯云：CAM 子用户授予 QcloudDNSPodFullAccess，用 API 密钥
+  （SecretId / SecretKey）。路由器在光猫后面拿到的是内网地址时，A 记录选“外部查询”（例如 `https://api.ipify.org`）。
 - **服务 › HTTPS 反向代理（自动证书）**（同一页下方）：开关、端口、“对外网开放”、“局域网解析”；证书部分填邮箱（可空）、
   Cloudflare Token 引用名和 Token（和 DDNS 用同一种，可以就用 `cf_ddns_token`）、通配符域名、是否用测试 CA。站点表每行一个
   域名：名称、域名、转发到（内网服务的 `http://IP:端口` 或 `https://IP:端口`）、允许访问（留空 = 所有人；`lan` = 局域网和
@@ -603,7 +781,10 @@ services:
       - {name: home.example.com, zone: example.com, token_secret: cf_ddns_token, ipv6: router}   # A + AAAA 指向路由器
 ```
 
-应用后 `mr ddns status` 看结果（几秒后 `published` 应等于 `local`）。
+应用后 `mr ddns status` 看结果（几秒后 `published` 应等于 `local`）。其它服务商把对应的密钥写进 secrets.yaml，记录换成
+例如 `{name: home.example.cn, provider: alidns, zone: example.cn, key_id: LTAI…, key_secret: ali_dns_key}`、
+`{name: myhome.duckdns.org, provider: duckdns, token_secret: duck_token, ipv6: router}`（完整写法见上面 “DDNS”）；
+`ipv4: "url:https://api.ipify.org"` = 外部查询，`ipv6: "mac:aa:bb:cc:dd:ee:ff"` = 按 MAC 找 LAN 设备。
 
 通知：先把 Token / URL 写进 secrets.yaml（不要回显到终端），然后
 

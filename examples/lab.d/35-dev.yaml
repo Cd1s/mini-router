@@ -8,6 +8,8 @@ devices:
   - {name: kid-tablet, macs: ["aa:bb:cc:00:00:21", "aa:bb:cc:00:00:22"], ip: 192.168.1.121, type: tablet, owner: kid}  # cable adapter + WiFi
   - {name: game-console, macs: ["aa:bb:cc:00:00:23"], type: console, owner: kid}                                    # a name, no fixed address
   - {name: tv-box, macs: ["02:00:00:00:10:02"], type: tv}
+  - {name: travel-laptop, macs: ["02:00:00:00:10:05"], type: pc, desc: "leaves via the tailscale exit node"}
+  - {name: kid-phone, macs: ["02:00:00:00:10:03"], type: phone, watch: true, limit: {down: 20, up: 5}}   # online events, 20 / 5 Mbit/s policer, dns.parental
 
 groups:
   kids: [kid-tablet, game-console]

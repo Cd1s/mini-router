@@ -25,7 +25,7 @@ MON_FILE=$H/history MON_INTERVAL=1 MON_KEEP=3 MON_EVENT_DIR=$H MON_LEASES=$H/non
 cat "$H/history"
 n=$(wc -l < "$H/history")
 [ "$n" -ge 2 ] && [ "$n" -le 4 ] || { echo "ring not trimmed to MON_KEEP (+slack): $n lines"; exit 1; }
-awk 'NF != 8 { exit 1 } { for (i = 1; i <= 8; i++) if ($i !~ /^-?[0-9]+$/) exit 1 }' "$H/history" || { echo "bad sample line"; exit 1; }
+awk 'NF != 10 { exit 1 } { for (i = 1; i <= 10; i++) if ($i !~ /^-?[0-9]+$/) exit 1 }' "$H/history" || { echo "bad sample line"; exit 1; }
 [ ! -e "$H/history.tmp" ]
 echo "sampler ok ($n samples)"
 

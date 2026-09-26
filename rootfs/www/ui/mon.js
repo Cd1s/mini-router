@@ -243,6 +243,7 @@ async function pageHistory(){
     const peak = a => a.reduce((m,p)=>Math.max(m,p[1]),0), avg = a => a.length ? a.reduce((s,p)=>s+p[1],0)/a.length : 0;
     const small = (title, series, opts, sub) => card(title, [chart(series, Object.assign({height:120}, opts)), sub ? h("div",{class:"mut",style:"font-size:12px;margin-top:6px"},sub) : null]);
     const cpu = col("cpu"), mem = col("mem", v=>pct(v, j.mem_total)), ct = col("ct"), temp = col("temp");
+    const wtemp = j.wtemp ? col("wtemp") : [], wduty = j.wduty ? col("wduty") : [], wmin = wduty.reduce((m,p)=>Math.min(m,p[1]),100);
     put(body, 
       j.collector && j.collector.ok ? null : note("历史采样服务 mr-mon 没有在运行（最后一次采样："+(j.collector && j.collector.age>=0 ? secs(j.collector.age)+"前" : "无")+
         "）。历史只保存在内存里，重启路由器后从零开始，重启服务后 1–2 分钟出第一个点。", monRestart()),
@@ -256,7 +257,8 @@ async function pageHistory(){
         small("CPU", [{label:"CPU %", color:COLORS[2], points:cpu}], {max:100, fmt:v=>v.toFixed(0)+"%"}, cpu.length ? "峰值 "+peak(cpu).toFixed(1)+"% · 平均 "+avg(cpu).toFixed(1)+"%" : ""),
         small("内存", [{label:"已用 %", color:COLORS[4], points:mem}], {max:100, fmt:v=>v.toFixed(0)+"%"}, mem.length ? "峰值 "+peak(mem).toFixed(1)+"% · 总内存 "+fmtBytes(j.mem_total*1024) : ""),
         small("连接数", [{label:"conntrack", color:COLORS[5], points:ct}], {fmt:v=>v.toFixed(0)}, ct.length ? "峰值 "+peak(ct) : ""),
-        small("温度", [{label:"°C", color:COLORS[3], points:temp}], {fmt:v=>v.toFixed(0)+"°"}, temp.length ? "峰值 "+peak(temp).toFixed(1)+" °C" : "")));
+        small("温度", [{label:"CPU °C", color:COLORS[3], points:temp}, ...(wtemp.length ? [{label:"WiFi °C", color:COLORS[0], points:wtemp}] : [])], {fmt:v=>v.toFixed(0)+"°"},
+          [temp.length ? "峰值 "+peak(temp).toFixed(1)+" °C" : "", wtemp.length ? " · WiFi 峰值 "+peak(wtemp).toFixed(1)+" °C" : "", wmin<100 ? " · WiFi 过热降频（最低占空比 "+wmin+"%）" : ""].join(""))));
   };
   await load();
   const root = h("div",{}, h("div",{class:"mon-filter",style:"margin-bottom:12px"},
@@ -275,7 +277,16 @@ const CF = {proto:"", family:"0", ip:"", port:"", state:"", offload:"", limit:"2
 registerPage("status", "mon-devices", "流量统计", 22, async ()=>{
   const here = start();
   const notes = h("div"), kpi = h("div",{class:"mon-kpi"}), list = h("div"), meta = h("span",{class:"mut",style:"font-size:12px;font-weight:400"});
-  const root = h("div",{}, notes, kpi, card("设备流量", [list,
+  const month = h("div");
+  api("mon.traffic").then(j=>{
+    const m = j.cur||{}, tot = x=>x.up+x.down, byTot = o=>Object.entries(o||{}).sort((a,b)=>tot(b[1])-tot(a[1]));
+    const rows = [...byTot(m.wan).map(([k,x])=>[h("b",{},"WAN "+k), fmtBytes(x.down), fmtBytes(x.up)]),
+      ...byTot(m.dev).slice(0,50).map(([k,x])=>[x.name ? [x.name, h("span",{class:"mon-sub mono"},k)] : h("span",{class:"mono"},k), fmtBytes(x.down), fmtBytes(x.up)])];
+    put(month, card("本月流量"+(m.month ? "（"+m.month+"）" : ""), [
+      h("div",{class:"mon-hint"}, h("label",{class:"row"}, inBool(S.cfg.system,"traffic_stats"), "按月统计"),
+        "每分钟累计连接的增量（下限），每小时写一次闪存；设备最多 256 台。"), rows.length ? roTable(["设备 / WAN","↓","↑"], rows) : null], null, true));
+  }).catch(()=>{});
+  const root = h("div",{}, notes, kpi, month, card("设备流量", [list,
     h("div",{class:"mon-hint"},"数据来自连接跟踪（conntrack）的字节计数：速率 = 两次刷新之间每条连接的增量；“连接内累计”只含仍在连接表中的连接，不是开机以来的总量。"+
       "硬件加速（PPE/WED）的连接由内核约每秒同步一次计数，数值会滞后 1–2 秒并呈阶梯状。")], meta, true));
   const draw = async ()=>{

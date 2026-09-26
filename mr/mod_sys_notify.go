@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -48,6 +49,14 @@ type Notify struct {
 	// Doctor: minutes between background `mr doctor` runs whose new findings become events (5-1440;
 	// 0 = off). Default 30 while channels exist, else off.
 	Doctor *int `yaml:"doctor_interval,omitempty"`
+	// UpdateCheck: once a day ask GitHub for the latest release; a newer one is an update event
+	// (mod_sys_update.go). Never downloads or installs.
+	UpdateCheck bool `yaml:"update_check,omitempty"`
+	// AutoHeal: the background doctor first runs the --heal step (restart wanted services that do not run,
+	// each at most once per 10 minutes). Needs the background doctor (doctor_interval).
+	AutoHeal bool `yaml:"auto_heal,omitempty"`
+	// Archive: after every accepted change router.yaml (never secrets.yaml) goes to this URL.
+	Archive *NotifyArchive `yaml:"archive,omitempty"`
 }
 
 // NotifyChannel is one destination.
@@ -58,6 +67,8 @@ type NotifyChannel struct {
 	ChatID string `yaml:"chat_id,omitempty"`      // telegram: numeric chat id (-100… for groups) or @channel
 	URL    string `yaml:"url_secret,omitempty"`   // webhook: secrets.yaml key of the URL
 	Format string `yaml:"format,omitempty"`       // webhook: json (default: title / message / body / text …) | text (ntfy)
+	// ViaProxy: send through the proxy's loopback SOCKS inbound while it runs (else directly)
+	ViaProxy bool `yaml:"via_proxy,omitempty"`
 }
 
 const (
@@ -236,6 +247,15 @@ func validateNotify(c *Config, v *Validator) {
 	if d := n.Doctor; d != nil && *d != 0 && (*d < 5 || *d > 1440) {
 		v.Add("notify.doctor_interval: 5-1440 minutes or 0 (off), got %d", *d)
 	}
+	validateArchive(c, v)
+	if proxyNotifyOut(c) != "" {
+		p := &c.Proxy
+		for _, x := range []int{p.tproxyPort(), p.dnsPort(), p.lanDNSPort(), p.apiPort()} {
+			if x == 7894 {
+				v.Add("notify.channels: via_proxy uses the proxy's loopback port 7894, which a proxy.*_port uses too")
+			}
+		}
+	}
 }
 
 func notifySecrets(c *Config) []string {
@@ -245,6 +265,12 @@ func notifySecrets(c *Config) []string {
 			if s != "" {
 				out = append(out, s)
 			}
+		}
+	}
+	if a := c.Notify.Archive; a != nil {
+		out = append(out, a.URL)
+		if a.Token != "" {
+			out = append(out, a.Token)
 		}
 	}
 	return out
@@ -391,7 +417,6 @@ func notifyFlush(c *Config, o notifyRun) ([]notifyStatus, error) {
 		}
 	}
 	curChanged := false
-	var hc *http.Client
 	keep := map[string]bool{}
 	for _, ch := range c.Notify.Channels {
 		keep[ch.Name] = true
@@ -439,10 +464,7 @@ func notifyFlush(c *Config, o notifyRun) ([]notifyStatus, error) {
 			later(s.Sent[0] + 3600 + 1)
 			continue
 		}
-		if hc == nil {
-			hc = ddnsHTTP()
-		}
-		err := notifySend(c, hc, ch, notifyBuild(c, pend, now))
+		err := notifySend(c, notifyHTTP(c, ch), ch, notifyBuild(c, pend, now))
 		if err != nil {
 			if err.Error() != s.Error {
 				logf("notify %s: %s", ch.Name, err)
@@ -618,6 +640,26 @@ func notifyErr(err error, secrets ...string) error {
 	return errors.New(eventClean(s, 200))
 }
 
+// notifyHTTP: the client for a channel — through the proxy's loopback inbound (mod_proxy_render.go)
+// when the channel asks for it and the proxy answers there, else direct.
+func notifyHTTP(c *Config, ch NotifyChannel) *http.Client {
+	hc := ddnsHTTP()
+	if t, ok := hc.Transport.(*http.Transport); ok && ch.ViaProxy && c.Proxy.Enabled && proxyNotifyUp() {
+		t.Proxy = http.ProxyURL(&url.URL{Scheme: "socks5", Host: proxyNotifyAddr})
+	}
+	return hc
+}
+
+// proxyNotifyUp: sing-box listens on the notify inbound.
+var proxyNotifyUp = func() bool {
+	conn, err := net.DialTimeout("tcp", proxyNotifyAddr, time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // notifySend delivers one message to one channel.
 func notifySend(c *Config, hc *http.Client, ch NotifyChannel, m notifyMsg) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -724,7 +766,6 @@ func hookSend(ctx context.Context, hc *http.Client, u, format, host string, m no
 func notifyTest(c *Config, name string) ([]map[string]any, error) {
 	var out []map[string]any
 	found := false
-	hc := ddnsHTTP()
 	for _, ch := range c.Notify.Channels {
 		if name != "" && ch.Name != name {
 			continue
@@ -733,7 +774,7 @@ func notifyTest(c *Config, name string) ([]map[string]any, error) {
 		m := notifyMsg{Title: asciiOnly(c.System.Hostname + ": test"), Sev: "info",
 			Text: fmt.Sprintf("Test message from mini-router %s (channel %s, %s). Events sent here: %s.", c.System.Hostname, ch.Name, ch.Type, strings.Join(c.Notify.Events, ", "))}
 		r := map[string]any{"name": ch.Name, "ok": true}
-		if err := notifySend(c, hc, ch, m); err != nil {
+		if err := notifySend(c, notifyHTTP(c, ch), ch, m); err != nil {
 			r["ok"], r["error"] = false, err.Error()
 		}
 		out = append(out, r)
@@ -751,7 +792,7 @@ func notifyTest(c *Config, name string) ([]map[string]any, error) {
 
 // notifyCommand: `mr notify status | test [NAME] | flush [--hook]`.
 func notifyCommand(c *Config, args []string) error {
-	usage := errors.New("usage: mr notify status | test [NAME] | flush [--hook]")
+	usage := errors.New("usage: mr notify status | test [NAME] | flush [--hook] | update-check | archive")
 	if len(args) == 0 {
 		return usage
 	}
@@ -760,6 +801,10 @@ func notifyCommand(c *Config, args []string) error {
 	switch args[0] {
 	case "status":
 		return enc.Encode(notifyStatuses(c))
+	case "update-check":
+		return updateCheck(c, ddnsHTTP())
+	case "archive":
+		return archiveRun(c, ddnsHTTP())
 	case "test":
 		name := ""
 		if len(args) > 1 {

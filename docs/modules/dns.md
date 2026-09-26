@@ -229,6 +229,26 @@ all digits or look like an IP address (`host-record=` would read it as a TTL / a
 without a dot also gets `.<dhcp.domain>`; a CNAME name may have no other records, CNAME targets must be names dnsmasq
 knows locally (records, DHCP hosts, addn-hosts — dnsmasq never resolves a CNAME target upstream).
 
+### Parental control (`dns.parental`, #33)
+
+```yaml
+dns:
+  parental:
+    devices: ["group:kids"]      # device names / group:NAME (dev module)
+    safe_search: true            # Google, YouTube (strict), Bing (strict), DuckDuckGo (safe)
+    block: [example-games.com]   # NXDOMAIN, subdomains included (at most 512)
+```
+
+A third dnsmasq, `mr-parental-dns` (port 5356, no DHCP, `gen/parental-dns.conf`), runs while `devices` resolve to
+MACs and `safe_search` or `block` is set. nft chain `parental_dns` (nat prerouting, `dstnat - 10`: ahead of the proxy's
+and `dns.redirect`) redirects every udp/tcp 53 packet of those MACs, to any server, to it. It forwards to the main
+dnsmasq (to `mr-proxy-dns` while the proxy is on; a device may then not also be in `proxy.bypass`) and adds
+`address=/<search host>/<safe-search address>` for www.google.com, the YouTube hosts, www.bing.com and duckduckgo.com
+(the providers' published safe-search hosts: 216.239.38.120, 204.79.197.220, 20.43.161.151, fixed in
+`mr/mod_dns_parental.go`; with `address=` AAAA gets no answer, so IPv6 cannot bypass it) and `local=/<domain>/` per
+blocked domain. Limits: only DNS the router sees — DoH in browsers / apps, DoT, a VPN, a device with a new private MAC,
+Google's country domains (google.co.xx) are not covered; `dns.sovereignty` blocks the known DoH / DoT endpoints.
+
 ### Precedence (what answers a query)
 
 1. Local data: `dns.records`, DHCP host names, `addn-hosts`, `/etc/hosts`.

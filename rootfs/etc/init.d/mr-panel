@@ -2,6 +2,10 @@
 description="web UI + status panel (busybox httpd)"
 supervisor=supervise-daemon
 command=/bin/busybox-extras
+# a crash loop stops after 10 respawns in 10 minutes: mr doctor reports it, mr doctor --heal restarts it
+respawn_delay=3
+respawn_max=10
+respawn_period=600
 depend() {
 	need mr-network
 }

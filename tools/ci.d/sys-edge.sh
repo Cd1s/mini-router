@@ -41,7 +41,7 @@ for h in nas.example.com ha.example.com cam.lab.example.org app.example.com luck
 	grep -qx "host-record=$h,192.168.1.6" "$L/etc/dnsmasq.conf" || fail "lab dnsmasq: no host-record for $h"
 done
 if grep -q 'old.example.com' "$L/etc/dnsmasq.conf"; then fail "lab dnsmasq: a disabled route resolves"; fi
-grep -q 'fib daddr type local tcp dport 8443 redirect to :44300 comment "edge"' "$OUT/lab-nft.nft" || fail "lab nft: no redirect"
+grep -q 'fib daddr type local tcp dport { 8443, 10443 } redirect to :44300 comment "edge"' "$OUT/lab-nft.nft" || fail "lab nft: no redirect"
 grep -q 'tcp dport 44300 ct status dnat accept comment "edge"' "$OUT/lab-nft.nft" || fail "lab nft: no WAN accept"
 CFG="-c $OUT/lab.yaml -s $OUT/lab-secrets.yaml"
 # shellcheck disable=SC2086
@@ -173,6 +173,13 @@ c() { # c NS HOST ADDR PORT [curl args]: prints "<http code> <http version> <bod
 }
 r=$(c "$NS" nas.example.com 192.168.1.6 8443 --http2 -H 'X-Forwarded-For: 192.0.2.66')
 case $r in '200 2 {"req": "GET /p?q=1 HTTP/1.1", "host": "nas.example.com:8443", "xff": "192.168.1.6", "proto": "https"}') ;; *) fail "LAN, HTTP/2: $r" ;; esac
+# basic auth (the lab's tailnet-app route): no credentials → 401; the right ones get past it (to a 502: no upstream here)
+r=$(c "$NS" app.example.com 192.168.1.6 8443)
+case $r in "401 "*) ;; *) fail "basic auth: no credentials must be 401: $r" ;; esac
+r=$(c "$NS" app.example.com 192.168.1.6 8443 -u alice:wrong)
+case $r in "401 "*) ;; *) fail "basic auth: a wrong password must be 401: $r" ;; esac
+r=$(c "$NS" app.example.com 192.168.1.6 8443 -u alice:lab-basic-auth-pw)
+case $r in "502 "*) ;; *) fail "basic auth: the right password must reach the upstream (502 here): $r" ;; esac
 r=$(c "$NS" nas.example.com 192.168.1.6 8443 --http1.1)
 case $r in "200 1.1 "*) ;; *) fail "LAN, HTTP/1.1: $r" ;; esac
 r=$(c "$NS" ha.example.com 192.168.1.6 8443)

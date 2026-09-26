@@ -55,5 +55,7 @@ proxy:
   bypass:
     - {name: desktop, mac: "02:c3:06:d6:7f:8a"}
     - {name: kids, device: "group:kids"}       # devices of the inventory (35-dev.yaml)
+  global:                                    # all internet IPv4 + IPv6 of this device → one outbound (own tproxy port 7903)
+    - {name: vps, mac: "02:bb:dd:96:49:e2", outbound: jp1}   # by MAC, no fixed address needed
   subscriptions:
     - {name: airport, url_secret: proxy_sub_airport}

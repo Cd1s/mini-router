@@ -50,7 +50,10 @@
     "interval": 10,
     "records": [
      {"name": "home.example.com", "provider": "cloudflare", "zone": "example.com", "token_secret": "cf_ddns_token", "ipv4": "active", "ipv6": "router"},
-     {"name": "nas.example.com", "provider": "cloudflare", "zone": "example.com", "token_secret": "cf_ddns_token", "ipv4": "off", "ipv6": "::10", "ttl": 300}
+     {"name": "nas.example.com", "provider": "cloudflare", "zone": "example.com", "token_secret": "cf_ddns_token", "ipv4": "off", "ipv6": "::10", "ttl": 300},
+     {"name": "cn.example.net", "provider": "alidns", "zone": "example.net", "key_id": "LTAI0000mockkey00000", "key_secret": "ali_dns_key", "ipv4": "url:https://api.ipify.org", "ipv6": "mac:02:00:00:00:00:10"},
+     {"name": "myhome.duckdns.org", "provider": "duckdns", "token_secret": "duck_token", "ipv4": "active", "ipv6": "router"},
+     {"name": "hook.example.org", "provider": "webhook", "url": "https://hooks.example.org/ddns?host={name}&ip={ip}", "method": "GET", "ipv4": "active", "ipv6": "off"}
     ]
    },
    "edge": {
@@ -104,6 +107,8 @@
  "secrets_set": {
   "cf_ddns_token": true,
   "notify_tg_token": true,
-  "notify_ha_url": true
+  "notify_ha_url": true,
+  "ali_dns_key": true,
+  "duck_token": true
  }
 }

@@ -10,6 +10,7 @@ command=/sbin/udhcpc
 # -f foreground, -R release on stop, -S syslog; 4 discovers 3 s apart, then retry every 10 s forever
 command_args="-f -R -S -t 4 -T 3 -A 10 -i ${MR_WAN_DEV:-} -s /usr/libexec/mr/net-udhcpc"
 respawn_delay=5
+# never gives up: the uplink / WiFi is the way back in (a router far from home)
 respawn_max=0
 depend() {
 	need mr-network

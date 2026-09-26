@@ -344,6 +344,16 @@ const adblockTab = ()=>{
   return box;
 };
 
+// 家长控制（dns.parental, #33）：这些设备的 DNS 由单独的 dnsmasq 回答
+const parentalTab = ()=>{
+  const p = lazy(S.cfg.dns, "parental", ()=>({devices:[], safe_search:true, block:[]}));
+  return card("家长控制", [h("div",{class:"dns-note"},"这些设备发往任何服务器的 DNS（53 端口）都由路由器回答：强制安全搜索（Google、YouTube 严格模式、Bing、DuckDuckGo），屏蔽的域名含子域名。DoH、VPN、换了私有 MAC 会绕过；可配合 DNS 主权拦截 DoH / DoT。"),
+    onEdit(form(
+      ...field("设备", inList(p.o,"devices",{placeholder:"kid-tablet, group:kids"}), "设备名或 group:分组名"),
+      ...field("强制安全搜索", inBool(p.o,"safe_search")),
+      ...field("屏蔽域名", inList(p.o,"block",{placeholder:"example.com"}))), ()=>p.attach())]);
+};
+
 registerPage("network", "dns", "DNS", 50, ()=>tabs([
-  ["basic","上游与缓存", basicTab], ["records","本地记录", recordsTab], ["split","分流", splitTab], ["adblock","去广告", adblockTab], ["stats","统计 / 查询日志", statsTab]]));
+  ["basic","上游与缓存", basicTab], ["records","本地记录", recordsTab], ["split","分流", splitTab], ["adblock","去广告", adblockTab], ["parental","家长控制", parentalTab], ["stats","统计 / 查询日志", statsTab]]));
 })();

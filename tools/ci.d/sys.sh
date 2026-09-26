@@ -73,7 +73,7 @@ grep -qx 'crond' "$L/etc/mini-router/gen/services" || fail "lab: crond not enabl
 if grep -qx 'crond' "$H/etc/mini-router/gen/services"; then fail "home: crond enabled without schedules"; fi
 grep -qx "export TZ='CET-1CEST,M3.5.0,M10.5.0/3'" "$L/etc/conf.d/crond" || fail "lab: crond zone"
 block=$(sed -n '/^# --- begin mini-router schedules/,/^# --- end mini-router schedules/p' "$C" | grep -v '^#')
-[ "$(echo "$block" | wc -l)" = 9 ] || fail "lab crontab: want 5 jobs + the DDNS check + the certificate check + the adblock check + the wifi tick, got: $block"
+[ "$(echo "$block" | wc -l)" = 11 ] || fail "lab crontab: want 5 jobs + the DDNS check + the certificate check + the adblock check + the wifi, watchcat and presence ticks, got: $block"
 echo "$block" | grep -qE '^[0-9]+ \* \* \* \* /usr/sbin/mr dns adblock update --cron$' || fail "lab crontab: hourly adblock check missing"
 echo "$block" | while read -r m hr d mo w cmd; do
 	if [ "$cmd" = "/usr/sbin/mr ddns sync --cron" ]; then
@@ -88,7 +88,7 @@ echo "$block" | while read -r m hr d mo w cmd; do
 		echo "$m $hr $d $mo $w" | grep -Eq '^[0-9]{1,2} \* \* \* \*$' || fail "adblock check time spec: $m $hr $d $mo $w"
 		continue
 	fi
-	if [ "$cmd" = "/usr/sbin/mr wifi tick" ]; then # the wifi module's per-minute tick (tools/ci.d/wifi.sh)
+	if [ "$cmd" = "/usr/sbin/mr wifi tick" ] || [ "$cmd" = "/usr/sbin/mr watchcat tick" ] || [ "$cmd" = "/usr/sbin/mr presence tick" ]; then # per-minute ticks
 		[ "$m $hr $d $mo $w" = "* * * * *" ] || fail "wifi tick time spec: $m $hr $d $mo $w"
 		continue
 	fi
@@ -105,19 +105,26 @@ for bad in "restart dnsmasq;reboot" "restart mr-network" "reconnect office" "shu
 done
 ok "crontab + mr sys run"
 
-# 3b. DDNS: status works offline (no lease files here: nothing to publish, no request is made) and
-#     never shows the token; the home config has no DDNS
+# 3b. DDNS: status works offline (no lease files here: nothing to publish; no request is made — a url:
+#     source says it is looked up at the next sync) and never shows a secret; the home config has no DDNS
 # shellcheck disable=SC2086
 "$MR" $CFG ddns status > "$OUT/ddns-status.json"
 python3 - "$OUT/ddns-status.json" <<'EOF' || fail "lab ddns status"
 import json, sys
 rows = json.load(open(sys.argv[1]))
-want = [("home.example.com", "A", "active"), ("home.example.com", "AAAA", "router"), ("*.example.com", "A", "wan2"), ("nas.example.com", "AAAA", "::10")]
+want = [("home.example.com", "A", "active"), ("home.example.com", "AAAA", "router"), ("*.example.com", "A", "wan2"), ("nas.example.com", "AAAA", "::10"),
+        ("cn.example.net", "A", "url:https://ip4.example.org/"), ("cn.example.net", "AAAA", "mac:02:00:00:00:00:10"),
+        ("example.org", "A", "mac:02:00:00:00:00:10"), ("labhome.duckdns.org", "A", "active"), ("labhome.duckdns.org", "AAAA", "router"),
+        ("dyn.example.org", "A", "203.0.113.10"), ("hook.example.org", "AAAA", "url:https://ip6.example.org/")]
 got = [(r["name"], r["type"], r["source"]) for r in rows]
 assert got == want, got
-assert all(not r.get("published") and r.get("note") for r in rows), rows
+fixed = [r for r in rows if r["name"] == "dyn.example.org"]
+assert fixed[0]["local"] == "203.0.113.10" and not fixed[0].get("published"), fixed
+assert all(not r.get("published") and r.get("note") for r in rows if r not in fixed), rows
+assert [r["note"] for r in rows if r["source"].startswith("url:")] == ["looked up at the next sync"] * 2, rows
+assert {r["provider"] for r in rows} == {"cloudflare", "alidns", "dnspod", "duckdns", "dyndns2", "webhook"}, rows
 EOF
-if grep -q 'lab-token' "$OUT/ddns-status.json"; then fail "ddns status shows the token"; fi
+if grep -qE 'lab-token|not-real' "$OUT/ddns-status.json"; then fail "ddns status shows a secret"; fi
 [ "$("$MR" -c "$ROOT/examples/router.yaml" -s "$ROOT/mr/testdata/secrets.yaml" ddns status | tr -d ' \n')" = "[]" ] || fail "home: ddns status not empty"
 # shellcheck disable=SC2086
 if "$MR" $CFG ddns update nope.example.com >/dev/null 2>&1; then fail "ddns update of an unknown record accepted"; fi
@@ -369,7 +376,7 @@ python3 - "$OUT/doctor.json" <<'PY' || fail "mr doctor: $(head -c 600 "$OUT/doct
 import json, sys
 r = json.load(open(sys.argv[1]))
 checks = {f["check"] for f in r["checks"]}
-want = {"config", "pending", "wan", "routes", "dns", "ipv6", "offload", "services", "wifi", "clock", "storage", "memory", "conntrack", "temp", "crash", "ssh", "certs"}
+want = {"config", "upgrade", "pending", "wan", "routes", "dns", "dnsguard", "ipv6", "offload", "services", "wifi", "clock", "storage", "memory", "conntrack", "temp", "crash", "ssh", "certs"}
 assert checks == want, checks ^ want
 assert all(f["sev"] in ("ok", "warn", "risk", "skip") and f["title"] and f["detail"] for f in r["checks"]), r
 assert all(f.get("fix") for f in r["checks"] if f["sev"] in ("warn", "risk")), r

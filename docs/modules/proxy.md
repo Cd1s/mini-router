@@ -183,6 +183,23 @@ proxy_us_trojan: '{"type":"shadowtls","server":"st.example.net","server_port":44
 proxy_airport_sub: "https://sub.example.net/api/v1/client/subscribe?token=..."
 ```
 
+### 按设备全局代理（proxy.global）
+
+```yaml
+proxy:
+  global:
+    - {name: tv, device: tv-box, outbound: jp1}                # devices 里的设备（不需要固定地址）
+    - {name: vps, mac: "aa:bb:cc:00:00:01", outbound: auto}     # 或一个 MAC
+```
+
+- 每条有自己的 tproxy 端口 `tproxy_port + 10 + 序号`（默认 7903、7904 …，IPv4 `127.0.0.1` 和 IPv6 `::1` 各一个监听）。
+  nft 按 MAC 把这台设备**所有**去往公网的 TCP/UDP（IPv4 和 IPv6；私有网段、链路本地、组播、LAN 前缀、本机除外）送到这个端口，
+  sing-box 第一批路由规则按入站（`inbound: [tproxy4-gN, tproxy6-gN]`）送到指定节点 / 组。不再需要固定 IPv4。
+- `ipv4_only: true` 时没有 IPv6 监听，这台设备去公网的 IPv6 被丢弃，客户端回落到 IPv4。
+- 端口不能和其它 proxy 端口、SSH、7894（通知入站）冲突（校验会报）；节点 / 组名不能以 `tproxy` 开头。
+- `proxy.bypass` / `guard.always_bypass` 优先（`@proxy_bypass` 的 return 在前）。
+- 代价：这台设备的连接都在本机终结，**失去硬件卸载**，吞吐受 sing-box 和 CPU 限制。
+
 ## 节点类型
 
 | type | 必填 | 可选 | TLS |
