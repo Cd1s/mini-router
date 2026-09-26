@@ -567,6 +567,7 @@ func init() {
 			v4, _ := readLeases(c)
 			st["leases"] = v4
 		},
+		TokenScope: map[string]string{"dns.stats": "read", "dns.leases": "read", "dns.release": "operate", "dns.adblock": "operate"},
 		API: map[string]func(r apiReq) apiResp{
 			"dnslist":      apiDNSList,
 			"dns.stats":    apiDNSStats,

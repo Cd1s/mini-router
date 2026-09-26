@@ -51,10 +51,11 @@ var (
 
 func init() {
 	register(&Module{
-		Name:     "dev",
-		Prio:     35,
-		Validate: devValidate,
-		Status:   pauseStatus,
+		Name:       "dev",
+		Prio:       35,
+		Validate:   devValidate,
+		Status:     pauseStatus,
+		TokenScope: map[string]string{"dev.paused": "read", "dev.pause": "operate", "dev.unpause": "operate"},
 		API: map[string]func(r apiReq) apiResp{
 			"dev.paused":  apiDevPaused,
 			"dev.pause":   apiDevPause,

@@ -322,6 +322,7 @@ func init() {
 			}
 			return s
 		},
+		TokenScope: map[string]string{"sys.services": "read", "sys.time": "read", "sys.doctor": "read", "sys.events": "read", "sys.edge": "read", "service": "operate", "diag": "operate"},
 		API: map[string]func(r apiReq) apiResp{
 			"diag":              apiDiag,
 			"service":           apiService,

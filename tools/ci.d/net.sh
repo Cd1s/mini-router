@@ -9,7 +9,8 @@
 #     1500 in the real kernel; IPv6 renumbering (RFC 9096): after a "reboot" (another boot id in the
 #     record) the real `mr hook dhcpcd` puts a prefix that did not come back on the bridge, and a real
 #     dnsmasq advertises it to a client with preferred lifetime 0 while the current one stays preferred.
-#  3. policy route by domain, end to end in three network namespaces: the rendered nftset= lines in a
+#  3. policy route by domain, end to end in three network namespaces (IPv6 too: a source from one WAN's
+#     prefix never leaves through the other WAN, #63): the rendered nftset= lines in a
 #     real dnsmasq (unprivileged, like the router's) fill the rendered nft sets from an upstream's answers,
 #     a LAN client's connection to such an address leaves through the policy's WAN (others through the
 #     default WAN), the learned addresses survive a firewall reload, a new connection restarts an
@@ -329,6 +330,55 @@ inD mr fw
 has "reload keeps learned addresses" "$(inD nft list set inet mr pr_0_4)" "192.0.2.80"
 [ "$(seen 192.0.2.80)" = 10.96.0.2 ] || fail "after a reload video.example left via: $(seen 192.0.2.80)"
 echo "ok: learned addresses carried over a firewall reload"
+
+# IPv6 with a prefix from each WAN (Cd1s/mini-router#63): each "ISP" drops sources outside the prefix it
+# delegated. The policy sends video.example to wan2; a client source from wan2's prefix goes there, a
+# source from wan's prefix must stay on the default route (wan) instead of being dropped upstream.
+inD sysctl -qw net.ipv6.conf.all.forwarding=1
+ip -n "$DS" addr add 2001:db8:a::1/64 dev up1 nodad
+ip -n "$DS" addr add 2001:db8:b::1/64 dev up2 nodad
+ip -n "$DS" addr add 2001:db8:80::1/128 dev lo
+ip -n "$DS" -6 route add 2001:db8:1::/64 via 2001:db8:a::2 dev up1
+ip -n "$DS" -6 route add 2001:db8:2::/64 via 2001:db8:b::2 dev up2
+printf 'table inet isp {\n\tchain in {\n\t\ttype filter hook input priority 0; policy accept;\n\t\tmeta l4proto ipv6-icmp accept\n\t\tiifname "up1" ip6 saddr != 2001:db8:1::/64 counter drop comment "isp-a"\n\t\tiifname "up2" ip6 saddr != 2001:db8:2::/64 counter drop comment "isp-b"\n\t}\n}\n' | ip netns exec "$DS" nft -f -
+cat > "$D/echo6.py" << 'PY'
+import socket, sys
+if sys.argv[1] == "serve":
+    s = socket.socket(socket.AF_INET6); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1); s.bind(("::", 8080)); s.listen(16)
+    while True:
+        c, a = s.accept(); c.sendall((a[0] + "\n").encode()); c.close()
+try:
+    c = socket.socket(socket.AF_INET6); c.settimeout(2); c.bind((sys.argv[1], 0)); c.connect((sys.argv[2], 8080))
+    print(c.recv(100).decode().strip())
+except OSError as e:
+    print("ERR " + type(e).__name__)
+PY
+setsid -f ip netns exec "$DS" python3 "$D/echo6.py" serve > /dev/null 2>&1 < /dev/null
+inD ip addr add 2001:db8:a::2/64 dev wan nodad
+inD ip addr add 2001:db8:b::2/64 dev wan2 nodad
+inD ip addr add 2001:db8:1::6/64 dev br-lan nodad
+inD ip addr add 2001:db8:2::6/64 dev br-lan nodad
+inD ip -6 route replace default via 2001:db8:a::1 dev wan
+t2=$(inD ip -6 rule | sed -n 's/.*fwmark 0x0*201 lookup \([0-9]*\).*/\1/p' | head -n 1)
+[ -n "$t2" ] || fail "no IPv6 fwmark rule for wan2: $(inD ip -6 rule)"
+inD ip -6 route replace default via 2001:db8:b::1 dev wan2 table "$t2"
+ip -n "$DL" addr add 2001:db8:1::50/64 dev eth0 nodad
+ip -n "$DL" addr add 2001:db8:2::50/64 dev eth0 nodad
+ip -n "$DL" -6 route add default via 2001:db8:1::6
+mkdir -p /run/mini-router/wan
+echo 2001:db8:1::/64 > /run/mini-router/wan/wan.pd6
+echo 2001:db8:2::/64 > /run/mini-router/wan/wan2.pd6
+inD mr fw
+has "wan2's prefix set" "$(inD nft list set inet mr pd6_1)" "2001:db8:2::/64"
+sleep 0.5
+seen6() { ip netns exec "$DL" python3 "$D/echo6.py" "$1" "$2"; }
+r=$(seen6 2001:db8:2::50 2001:db8:80::1)
+[ "$r" = 2001:db8:2::50 ] || fail "IPv6 from wan2's prefix to video.example did not work: $r"
+r=$(seen6 2001:db8:1::50 2001:db8:80::1)
+[ "$r" = 2001:db8:1::50 ] || fail "IPv6 from wan's prefix to video.example was sent to wan2 and dropped: $r ($(ip netns exec "$DS" nft list chain inet isp in | grep isp-))"
+ip netns exec "$DS" nft list chain inet isp in | grep -q 'packets 0 bytes 0 drop comment "isp-b"' || fail "a source from wan's prefix reached wan2's ISP"
+echo "ok: IPv6 policy route follows the source prefix: wan2's prefix via wan2, wan's prefix stays on wan"
 
 # a new connection to a learned address restarts its timer (with the set's timeout)
 inD nft add element inet mr pr_0_4 '{ 192.0.2.82 timeout 100s }'

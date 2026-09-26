@@ -52,6 +52,7 @@ func init() {
 			return ""
 		},
 		RestartOrder: []string{"mr-mon"},
+		TokenScope:   map[string]string{"mon.now": "read", "mon.history": "read", "mon.devices": "read", "mon.conns": "read", "mon.procs": "read", "mon.dmesg": "read"},
 		API: map[string]func(r apiReq) apiResp{
 			"mon.now":     monAPI(true, func(c *Config, _ []byte) (any, error) { return monNow(c), nil }),
 			"mon.history": monAPI(true, func(c *Config, _ []byte) (any, error) { return monHistoryFor(c, monPath(monHistFile)) }),

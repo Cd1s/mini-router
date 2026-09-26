@@ -223,6 +223,7 @@ func init() {
 		},
 		RestartOrder: []string{"mr-proxy", "mr-proxy-dns"},
 		Verify:       proxyVerify,
+		TokenScope:   map[string]string{"proxy.status": "read", "proxy.routes": "read", "proxy.delay": "operate", "proxy.select": "operate"},
 		API: map[string]func(r apiReq) apiResp{
 			"proxy.status": apiProxyStatus,
 			"proxy.delay":  apiProxyDelay,

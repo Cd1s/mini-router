@@ -46,9 +46,9 @@ func TestNetPolicyDomainsRender(t *testing.T) {
 		fmt.Sprintf("\tset pr_1_4 { type ipv4_addr; size 16384; flags dynamic,timeout; timeout 1d; comment %q; }\n", gen),
 		fmt.Sprintf("\tset pr_1_6 { type ipv6_addr; size 16384; flags dynamic,timeout; timeout 1d; comment %q; }\n", gen),
 		"\tset pr_2_4 { type ipv4_addr;",
-		`iifname "br-lan" ip daddr @pr_1_4 ct state new update @pr_1_4 { ip daddr } ct mark set 0x102 meta mark set 0x102 comment "video"`,
-		`iifname "br-lan" ip6 daddr @pr_1_6 ct state new update @pr_1_6 { ip6 daddr } ct mark set 0x102 meta mark set 0x102 comment "video"`,
-		`iifname "br-lan" ip saddr 192.168.1.240/29 ip daddr @pr_2_4 ct state new update @pr_2_4 { ip daddr } ct mark set 0x200 meta mark set 0x200 comment "docs-v4"`)
+		`iifname "br-lan" ip daddr @pr_1_4 ct state new update @pr_1_4 { ip daddr } ct mark set 0x102 meta mark set 0x102 return comment "video"`,
+		`iifname "br-lan" ip6 saddr @pd6_1 ip6 daddr @pr_1_6 ct state new update @pr_1_6 { ip6 daddr } ct mark set 0x102 meta mark set 0x102 return comment "video"`,
+		`iifname "br-lan" ip saddr 192.168.1.240/29 ip daddr @pr_2_4 ct state new update @pr_2_4 { ip daddr } ct mark set 0x200 meta mark set 0x200 return comment "docs-v4"`)
 	// src decides the family: no IPv6 set / rule for docs-v4; the learned set replaces "not the LAN"
 	wantNone(t, "nft", nft, "pr_2_6", `ip daddr != 192.168.1.0/24 ip daddr @pr_`)
 	// the connmark restore comes first: a connection keeps the WAN it started on
@@ -148,7 +148,7 @@ func TestNetPolicyDomainsFileErrors(t *testing.T) {
 		}
 		nft := renderNft(c, allExist)
 		wantSubs(t, "nft ("+filepath.Base(tc.file)+")", nft, "set pr_1_4 {", `ip daddr @pr_1_4 ct state new`)
-		wantNone(t, "nft ("+filepath.Base(tc.file)+")", nft, `ip daddr != 192.168.1.0/24 ct state new ct mark set 0x102 meta mark set 0x102 comment "video"`)
+		wantNone(t, "nft ("+filepath.Base(tc.file)+")", nft, `ip daddr != 192.168.1.0/24 ct state new ct mark set 0x102 meta mark set 0x102 return comment "video"`)
 	}
 }
 

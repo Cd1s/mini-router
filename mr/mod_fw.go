@@ -107,11 +107,12 @@ type FwTime struct {
 
 func init() {
 	register(&Module{
-		Name:     "fw",
-		Prio:     40,
-		Defaults: fwDefaults,
-		Validate: fwValidate,
-		Nft:      fwNft,
+		Name:       "fw",
+		Prio:       40,
+		Defaults:   fwDefaults,
+		Validate:   fwValidate,
+		Nft:        fwNft,
+		TokenScope: map[string]string{"fw.stats": "read"},
 		API: map[string]func(r apiReq) apiResp{
 			"fw.stats": fwAPIStats,
 		},

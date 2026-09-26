@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"sort"
 	"strings"
 )
@@ -251,4 +252,52 @@ func policyCarryScript(set string, fam int, comment string, js []byte) string {
 		return ""
 	}
 	return fmt.Sprintf("add element inet mr %s { %s }\n", set, strings.Join(xs, ", "))
+}
+
+// ---- IPv6 policy routes follow the source prefix (Cd1s/mini-router#63) ----
+
+// pd6File: the prefixes a WAN delegated, as the dhcpcd hook last saw them (tmpfs).
+func pd6File(wan string) string { return wanRunDir + "/" + wan + ".pd6" }
+
+// pd6Set: the nft set of the prefixes wan delegated (by index: WAN names may contain '-').
+func pd6Set(c *Config, wan string) string {
+	for i, w := range c.WAN {
+		if w.Name == wan {
+			return fmt.Sprintf("pd6_%d", i)
+		}
+	}
+	return "pd6_x"
+}
+
+// pd6WANs: the WANs that IPv6 policy rules send traffic to (each needs its prefix set).
+func pd6WANs(c *Config) []string {
+	var out []string
+	for _, p := range c.Policy {
+		for _, fam := range policyFams(p) {
+			if fam == 6 && c.WANByName(p.Via) != nil {
+				out = append(out, p.Via)
+			}
+		}
+	}
+	return dedup(out)
+}
+
+// pd6Script: nft commands that set each prefix set to the recorded prefixes (after a firewall load or
+// a dhcpcd event). Only CIDRs that parse reach nft.
+func pd6Script(c *Config) string {
+	var b strings.Builder
+	for _, name := range pd6WANs(c) {
+		set := pd6Set(c, name)
+		fmt.Fprintf(&b, "flush set inet mr %s\n", set)
+		var elems []string
+		for _, l := range strings.Fields(readFile(pd6File(name))) {
+			if p, err := netip.ParsePrefix(l); err == nil && p.Addr().Is6() && !p.Addr().Is4In6() {
+				elems = append(elems, p.Masked().String())
+			}
+		}
+		if len(elems) > 0 {
+			fmt.Fprintf(&b, "add element inet mr %s { %s }\n", set, strings.Join(elems, ", "))
+		}
+	}
+	return b.String()
 }

@@ -431,8 +431,14 @@ func hookDhcpcd(c *Config) error {
 	}
 	switch reason {
 	case "BOUND6", "REBIND6", "RENEW6", "REBOOT6", "INFORM6", "DELEGATED6", "ROUTERADVERT":
+	case "EXPIRE6", "RELEASE6", "STOP6", "NOCARRIER", "STOPPED":
+		os.Remove(pd6File(w.Name)) // the prefix is gone: policy routes stop sending its sources here
+		return refreshLan6()
 	default:
 		return refreshLan6()
+	}
+	if pds := delegatedPrefixes(os.Environ()); len(pds) > 0 {
+		writeAtomic(pd6File(w.Name), []byte(strings.Join(pds, "\n")+"\n"), 0644)
 	}
 	// ethernet WANs: routes need the upstream router's link-local gateway (learned from RA); without
 	// one a default route means "on link" and every destination would be neighbour-solicited on the WAN.

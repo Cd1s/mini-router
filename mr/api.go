@@ -527,6 +527,7 @@ type jobState struct {
 	Via     string `json:"via,omitempty"` // origin recorded in the pending marker (web UI | restore | rollback)
 	From    string `json:"from,omitempty"`
 	Comment string `json:"comment,omitempty"`
+	BaseRev string `json:"base_rev,omitempty"` // the router.yaml the candidate was built from (#68)
 }
 
 func apiApply(r apiReq) apiResp {
@@ -543,6 +544,10 @@ func apiApply(r apiReq) apiResp {
 	json.Unmarshal(r.body, &in)
 	if e := staleBase(in.BaseRev); e != nil {
 		return *e
+	}
+	base := in.BaseRev
+	if base == "" {
+		base = configRev() // a patch is built from the live text as it is now
 	}
 	c, y, sec, confirmSecs, err := candidate(r)
 	if err != nil {
@@ -571,7 +576,7 @@ func apiApply(r apiReq) apiResp {
 	if err := writeSecrets(CandidateSec, sec); err != nil {
 		return errResp(500, "%v", err)
 	}
-	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: via, From: r.remote, Comment: in.Comment})
+	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: via, From: r.remote, Comment: in.Comment, BaseRev: base})
 	self, _ := os.Executable()
 	startDetached(self, "apply-job", strconv.Itoa(confirmSecs))
 	return apiResp{body: map[string]any{"ok": true, "confirm": confirmSecs}}
@@ -582,7 +587,7 @@ func runApplyJob(confirmSecs int) error {
 	logFile, _ := os.OpenFile(JobLog, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 	os.Stdout, os.Stderr = logFile, logFile
 	j0 := readJob()
-	o := applyOpts{Via: j0.Via, From: j0.From, Comment: j0.Comment}
+	o := applyOpts{Via: j0.Via, From: j0.From, Comment: j0.Comment, BaseRev: j0.BaseRev}
 	if o.Via == "" {
 		o.Via = "web UI"
 	}

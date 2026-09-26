@@ -61,23 +61,16 @@ const (
 
 var scopeLevel = map[string]int{"read": 1, "operate": 2, "apply": 3}
 
-// tokenActions: every action a token can reach and the scope it needs. Anything else (a new module
-// action too) is refused until it is listed here.
+// tokenActions: every action a token can reach and the scope it needs: the core actions of apiAction
+// below, plus what each module declares in Module.TokenScope (merged by register). Anything else is
+// refused to tokens.
+//
+//	read     no side effects, no secrets
+//	operate  runtime actions that do not change the config
+//	apply    config changes, through plan → apply → confirm with automatic rollback
 var tokenActions = map[string]string{
-	// read: no side effects, no secrets
-	"status": "read", "config": "read", "config.raw": "read", "schema": "read", "history": "read", "history.diff": "read", "job": "read",
-	"net": "read", "net.ports": "read", "net.routes": "read", "net.wan": "read",
-	"wifi.status": "read", "wifi.stations": "read", "clients": "read", "wifi.survey": "read", "wifi.health": "read",
-	"dns.stats": "read", "dns.leases": "read", "fw.stats": "read", "proxy.status": "read", "proxy.routes": "read",
-	"mon.now": "read", "mon.history": "read", "mon.devices": "read", "mon.conns": "read", "mon.procs": "read", "mon.dmesg": "read",
-	"sys.services": "read", "sys.time": "read", "sys.doctor": "read", "sys.events": "read", "sys.edge": "read",
-	"dev.paused": "read",
-	// operate: runtime actions that do not change the config
-	"net.redial": "operate", "wifi.kick": "operate", "wifi.scan": "operate", "dns.release": "operate", "dns.adblock": "operate",
-	"proxy.delay": "operate", "proxy.select": "operate", "service": "operate", "diag": "operate",
-	"dev.pause": "operate", "dev.unpause": "operate",
-	// apply: config changes, through plan → apply → confirm with automatic rollback
-	"plan": "apply", "validate": "apply", "apply": "apply", "confirm": "apply", "revert": "apply", "rollback": "apply",
+	"status": "read", "config": "read", "config.raw": "read", "history": "read", "history.diff": "read", "job": "read",
+	"validate": "apply", "apply": "apply", "confirm": "apply", "revert": "apply", "rollback": "apply",
 }
 
 // tokenLocked: config a token can never change. The token list (a token could extend itself), SSH
@@ -105,6 +98,7 @@ func init() {
 			}
 			return out
 		},
+		TokenScope: map[string]string{"plan": "apply", "schema": "read"}, // "tokens" (last use): sessions only
 		API: map[string]func(r apiReq) apiResp{
 			"plan":   apiPlan,
 			"schema": func(apiReq) apiResp { return apiResp{body: configSchema()} },

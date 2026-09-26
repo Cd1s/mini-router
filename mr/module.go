@@ -52,6 +52,9 @@ type Module struct {
 	// API adds web UI actions: /cgi-bin/api?a=<name>. Handlers run only for logged-in sessions.
 	// Name them "<module>.<verb>" (e.g. "wifi.scan"). Side effects need r.method == "POST".
 	API map[string]func(r apiReq) apiResp
+	// TokenScope: which of API's actions API tokens may call, and the scope each needs (read | operate |
+	// apply). An action not listed is refused to tokens (web UI sessions only) — decide when writing it.
+	TokenScope map[string]string
 	// Commands adds `mr <name> ...` subcommands (e.g. hooks called by daemons).
 	Commands map[string]func(c *Config, args []string) error
 	// Secrets lists the secret NAMES this module's config references (the web UI shows which are
@@ -76,6 +79,12 @@ func runOnWAN(c *Config, wan, event string) {
 var modules []*Module
 
 func register(m *Module) {
+	for a, s := range m.TokenScope {
+		if old, ok := tokenActions[a]; ok && old != s {
+			panic(fmt.Sprintf("module %s: token scope of %s is %s, already %s", m.Name, a, s, old))
+		}
+		tokenActions[a] = s
+	}
 	modules = append(modules, m)
 	sort.SliceStable(modules, func(i, j int) bool { return modules[i].Prio < modules[j].Prio })
 }
