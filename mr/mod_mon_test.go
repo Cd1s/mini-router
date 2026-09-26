@@ -39,9 +39,9 @@ func monFake(t *testing.T, files map[string]string) string {
 	}
 	monNeighbours = func() ([]monNeigh, error) {
 		return []monNeigh{
-			{netip.MustParseAddr("192.168.1.233"), "02:e3:50:10:6a:63", 5},
-			{netip.MustParseAddr("2001:db8:b910:1::abcd"), "02:e3:50:10:6a:63", 5},
-			{netip.MustParseAddr("10.0.0.1"), "00:11:22:33:44:55", 7}, // WAN side: not a LAN device
+			{netip.MustParseAddr("192.168.1.233"), "02:e3:50:10:6a:63", 5, 2},
+			{netip.MustParseAddr("2001:db8:b910:1::abcd"), "02:e3:50:10:6a:63", 5, 2},
+			{netip.MustParseAddr("10.0.0.1"), "00:11:22:33:44:55", 7, 2}, // WAN side: not a LAN device
 		}, nil
 	}
 	return root
@@ -245,7 +245,7 @@ func TestMonDevicesLinkLocal(t *testing.T) {
 		"ipv6     10 udp      17 25 src=fe80:0000:0000:0000:0000:0000:0000:0007 dst=fe80:0000:0000:0000:0000:0000:0000:0001 sport=5353 dport=53 packets=1 bytes=90 src=fe80:0000:0000:0000:0000:0000:0000:0001 dst=fe80:0000:0000:0000:0000:0000:0000:0007 sport=53 dport=5353 packets=1 bytes=150 mark=0 zone=0 use=2\n"
 	monFake(t, monCTFiles(ct, "1000.00 3000.00\n"))
 	monNeighbours = func() ([]monNeigh, error) {
-		return []monNeigh{{netip.MustParseAddr("fe80::7"), "02:e3:50:10:6a:63", 5}}, nil
+		return []monNeigh{{netip.MustParseAddr("fe80::7"), "02:e3:50:10:6a:63", 5, 2}}, nil
 	}
 	r, err := monDevices(c)
 	if err != nil {
@@ -373,7 +373,7 @@ func TestMonHistory(t *testing.T) {
 	data := "100 1000 2000 50 100 400000 10 50000\n" +
 		"160 61000 122000 110 700 390000 12 51000\n" +
 		"220 50 100 170 1300 380000 13 0\n" + // counter reset (device re-created), no temperature sensor
-		"1000 60050 120100 230 1900 370000 14 52000\n" + // 13 min gap: sampler was stopped
+		"1000 60050 120100 230 1900 370000 14 52000 61400 80\n" + // 13 min gap: sampler was stopped; WiFi throttled
 		"1060 12\n" // partial line being written
 	ss := parseMonHistory(data)
 	if len(ss) != 4 {
@@ -384,6 +384,9 @@ func TestMonHistory(t *testing.T) {
 	want := `[[1699999000,1699999060,1699999120,1699999900],[null,1000,null,null],[null,2000,null,null],[null,10,10,null],[100000,110000,120000,130000],[10,12,13,14],[50,51,null,52]]`
 	if string(js) != want {
 		t.Errorf("history columns:\n got %s\nwant %s", js, want)
+	}
+	if js, _ := json.Marshal([]any{h["wtemp"], h["wduty"]}); string(js) != `[[null,null,null,61.4],[null,null,null,80]]` {
+		t.Errorf("wifi columns: %s", js)
 	}
 	if col := h["collector"].(map[string]any); col["ok"] != true || col["age"] != 100 {
 		t.Errorf("collector: %v", col)

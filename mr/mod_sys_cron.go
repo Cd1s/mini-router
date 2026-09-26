@@ -9,6 +9,14 @@ package main
 //	restart <service>  /usr/sbin/mr sys run restart <service>   (a service the config enables)
 //	reconnect <wan>    /usr/sbin/mr sys run reconnect <wan>     (restarts mr-pppoe.<wan> / mr-udhcpc.<wan>)
 //	wol <host>         /usr/sbin/mr sys run wol <host>          (Wake-on-LAN: a dhcp.hosts name or a MAC)
+//	wifi-off [radio]   /usr/sbin/mr sys run wifi-off [radio]    (hostapd DISABLE: every radio, or one wifi.radios phy)
+//	wifi-on [radio]    /usr/sbin/mr sys run wifi-on [radio]     (hostapd ENABLE)
+//	leds-off, leds-on  /usr/sbin/mr sys run leds-off            (front-panel LEDs, leds.go)
+//
+// wifi-off / wifi-on and leds-off / leds-on are windows, not one-shot commands: the state is the newest
+// of those schedules that fired in the last 8 days (schedOff), evaluated again when the action runs, after
+// every apply (sys Verify), when hostapd (re)starts (rootfs/usr/libexec/mr/wifi-hostapd) and whenever the
+// LEDs are set (WAN hooks), so a reboot or a hostapd respawn at night keeps the radio / LEDs off.
 //
 // plus, while services.ddns is on with an interval, the DDNS safety check (mod_sys_ddns.go), and while
 // services.edge is on, the daily certificate check (mod_sys_edge_acme.go; minute and hour fixed per router):
@@ -24,6 +32,10 @@ package main
 //
 //	* * * * * /usr/sbin/mr wifi tick
 //
+// and while notify.update_check is on, the daily release check (mod_sys_update.go; never installs):
+//
+//	M H * * * /usr/sbin/mr notify update-check
+//
 // `mr sys run` checks the action against the live config again, logs it (syslog + change log) and
 // runs it. The time spec is a strict 5-field cron expression (numbers, *, a-b, /step, lists; no
 // names, no @reboot) with safety limits: every task runs at most once per hour (fixed minute), a
@@ -36,6 +48,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Schedule is one scheduled task.
@@ -43,8 +56,8 @@ type Schedule struct {
 	Name    string `yaml:"name"`
 	Enabled *bool  `yaml:"enabled,omitempty"` // default true
 	Cron    string `yaml:"cron"`              // "minute hour day month weekday", e.g. "30 4 * * 1"
-	Action  string `yaml:"action"`            // reboot | restart | reconnect | wol
-	Target  string `yaml:"target,omitempty"`  // restart: service name; reconnect: WAN name; wol: dhcp.hosts name or MAC
+	Action  string `yaml:"action"`            // reboot | restart | reconnect | wol | wifi-off | wifi-on | leds-off | leds-on
+	Target  string `yaml:"target,omitempty"`  // restart: service name; reconnect: WAN name; wol: dhcp.hosts name or MAC; wifi-*: a radio phy (none = all)
 }
 
 // cronFile is root's crontab (a variable so tests can point it elsewhere).
@@ -177,8 +190,23 @@ func scheduleService(c *Config, action, target string) (string, error) {
 			return "", fmt.Errorf("wol: %v", err)
 		}
 		return "", nil
+	case "wifi-off", "wifi-on":
+		if target == "" {
+			return "", nil
+		}
+		for _, r := range c.WiFi.Radios {
+			if r.Phy == target {
+				return "", nil
+			}
+		}
+		return "", fmt.Errorf("%s: no wifi radio %q", action, target)
+	case "leds-off", "leds-on":
+		if target != "" {
+			return "", fmt.Errorf("%s takes no target", action)
+		}
+		return "", nil
 	}
-	return "", fmt.Errorf("action: reboot | restart | reconnect | wol, got %q", action)
+	return "", fmt.Errorf("action: reboot | restart | reconnect | wol | wifi-off | wifi-on | leds-off | leds-on, got %q", action)
 }
 
 func validateSchedules(c *Config, v *Validator) {
@@ -204,7 +232,7 @@ func validateSchedules(c *Config, v *Validator) {
 }
 
 func cronWanted(c *Config) bool {
-	if ddnsInterval(c) > 0 || edgeOn(c) || c.DNS.Adblock.Enabled || len(wifiCronLine(c)) > 0 {
+	if ddnsInterval(c) > 0 || edgeOn(c) || c.DNS.Adblock.Enabled || len(wifiCronLine(c)) > 0 || c.Notify.UpdateCheck || c.System.Watchcat.Enabled || len(presenceRules(c)) > 0 {
 		return true
 	}
 	for _, s := range c.Schedules {
@@ -238,7 +266,7 @@ func renderCronLines(c *Config) []string {
 	if n := ddnsInterval(c); n > 0 {
 		lines = append(lines, "# ddns (services.ddns)", fmt.Sprintf("*/%d * * * * %s ddns sync --cron", n, mrBin))
 	}
-	return append(append(append(lines, edgeCronLine(c)...), adblockCronLine(c)...), wifiCronLine(c)...)
+	return append(append(append(append(append(append(lines, edgeCronLine(c)...), adblockCronLine(c)...), wifiCronLine(c)...), updateCronLine(c)...), wcCronLine(c)...), presenceCronLine(c)...)
 }
 
 // renderCrontab: /etc/crontabs/root with the managed block (ok=false: leave the file alone).
@@ -254,7 +282,7 @@ func renderCrondConf(c *Config) string {
 // sysRunTask is `mr sys run ACTION [TARGET]` (called by crond).
 func sysRunTask(c *Config, args []string) error {
 	if len(args) < 1 || len(args) > 2 {
-		return fmt.Errorf("usage: mr sys run reboot | restart SERVICE | reconnect WAN | wol HOST|MAC")
+		return fmt.Errorf("usage: mr sys run reboot | restart SERVICE | reconnect WAN | wol HOST|MAC | wifi-off|wifi-on [RADIO] | leds-off|leds-on")
 	}
 	action, target := args[0], ""
 	if len(args) == 2 {
@@ -267,9 +295,15 @@ func sysRunTask(c *Config, args []string) error {
 	what := strings.TrimSpace(action + " " + target)
 	logf("schedule: %s", what)
 	appendChangeLog("schedule: " + what)
-	if action == "wol" {
+	switch action {
+	case "wol":
 		_, err := wolWake(c, target, "")
 		return err
+	case "wifi-off", "wifi-on":
+		return wifiWindow(c)
+	case "leds-off", "leds-on":
+		updateLEDs(c)
+		return nil
 	}
 	if action == "reboot" {
 		run("sync")
@@ -284,4 +318,75 @@ func sysRunTask(c *Config, args []string) error {
 		return err
 	}
 	return nil
+}
+
+// ---- windows (wifi-off / wifi-on, leds-off / leds-on) ----
+
+var schedNow = time.Now
+
+// cronMatch: whether a valid spec fires at the wall-clock minute t (busybox crond: when both day of
+// month and weekday are restricted, either one matches).
+func cronMatch(spec string, t time.Time) bool {
+	f := strings.Fields(spec)
+	if len(f) != 5 {
+		return false
+	}
+	in := func(i, v int) bool {
+		for _, it := range strings.Split(f[i], ",") {
+			rng, step, _ := strings.Cut(it, "/")
+			lo, hi, st := cronFields[i].min, cronFields[i].max, max(atoi(step), 1)
+			if rng != "*" {
+				a, b, isRange := strings.Cut(rng, "-")
+				lo, hi = atoi(a), atoi(a)
+				if isRange {
+					hi = atoi(b)
+				}
+			}
+			if v >= lo && v <= hi && (v-lo)%st == 0 {
+				return true
+			}
+		}
+		return false
+	}
+	if !in(0, t.Minute()) || !in(1, t.Hour()) || !in(3, int(t.Month())) {
+		return false
+	}
+	dom, dow := in(2, t.Day()), in(4, int(t.Weekday()))
+	switch {
+	case f[2] == "*":
+		return dow
+	case f[4] == "*":
+		return dom
+	}
+	return dom || dow
+}
+
+// schedOff: whether the newest firing (within 8 days, in system.timezone) of the enabled schedules with
+// action off / onAct that apply to target (their target is empty or target) is an off one.
+func schedOff(c *Config, off, onAct, target string) bool {
+	var ss []Schedule
+	for _, s := range c.Schedules {
+		if on(s.Enabled) && (s.Action == off || s.Action == onAct) && (s.Target == "" || s.Target == target) {
+			if _, err := checkCron(s.Cron, s.Action); err == nil {
+				ss = append(ss, s)
+			}
+		}
+	}
+	if len(ss) == 0 {
+		return false
+	}
+	now := schedNow()
+	wall := now.UTC().Add(time.Duration(tzOffset(sysTZ(c), now)) * time.Second).Truncate(time.Minute)
+	for m := 0; m < 8*24*60; m++ {
+		t, res := wall.Add(-time.Duration(m)*time.Minute), ""
+		for _, s := range ss {
+			if cronMatch(s.Cron, t) {
+				res = s.Action // the later list entry wins a tie
+			}
+		}
+		if res != "" {
+			return res == off
+		}
+	}
+	return false
 }

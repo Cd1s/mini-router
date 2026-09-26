@@ -88,6 +88,7 @@ type DNS struct {
 	// keep LAN devices on the router's DNS (mod_dns_sovereignty.go); ad blocking (mod_dns_adblock.go)
 	Sovereignty DNSSovereignty `yaml:"sovereignty"`
 	Adblock     Adblock        `yaml:"adblock"`
+	Parental    Parental       `yaml:"parental,omitempty"` // mod_dns_parental.go
 }
 
 // DoT is the stubby (DNS-over-TLS) forwarder. It listens on 127.0.0.1:Port only.
@@ -523,6 +524,7 @@ func init() {
 				return err
 			}
 			adblockRender(c, out)
+			parentalRender(c, out)
 			out.Add("/etc/dnsmasq.conf", 0644, renderDnsmasq(c))
 			if c.Services.Stubby.Enabled {
 				out.Add(StubbyConf, 0644, renderStubby(c))
@@ -532,6 +534,7 @@ func init() {
 		Nft: func(c *Config, hook string, n *Nft) {
 			if hook == "defs" {
 				sovereigntyNft(c, n)
+				parentalNft(c, n)
 			}
 			if hook != "dstnat" || !c.DNS.Redirect {
 				return
@@ -546,9 +549,17 @@ func init() {
 				}
 			}
 		},
-		Services: func(c *Config) []string { return []string{"dnsmasq"} },
+		Services: func(c *Config) []string {
+			if parentalOn(c) {
+				return []string{"dnsmasq", "mr-parental-dns"}
+			}
+			return []string{"dnsmasq"}
+		},
+		Managed: []string{"mr-parental-dns"},
 		Restart: func(path string) string {
 			switch path {
+			case parentalConf:
+				return "mr-parental-dns"
 			case "/etc/dnsmasq.conf", GenDir + "/dns-split.servers":
 				return "dnsmasq"
 			case StubbyConf:
@@ -561,7 +572,7 @@ func init() {
 			return ""
 		},
 		// stubby first: dnsmasq may forward to it as soon as it starts
-		RestartOrder: []string{"stubby", "dnsmasq"},
+		RestartOrder: []string{"stubby", "dnsmasq", "mr-parental-dns"},
 		Verify:       dnsVerify,
 		Status: func(c *Config, st map[string]any) {
 			v4, _ := readLeases(c)
@@ -702,6 +713,7 @@ func dnsUpstreamLines(c *Config) []string {
 }
 
 func dnsValidate(c *Config, v *Validator) {
+	parentalValidate(c, v)
 	if c.DHCP.Start < 2 || c.DHCP.End > 254 || c.DHCP.Start > c.DHCP.End {
 		v.Add("dhcp: start/end must be 2..254 with start<=end, got %d-%d", c.DHCP.Start, c.DHCP.End)
 	}

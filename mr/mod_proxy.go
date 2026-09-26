@@ -42,6 +42,8 @@ type Proxy struct {
 	Groups     []ProxyGroup  `yaml:"groups,omitempty"`
 	Rules      []ProxyRule   `yaml:"rules,omitempty"`
 	Bypass     []ProxyDevice `yaml:"bypass,omitempty"`
+	// Global: devices whose whole internet traffic (IPv4 and IPv6) goes to one outbound, each through its own tproxy port
+	Global []ProxyGlobal `yaml:"global,omitempty"`
 	// share-link subscriptions for the web UI's node import (URL in secrets.yaml)
 	Subscriptions []ProxySub `yaml:"subscriptions,omitempty"`
 }
@@ -127,6 +129,29 @@ type ProxyDevice struct {
 	MAC    string `yaml:"mac,omitempty"`
 	Device string `yaml:"device,omitempty"` // or: a device / group:NAME of the inventory (mod_dev.go)
 }
+
+// ProxyGlobal: a device (inventory name or a MAC) that is proxied entirely: nft by MAC into its own
+// tproxy port (proxy.globalPort), sing-box by that inbound to Outbound. No fixed address needed.
+type ProxyGlobal struct {
+	Name     string `yaml:"name"`
+	MAC      string `yaml:"mac,omitempty"`
+	Device   string `yaml:"device,omitempty"`
+	Outbound string `yaml:"outbound"`
+}
+
+// proxyGlobalMACs: the MACs of a global entry (lowercase).
+func proxyGlobalMACs(c *Config, g ProxyGlobal) []string {
+	if d := c.device(g.Device); d != nil {
+		return lowerAll(d.MACs)
+	}
+	if g.Device != "" {
+		return nil
+	}
+	return []string{strings.ToLower(g.MAC)}
+}
+
+// globalPort: the tproxy port of proxy.global[i] (IPv4 and IPv6 listeners).
+func (p *Proxy) globalPort(i int) int { return p.tproxyPort() + 10 + i }
 
 // proxyBypassMACs: the MACs a bypass entry stands for (lowercase).
 func proxyBypassMACs(c *Config, d ProxyDevice) []string {
@@ -317,12 +342,24 @@ func proxyValidate(c *Config, v *Validator) {
 		}
 		used[x.eff] = "proxy." + x.key
 	}
+	used[7894] = "the notify inbound"
+	if len(p.Global) > 32 {
+		v.Add("proxy.global: at most 32 devices")
+	}
+	for i := range p.Global {
+		if gp := p.globalPort(i); gp > 65535 {
+			v.Add("proxy.global[%d]: tproxy port %d (tproxy_port + 10 + %d) above 65535", i, gp, i)
+		} else if o, ok := used[gp]; ok {
+			v.Add("proxy.global[%d]: tproxy port %d (tproxy_port + 10 + %d) already used by %s", i, gp, i, o)
+		}
+		used[p.globalPort(i)] = fmt.Sprintf("proxy.global[%d]", i)
+	}
 
 	names := map[string]string{} // node and group names share the sing-box tag namespace
 	nameOK := func(path, name string) {
 		if !reLabel.MatchString(name) {
 			v.Add("%s.name: letters, digits, _ . - (max 40), got %q", path, name)
-		} else if proxyReserved[name] {
+		} else if proxyReserved[name] || strings.HasPrefix(name, "tproxy") {
 			v.Add("%s.name: %q is reserved", path, name)
 		} else if o, dup := names[name]; dup {
 			v.Add("%s.name: %q already used by %s", path, name, o)
@@ -445,6 +482,27 @@ func proxyValidate(c *Config, v *Validator) {
 			v.Add("%s.mac: duplicate %s", path, d.MAC)
 		}
 		macs[m] = true
+	}
+	for i, g := range p.Global {
+		path := fmt.Sprintf("proxy.global[%d]", i)
+		if !safeText(g.Name) || len(g.Name) > 64 {
+			v.Add("%s.name: printable text up to 64 bytes", path)
+		}
+		if !outs[g.Outbound] {
+			v.Add("%s.outbound: must be a node or group name, got %q", path, g.Outbound)
+		}
+		if (g.Device == "") == (g.MAC == "") {
+			v.Add("%s: set mac or device (one)", path)
+			continue
+		}
+		if g.Device != "" && c.device(g.Device) == nil {
+			v.Add("%s.device: unknown device %q (devices:; groups are not allowed)", path, g.Device)
+			continue
+		}
+		if g.MAC != "" && !reMAC.MatchString(g.MAC) {
+			v.Add("%s.mac: invalid %q", path, g.MAC)
+			continue
+		}
 	}
 	if p.Enabled && len(p.Nodes) == 0 {
 		v.Add("proxy: enabled but no nodes configured")

@@ -6,7 +6,9 @@ supervisor=supervise-daemon
 command=/usr/sbin/igmpproxy
 command_args="-n /etc/igmpproxy.conf"
 respawn_delay=5
-respawn_max=0
+# a crash loop stops after 10 respawns in 10 minutes: mr doctor reports it, mr doctor --heal restarts it
+respawn_max=10
+respawn_period=600
 depend() {
 	need net
 	after mr-firewall mr-pppoe

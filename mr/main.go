@@ -65,10 +65,12 @@ module commands (JSON output unless noted):
   mr pause DEVICE|group:NAME|MAC DURATION | list [--json]   pause internet access now (30m, 1h, 1d; max 7d;
                               runtime only: no config change, ends by itself, a reboot ends it too)
   mr unpause DEVICE|group:NAME|MAC|all                      end a pause early
-  mr doctor [--json]          health and security checks: every finding ok / warn / risk / skip with its fix
+  mr doctor [--json] [--heal] health and security checks: every finding ok / warn / risk / skip with its fix
+                              (--heal: first restart wanted services that do not run, once per 10 min each)
   mr event list [--json] [N]  the event log: WAN down / up, failover, changes, login locks, new devices, boots
                               (tick: mr-mon's sampler; boot | shutdown: mr-bootlog)
   mr notify status | test [NAME]   notification channels: what waits, last error; send a test message now
+                              | update-check | archive   release check (crond); send router.yaml to notify.archive
   mr edge status | renew [--force] [CERT...]   HTTPS reverse proxy: routes, certificates; renew now
   mr edge serve [-c FILE]     the proxy itself (service mr-edge; reads only gen/edge.json + certificates)
   mr led                      set the status LEDs from the WAN state
@@ -147,6 +149,19 @@ func dispatch(args []string, cfgPath, secPath string) error {
 		// the proxy process runs unprivileged: it must not need router.yaml / secrets.yaml
 		if len(args) > 1 && args[1] == "serve" {
 			return edgeServe(args[2:])
+		}
+	case "event":
+		// the boot / shutdown records matter most when router.yaml is broken
+		if len(args) == 2 && args[1] == "shutdown" {
+			return eventShutdown()
+		}
+		if len(args) == 2 && args[1] == "boot" {
+			c, err := loadConfig(cfgPath, secPath)
+			if err != nil {
+				logf("event boot: the config does not load")
+				c = nil
+			}
+			return eventBoot(c)
 		}
 	}
 

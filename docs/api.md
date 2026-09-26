@@ -37,8 +37,8 @@ undone by a rollback. Revoking also drops the hash, so a name used again never b
 
 | Scope | Actions |
 |---|---|
-| `read` | `status`, `config`, `config.raw`, `schema`, `history`, `history.diff`, `job`, `net`, `net.ports`, `net.routes`, `net.wan`, `wifi.status`, `wifi.stations`, `wifi.survey`, `wifi.health`, `dns.stats`, `dns.leases`, `fw.stats`, `proxy.status`, `proxy.routes`, `mon.now`, `mon.history`, `mon.devices`, `mon.conns`, `mon.procs`, `mon.dmesg`, `sys.services`, `sys.time`, `sys.doctor` (runs the health checks), `sys.events` (the event log), `sys.edge`, `dev.paused` (active pauses) |
-| `operate` | + `net.redial`, `wifi.kick`, `wifi.scan`, `dns.release`, `dns.adblock`, `proxy.delay`, `proxy.select`, `service` (start / stop / restart), `diag`, `dev.pause` (`{target, duration}`: a device, `group:NAME`, dhcp.hosts name or MAC; `30m` … `7d`), `dev.unpause` (`{target}`, `all`) |
+| `read` | `status`, `config`, `config.raw`, `schema`, `history`, `history.diff`, `job`, `net`, `net.ports`, `net.routes`, `net.wan`, `wifi.status`, `wifi.stations`, `wifi.survey`, `wifi.health`, `dns.stats`, `dns.leases`, `fw.stats`, `proxy.status`, `proxy.routes`, `mon.now`, `mon.history`, `mon.devices`, `mon.conns`, `mon.procs`, `mon.dmesg`, `mon.traffic` (monthly traffic), `sys.services`, `sys.time`, `sys.doctor` (runs the health checks), `sys.events` (the event log), `sys.edge`, `dev.paused` (active pauses) |
+| `operate` | + `net.redial`, `wifi.kick`, `wifi.scan`, `dns.release`, `dns.adblock`, `proxy.delay`, `proxy.select`, `service` (start / stop / restart), `sys.heal` (restart wanted services that do not run, like `mr doctor --heal`), `diag`, `sys.speedtest` (POST, ~20 s), `dev.pause` (`{target, duration}`: a device, `group:NAME`, dhcp.hosts name or MAC; `30m` … `7d`), `dev.unpause` (`{target}`, `all`) |
 | `apply` | + `plan`, `validate`, `apply`, `confirm`, `revert`, `rollback` |
 
 Never, whatever the scope: login / sessions, the web UI password, logs (`logs`, `sys.logs`: they can

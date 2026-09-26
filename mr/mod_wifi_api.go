@@ -507,7 +507,8 @@ func apiScan(r apiReq) apiResp {
 	return apiResp{body: res}
 }
 
-// ---- CLI: mr wifi status|stations|survey|health|scan PHY|kick MAC [IFNAME]|steer [--dry-run]|tick ----
+// ---- CLI: mr wifi status|stations|survey|health|scan PHY|kick MAC [IFNAME]|steer [--dry-run]|tick|window ----
+// (window: apply the wifi-off / wifi-on schedules now; run by wifi-hostapd after every hostapd start)
 // (JSON on stdout, for agents; tick is crond's and prints nothing)
 
 func wifiCommand(c *Config, args []string) error {
@@ -515,6 +516,8 @@ func wifiCommand(c *Config, args []string) error {
 	switch {
 	case len(args) == 1 && args[0] == "tick":
 		return wifiTick(c)
+	case len(args) == 1 && args[0] == "window":
+		return wifiWindow(c)
 	case len(args) == 1 && args[0] == "health":
 		v = wifiHealthReport(c)
 	case len(args) >= 1 && args[0] == "steer":
@@ -555,7 +558,7 @@ func wifiCommand(c *Config, args []string) error {
 		logf("mr wifi: kick %s from %s", strings.ToLower(args[1]), got)
 		v = map[string]any{"ok": true, "ifname": got}
 	default:
-		return fmt.Errorf("usage: mr wifi status | stations | survey | health | scan PHY | kick MAC [IFNAME] | steer [--dry-run] | tick")
+		return fmt.Errorf("usage: mr wifi status | stations | survey | health | scan PHY | kick MAC [IFNAME] | steer [--dry-run] | tick | window")
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", " ")

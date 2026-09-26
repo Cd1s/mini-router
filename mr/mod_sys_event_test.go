@@ -22,6 +22,7 @@ func TestMain(m *testing.M) {
 	eventPaths(d)
 	sysConfigPath, sysSecretsPath = filepath.Join(d, "none", "router.yaml"), filepath.Join(d, "none", "secrets.yaml")
 	notifyKick = func() {}
+	upgradePlanKick, archiveKick = func() {}, func() {}
 	code := m.Run()
 	os.RemoveAll(d)
 	os.Exit(code)
@@ -36,6 +37,7 @@ func eventPaths(d string) {
 	notifyCursorFile, notifyStateFile = filepath.Join(d, "notify.json"), filepath.Join(d, "run", "notify.json")
 	notifyLockFile, notifyWaitFile = filepath.Join(d, "run", "notify.lock"), filepath.Join(d, "run", "notify.wait")
 	doctorFile, ntpSyncDir = filepath.Join(d, "run", "doctor.json"), filepath.Join(d, "mr-clock")
+	upgradePlanFile, healFile, updateStateFile = filepath.Join(d, "run", "upgrade-plan.txt"), filepath.Join(d, "run", "heal.json"), filepath.Join(d, "update.json")
 }
 
 // eventEnv: a fresh state dir, a fake clock (now) and uptime (*up), kicks counted in *kicks.

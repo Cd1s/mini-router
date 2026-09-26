@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -179,6 +180,9 @@ func wifiNotReady(c *Config) []string {
 			bad = append(bad, fmt.Sprintf("%s: hostapd not answering (%v)", r.Phy, err))
 			continue
 		}
+		if op.State == "DISABLED" && schedOff(c, "wifi-off", "wifi-on", r.Phy) {
+			continue // switched off by a schedule (wifiWindow)
+		}
 		if op.State != "ENABLED" && op.State != "DFS" {
 			bad = append(bad, fmt.Sprintf("%s: state %s", r.Phy, op.State))
 			continue
@@ -292,4 +296,47 @@ func kick(c *Config, mac, ifname string) (string, error) {
 		}
 	}
 	return kickStation(cands, strings.ToLower(mac))
+}
+
+// wifiWindowDir holds a marker per radio that wifiWindow switched off (a variable for tests).
+var wifiWindowDir = RunDir
+
+// wifiWindow applies the wifi-off / wifi-on schedules (mod_sys_cron.go) to every radio: hostapd DISABLE
+// while its newest firing is an off one, ENABLE again afterwards (only radios it disabled itself). A
+// radio whose hostapd does not answer is skipped: the hostapd start (wifi-hostapd) runs this again.
+func wifiWindow(c *Config) error {
+	var errs []string
+	for _, r := range c.WiFi.Radios {
+		op, err := radioStatus(r, 2*time.Second)
+		if err != nil {
+			continue
+		}
+		mark := filepath.Join(wifiWindowDir, "wifi-off."+r.Phy)
+		off, cmd := schedOff(c, "wifi-off", "wifi-on", r.Phy), ""
+		switch {
+		case off && op.State != "DISABLED":
+			cmd = "DISABLE"
+			os.WriteFile(mark, nil, 0644)
+		case !off && op.State == "DISABLED" && fileExists(mark):
+			cmd = "ENABLE"
+		}
+		if !off {
+			os.Remove(mark)
+		}
+		if cmd == "" {
+			continue
+		}
+		out, err := hostapdCmd(r.Phy+"-ap0", cmd, 5*time.Second)
+		if err == nil && strings.TrimSpace(out) != "OK" {
+			err = fmt.Errorf("%s", firstLine(strings.TrimSpace(out)))
+		}
+		logf("wifi: %s %s (schedules): %v", r.Phy, cmd, err)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s %s: %v", r.Phy, cmd, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
 }

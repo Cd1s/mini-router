@@ -7,6 +7,7 @@ supervisor=supervise-daemon
 command=/usr/sbin/pppd
 command_args="call ${WAN}"
 respawn_delay=5
+# never gives up: the uplink / WiFi is the way back in (a router far from home)
 respawn_max=0
 depend() {
 	need mr-network

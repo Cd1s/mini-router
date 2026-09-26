@@ -198,6 +198,28 @@ func proxyRender(c *Config, out *Out) error {
 
 type proxyObj = map[string]any
 
+// proxyNotifyAddr: a loopback-only mixed (SOCKS / HTTP) inbound for the router's own notifications
+// (notify.channels[].via_proxy, Cd1s/mini-router#83); rendered only while a channel asks for it.
+const proxyNotifyAddr = "127.0.0.1:7894"
+
+// proxyNotifyOut: where the notify inbound's traffic goes when no rule matches — the first group,
+// else the first node ("" = no inbound).
+func proxyNotifyOut(c *Config) string {
+	want := false
+	for _, ch := range c.Notify.Channels {
+		want = want || ch.ViaProxy
+	}
+	switch {
+	case !want:
+		return ""
+	case len(c.Proxy.Groups) > 0:
+		return c.Proxy.Groups[0].Name
+	case len(c.Proxy.Nodes) > 0:
+		return c.Proxy.Nodes[0].Name
+	}
+	return ""
+}
+
 // proxySingBox renders the sing-box configuration (format of sing-box 1.14: typed DNS servers,
 // rule actions, default_domain_resolver).
 func proxySingBox(c *Config, sets []proxyRuleSet) (string, error) {
@@ -216,6 +238,20 @@ func proxySingBox(c *Config, sets []proxyRuleSet) (string, error) {
 	}
 	if p.ipv6() {
 		inbounds = append(inbounds, proxyObj{"type": "tproxy", "tag": "tproxy6", "listen": "::1", "listen_port": p.tproxyPort()})
+	}
+	var globalRules []any // whole devices first: every connection of theirs goes to their outbound
+	for i, g := range p.Global {
+		tags := []string{fmt.Sprintf("tproxy4-g%d", i)}
+		inbounds = append(inbounds, proxyObj{"type": "tproxy", "tag": tags[0], "listen": "127.0.0.1", "listen_port": p.globalPort(i)})
+		if p.ipv6() {
+			tags = append(tags, fmt.Sprintf("tproxy6-g%d", i))
+			inbounds = append(inbounds, proxyObj{"type": "tproxy", "tag": tags[1], "listen": "::1", "listen_port": p.globalPort(i)})
+		}
+		globalRules = append(globalRules, proxyObj{"inbound": tags, "action": "route", "outbound": g.Outbound})
+	}
+	notifyOut := proxyNotifyOut(c)
+	if notifyOut != "" {
+		inbounds = append(inbounds, proxyObj{"type": "mixed", "tag": "notify-in", "listen": "127.0.0.1", "listen_port": 7894})
 	}
 	outbounds := []any{proxyObj{"type": "direct", "tag": "direct"}}
 	var endpoints []any
@@ -245,6 +281,7 @@ func proxySingBox(c *Config, sets []proxyRuleSet) (string, error) {
 		outbounds = append(outbounds, o)
 	}
 	rules := []any{proxyObj{"inbound": []string{"dns-in"}, "action": "hijack-dns"}}
+	rules = append(rules, globalRules...)
 	for _, rs := range sets {
 		if len(rs.Domains) == 0 && len(rs.CIDRs) == 0 {
 			continue // an empty sing-box rule would match everything
@@ -261,6 +298,9 @@ func proxySingBox(c *Config, sets []proxyRuleSet) (string, error) {
 			r["ip_cidr"] = cs
 		}
 		rules = append(rules, r)
+	}
+	if notifyOut != "" { // after the rules: a notification to a listed domain follows its rule
+		rules = append(rules, proxyObj{"inbound": []string{"notify-in"}, "action": "route", "outbound": notifyOut})
 	}
 	cfg := proxyObj{
 		"log": proxyObj{"level": level, "timestamp": false},
@@ -508,6 +548,23 @@ func proxyNft(c *Config, hook string, n *Nft) {
 	n.W("chain proxy_pre {\n\t\ttype filter hook prerouting priority mangle + 5; policy accept;")
 	n.W("\tiifname != { %s } return", lans)
 	n.W("\tether saddr @proxy_bypass return")
+	// proxy.global: all internet traffic of the device (private / local destinations stay direct) to its
+	// own tproxy port, where sing-box knows it by the inbound
+	var gchains []int
+	for i, g := range p.Global {
+		m := dedup(proxyGlobalMACs(c, g))
+		if len(m) == 0 {
+			continue
+		}
+		gchains = append(gchains, i)
+		ms := strings.Join(m, ", ")
+		n.W("\tether saddr { %s } ip daddr != { 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/3 } meta l4proto { tcp, udp } ct direction original goto proxy_tp4_g%d", ms, i)
+		if p.ipv6() {
+			n.W("\tether saddr { %s } ip6 daddr != @lan6 ip6 daddr != fc00::/7 meta l4proto { tcp, udp } ct direction original goto proxy_tp6_g%d", ms, i)
+		} else { // no IPv6 listener: its internet IPv6 is dropped, clients fall back to IPv4
+			n.W("\tether saddr { %s } meta nfproto ipv6 ip6 daddr != @lan6 fib daddr type != local ct direction original drop", ms)
+		}
+	}
 	// ct direction original: replies of inbound connections (port forwards, pinholes) whose remote peer
 	// is inside a proxied range are forwarded normally; only connections a LAN client opens are proxied
 	n.W("\tip daddr @proxy4 meta l4proto { tcp, udp } ct direction original goto proxy_tp4")
@@ -521,26 +578,38 @@ func proxyNft(c *Config, hook string, n *Nft) {
 			n.W("\tmeta l4proto { tcp, udp } th dport 53 return")
 		}
 	}
-	n.W("chain proxy_tp4 {")
-	n.W("\tfib daddr type local return")
-	dnsSkip()
-	if c.bypassReplyRoute() {
-		// mode bypass route-only: the main router sent the request here; its reply goes back that way (mode.go)
-		n.W("\tct mark set ct mark | %s", proxyMark)
+	tp4 := func(name string, port int) {
+		n.W("chain %s {", name)
+		n.W("\tfib daddr type local return")
+		dnsSkip()
+		if c.bypassReplyRoute() {
+			// mode bypass route-only: the main router sent the request here; its reply goes back that way (mode.go)
+			n.W("\tct mark set ct mark | %s", proxyMark)
+		}
+		n.W("\tmeta l4proto tcp socket transparent 1 meta mark set %s accept", proxyMark)
+		n.W("\tmeta l4proto { tcp, udp } tproxy ip to 127.0.0.1:%d meta mark set %s accept", port, proxyMark)
+		n.W("\tcounter drop comment \"proxy down: fail closed\"")
+		n.W("}")
 	}
-	n.W("\tmeta l4proto tcp socket transparent 1 meta mark set %s accept", proxyMark)
-	n.W("\tmeta l4proto { tcp, udp } tproxy ip to 127.0.0.1:%d meta mark set %s accept", tp, proxyMark)
-	n.W("\tcounter drop comment \"proxy down: fail closed\"")
-	n.W("}")
-	if p.ipv6() {
-		n.W("chain proxy_tp6 {")
+	tp6 := func(name string, port int) {
+		n.W("chain %s {", name)
 		n.W("\tip6 daddr @lan6 return")
 		n.W("\tfib daddr type local return")
 		dnsSkip()
 		n.W("\tmeta l4proto tcp socket transparent 1 meta mark set %s accept", proxyMark)
-		n.W("\tmeta l4proto { tcp, udp } tproxy ip6 to [::1]:%d meta mark set %s accept", tp, proxyMark)
+		n.W("\tmeta l4proto { tcp, udp } tproxy ip6 to [::1]:%d meta mark set %s accept", port, proxyMark)
 		n.W("\tcounter drop comment \"proxy down: fail closed\"")
 		n.W("}")
+	}
+	tp4("proxy_tp4", tp)
+	if p.ipv6() {
+		tp6("proxy_tp6", tp)
+	}
+	for _, i := range gchains {
+		tp4(fmt.Sprintf("proxy_tp4_g%d", i), p.globalPort(i))
+		if p.ipv6() {
+			tp6(fmt.Sprintf("proxy_tp6_g%d", i), p.globalPort(i))
+		}
 	}
 
 	if c.bypassReplyRoute() {

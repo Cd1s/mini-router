@@ -13,6 +13,8 @@ package main
 //	proxy.bypass[].device       a device or group:NAME     → its MACs in @proxy_bypass (instead of mac:)
 //	guard.always_bypass, sys.wol / mr wol, mr pause        device names
 //
+// watch: true reports the device going online / offline in the event log (mod_dev_watch.go).
+//
 // An unknown name is a validation error at the place that uses it, so deleting a device that is
 // still referenced lists every reference. dnsmasq: every device is one dhcp-host line
 // (dhcp-host=MAC[,MAC…][,IP],NAME[,lease]) rendered by the dns module: the inventory name is the
@@ -29,12 +31,14 @@ import (
 
 // Device is one entry of the device inventory.
 type Device struct {
-	Name  string   `yaml:"name"`
-	MACs  []string `yaml:"macs"`
-	IP    string   `yaml:"ip,omitempty"`    // fixed IPv4: a static DHCP lease; forwards may use the name
-	Type  string   `yaml:"type,omitempty"`  // free label: pc, phone, tablet, tv, console, iot, server, …
-	Owner string   `yaml:"owner,omitempty"` // free label (the person)
-	Desc  string   `yaml:"desc,omitempty"`
+	Name  string    `yaml:"name"`
+	MACs  []string  `yaml:"macs"`
+	IP    string    `yaml:"ip,omitempty"`    // fixed IPv4: a static DHCP lease; forwards may use the name
+	Type  string    `yaml:"type,omitempty"`  // free label: pc, phone, tablet, tv, console, iot, server, …
+	Owner string    `yaml:"owner,omitempty"` // free label (the person)
+	Desc  string    `yaml:"desc,omitempty"`
+	Watch bool      `yaml:"watch,omitempty"` // online / offline events (mod_dev_watch.go)
+	Limit *DevLimit `yaml:"limit,omitempty"` // rate limit, Mbit/s (mod_dev_limit.go)
 }
 
 const (
@@ -54,6 +58,7 @@ func init() {
 		Name:       "dev",
 		Prio:       35,
 		Validate:   devValidate,
+		Nft:        devNft,
 		Status:     pauseStatus,
 		TokenScope: map[string]string{"dev.paused": "read", "dev.pause": "operate", "dev.unpause": "operate"},
 		API: map[string]func(r apiReq) apiResp{
@@ -125,6 +130,7 @@ func devValidate(c *Config, v *Validator) {
 			v.Add("%s.owner: max 40 characters, no control characters", p)
 		}
 		fwCheckDesc(v, p, d.Desc)
+		devLimitValidate(v, p, d.Limit)
 	}
 	if len(c.Groups) > devGroupMax {
 		v.Add("groups: at most %d", devGroupMax)

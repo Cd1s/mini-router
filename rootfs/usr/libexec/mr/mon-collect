@@ -3,7 +3,8 @@
 # `mr api` mon.history / `mr mon history`. Arguments: the physical WAN devices whose byte counters
 # are summed (rendered into /etc/conf.d/mr-mon from router.yaml).
 #
-# Line: uptime_s wan_rx_bytes wan_tx_bytes cpu_busy cpu_total mem_avail_kb conntrack temp_mc
+# Line: uptime_s wan_rx_bytes wan_tx_bytes cpu_busy cpu_total mem_avail_kb conntrack temp_mc wifi_temp_mc wifi_duty
+# (wifi_*: the hottest mt76 radio and the lowest TX duty cycle of its hwmon, 100 = not throttled, 0 = none)
 # Raw cumulative counters + uptime: mr computes rates and wall-clock times when asked.
 # The loop only uses shell builtins; `sleep` and the trim (tail + mv, about once an hour) are the
 # only forks. MON_FILE / MON_INTERVAL / MON_KEEP exist for CI.
@@ -13,6 +14,10 @@
 # uptime in event.due has come (a notification retry, events held back, the next background
 # `mr doctor`). Any other minute that costs two stat()s and a read. MON_EVENT_DIR / MON_LEASES / MON_MR
 # exist for CI.
+#
+# --account (system.traffic_stats): `mr mon account` every minute, detached (monthly traffic counters).
+ACCOUNT=
+[ "${1:-}" = --account ] && { ACCOUNT=1; shift; }
 F=${MON_FILE:-/run/mr-mon/history}
 I=${MON_INTERVAL:-60}
 KEEP=${MON_KEEP:-1440}
@@ -49,7 +54,19 @@ while :; do
 	[ -r /sys/class/thermal/thermal_zone0/temp ] && read -r temp < /sys/class/thermal/thermal_zone0/temp
 	case $ct in '' | *[!0-9]*) ct=0 ;; esac
 	case $temp in '' | *[!0-9-]*) temp=0 ;; esac
-	echo "$up $rx $tx $busy $total $avail $ct $temp" >> "$F"
+	wt=0 wd=0
+	for hw in /sys/class/hwmon/hwmon*; do
+		[ -r "$hw/throttle1" ] || continue
+		read -r n < "$hw/name"
+		case $n in mt7*) ;; *) continue ;; esac
+		read -r t < "$hw/temp1_input"
+		read -r d < "$hw/throttle1"
+		case $t in '' | *[!0-9]*) t=0 ;; esac
+		case $d in '' | *[!0-9]*) d=0 ;; esac
+		[ "$t" -gt "$wt" ] && wt=$t
+		[ "$d" -gt 0 ] && { [ "$wd" -eq 0 ] || [ "$d" -lt "$wd" ]; } && wd=$d
+	done
+	echo "$up $rx $tx $busy $total $avail $ct $temp $wt $wd" >> "$F"
 	lines=$((lines + 1))
 	if [ "$lines" -gt $((KEEP + SLACK)) ]; then
 		tail -n "$KEEP" "$F" > "$F.tmp" && mv -f "$F.tmp" "$F"
@@ -64,5 +81,6 @@ while :; do
 		# a tick that is still running makes the new one exit (flock in mr)
 		("$MR" event tick < /dev/null > /dev/null 2>&1 &)
 	fi
+	[ -n "$ACCOUNT" ] && ("$MR" mon account < /dev/null > /dev/null 2>&1 &)
 	sleep $((I - up % I))
 done

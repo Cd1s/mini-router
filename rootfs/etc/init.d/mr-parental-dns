@@ -1,0 +1,24 @@
+#!/sbin/openrc-run
+# Parental control (dns module, dns.parental, docs/modules/dns.md): another dnsmasq, no DHCP.
+# nftables redirects port 53 of the dns.parental devices here; it forwards to the main dnsmasq (or
+# mr-proxy-dns) with forced safe search and the block list on top.
+description="parental-control DNS (dnsmasq for dns.parental devices)"
+supervisor=supervise-daemon
+cfg=/etc/mini-router/gen/parental-dns.conf
+command=/usr/sbin/dnsmasq
+command_args="--keep-in-foreground --pid-file= --user=dnsmasq --group=dnsmasq --conf-file=$cfg"
+respawn_delay=2
+respawn_max=0
+
+depend() {
+	need mr-network
+	after dnsmasq mr-proxy-dns
+}
+
+start_pre() {
+	[ -f "$cfg" ] || { eerror "$cfg missing (run mr apply)"; return 1; }
+	/usr/sbin/dnsmasq --test --conf-file="$cfg" >/dev/null 2>&1 || {
+		eerror "$cfg: dnsmasq --test failed"
+		return 1
+	}
+}

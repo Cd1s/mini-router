@@ -12,7 +12,9 @@ supervise_daemon_args="--env GOGC=50 --env GOMEMLIMIT=48MiB"
 output_logger="logger -t sing-box -p daemon.info"
 error_logger="logger -t sing-box -p daemon.notice"
 respawn_delay=2
-respawn_max=0
+# a crash loop stops after 10 respawns in 10 minutes: mr doctor reports it, mr doctor --heal restarts it
+respawn_max=10
+respawn_period=600
 
 cfg=/etc/mini-router/gen/sing-box.json
 rundir=/run/mr-proxy

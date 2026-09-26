@@ -128,10 +128,13 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
   Connections stay hardware-offloaded. Check: `mr dns query site.example`, then `nft list set inet mr pr_<index>_4`
   lists the learned addresses. Devices using DoH / their own DNS are not covered (`dns.redirect` catches plain DNS).
 - **Services** (`services:` in router.yaml, e.g. `ssh`, `tailscale`, `stubby`): enabling adds them to the runlevel on apply.
-- **DDNS** (Cloudflare; no daemon: WAN hooks + crond): token (Zone › DNS › Edit on that zone) into secrets.yaml as
-  e.g. `cf_ddns_token`, then `services: {ddns: {enabled: true, records: [{name: home.example.com, zone: example.com,
-  token_secret: cf_ddns_token, ipv4: active, ipv6: router}]}}` (`ipv4`: active | WAN name | "off"; `ipv6`: "off" |
-  router | "::10" for a LAN device; `interval`: minutes, default 10). Check: `mr ddns status` (`local` vs `published`,
+- **DDNS** (Cloudflare, AliDNS, DNSPod, DuckDNS, dyndns2, webhook; no daemon: WAN hooks + crond): token (Zone › DNS › Edit on
+  that zone) into secrets.yaml as e.g. `cf_ddns_token`, then `services: {ddns: {enabled: true, records: [{name: home.example.com,
+  zone: example.com, token_secret: cf_ddns_token, ipv4: active, ipv6: router}]}}` (`ipv4`: active | WAN name | "off" |
+  `url:https://…` (lookup, from the WAN's address) | `mac:MAC` | fixed; `ipv6`: "off" | router | "::10" for a LAN device |
+  url: | mac: | fixed; `interval`: minutes, default 10). Other providers: `provider: alidns|dnspod` + `zone, key_id,
+  key_secret`; `duckdns` + `token_secret`; `dyndns2` + `url, username, password_secret`; `webhook` + `url` ({name} {type}
+  {ip} {token}), `method`, optional `token_secret`. Changes / failures are `ddns` events (notified). Check: `mr ddns status` (`local` vs `published`,
   `note` explains a missing address, e.g. CGNAT); force a re-check: `mr ddns update --force`. Only changes record content
   (proxied stays); never deletes records.
 - **Notifications to the phone** (Telegram bot or a webhook: ntfy, Bark, Gotify, Home Assistant; no daemon): the bot

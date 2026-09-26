@@ -15,8 +15,10 @@ import (
 
 // monSample is one line of the history file:
 //
-//	uptime_s wan_rx_bytes wan_tx_bytes cpu_busy cpu_total mem_avail_kb conntrack temp_mc
-type monSample struct{ Up, RX, TX, Busy, Total, Avail, CT, Temp int64 }
+//	uptime_s wan_rx_bytes wan_tx_bytes cpu_busy cpu_total mem_avail_kb conntrack temp_mc [wifi_temp_mc wifi_duty]
+//
+// (older samplers wrote the first 8 only; wifi_duty: lowest TX duty cycle %, 100 = not throttled, 0 = no radio)
+type monSample struct{ Up, RX, TX, Busy, Total, Avail, CT, Temp, WTemp, WDuty int64 }
 
 const (
 	monHistSpan   = 86400 // seconds kept / served
@@ -27,12 +29,12 @@ func parseMonHistory(data string) []monSample {
 	var out []monSample
 	for _, l := range strings.Split(data, "\n") {
 		f := strings.Fields(l)
-		if len(f) != 8 {
+		if len(f) != 8 && len(f) != 10 {
 			continue // partial line (read during an append) or garbage
 		}
 		var s monSample
 		ok := true
-		for i, p := range []*int64{&s.Up, &s.RX, &s.TX, &s.Busy, &s.Total, &s.Avail, &s.CT, &s.Temp} {
+		for i, p := range []*int64{&s.Up, &s.RX, &s.TX, &s.Busy, &s.Total, &s.Avail, &s.CT, &s.Temp, &s.WTemp, &s.WDuty}[:len(f)] {
 			v, err := strconv.ParseInt(f[i], 10, 64)
 			if err != nil {
 				ok = false
@@ -66,11 +68,11 @@ func monHistoryFile(path string) (map[string]any, error) {
 }
 
 // monHistory turns samples into columns: t (unix s), rx/tx (bytes/s), cpu (%), mem (used KiB),
-// ct (entries), temp (°C). Rates are null where no valid previous sample exists (first sample,
+// ct (entries), temp (°C), wtemp (hottest WiFi radio, °C), wduty (lowest WiFi TX duty %). Rates are null where no valid previous sample exists (first sample,
 // sampler gap, counter reset such as a WAN device re-created).
 func monHistory(ss []monSample, nowUnix int64, nowUp float64, memTotal int64) map[string]any {
 	var t []int64
-	var rx, tx, cpu, mem, ct, temp []any
+	var rx, tx, cpu, mem, ct, temp, wtemp, wduty []any
 	var last int64 = -1
 	for i, s := range ss {
 		if float64(s.Up) < nowUp-monHistSpan || float64(s.Up) > nowUp+120 {
@@ -101,6 +103,14 @@ func monHistory(ss []monSample, nowUnix int64, nowUp float64, memTotal int64) ma
 			tc = math.Round(float64(s.Temp)/100) / 10
 		}
 		temp = append(temp, tc)
+		var wt, wd any
+		if s.WTemp > 0 {
+			wt = math.Round(float64(s.WTemp)/100) / 10
+		}
+		if s.WDuty > 0 {
+			wd = s.WDuty
+		}
+		wtemp, wduty = append(wtemp, wt), append(wduty, wd)
 		last = s.Up
 	}
 	age := -1
@@ -113,6 +123,7 @@ func monHistory(ss []monSample, nowUnix int64, nowUp float64, memTotal int64) ma
 		"collector": map[string]any{"ok": age >= 0 && age < 180, "age": age, "samples": len(t)},
 		"t":         monNonNil(t), "rx": monNonNil(rx), "tx": monNonNil(tx), "cpu": monNonNil(cpu),
 		"mem": monNonNil(mem), "ct": monNonNil(ct), "temp": monNonNil(temp),
+		"wtemp": monNonNil(wtemp), "wduty": monNonNil(wduty),
 	}
 }
 

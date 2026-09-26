@@ -9,6 +9,7 @@ command=/sbin/dhcpcd
 command_args="-q -B -f /etc/dhcpcd.conf"
 pidfile=/run/mr-dhcpcd.pid
 respawn_delay=3
+# never gives up: the uplink / WiFi is the way back in (a router far from home)
 respawn_max=0
 
 depend() {

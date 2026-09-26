@@ -17,6 +17,8 @@ devices:
     type: pc                        # optional label: pc, phone, tablet, tv, console, iot, server, printer, other, …
     owner: alice                    # optional label (the person)
     desc: ""                        # optional, UI only
+    watch: false                    # optional: online / offline events (below)
+    limit: {down: 20, up: 5}        # optional rate limit, Mbit/s (1-10000; below)
   - {name: kid-tablet, macs: ["aa:bb:cc:00:00:21", "aa:bb:cc:00:00:22"], type: tablet, owner: kid}
 groups:
   kids: [kid-tablet, game-console]  # name: reName ([a-z][a-z0-9_-]{0,14}); 1-256 devices; written group:kids elsewhere
@@ -92,6 +94,32 @@ How it works:
 
 Not offloaded while paused (dropped instead); a device that is not paused is never affected.
 
+## Rate limit (`limit`, #33)
+
+nftables policers at the top of the forward chain (`mod_dev_limit.go`, before flow offload): upload = packets from
+the device's MACs to a WAN over `up` Mbit/s are dropped; download = its addresses, learned from its own packets
+into `@limN_4` / `@limN_6` (refilled from the neighbour table on a reload, like `firewall.access`), and packets from a
+WAN to them over `down` are dropped. One token bucket per device and direction (burst 1/8 s). The addresses also go
+into `@ac_4` / `@ac_6`, so a limited device's connections stay on the CPU path (**no hardware offload** for it). A
+policer, not a shaper: TCP settles a little below the limit; LAN-to-LAN traffic is not limited; none in bypass / ap
+mode.
+
+## Online / offline events (`watch: true`, #90)
+
+A watched device is **seen** while one of its MACs is associated with one of the router's BSSes (hostapd
+`STA-FIRST/NEXT`) or is in the neighbour table as REACHABLE / DELAY / PROBE (STALE entries can stay for hours
+and do not count). It is **online** as soon as it is seen and **offline** after 10 minutes without being seen,
+so a phone that sleeps its WiFi for a few minutes does not flap. Each change is one event of type `device`
+(`<name> is online`, `<name> is offline (not seen for 10m00s)`), so `notify.events` can push it. No daemon:
+`mr event tick` samples once a minute while a device is watched (`watch_next` in `/run/mini-router/events.json`,
+started by mon's sampler); state in `/run/mini-router/dev-watch.json`. The first 10 minutes after the state is
+created (boot, first watched device) only learn. Limits: a wired device that sends nothing through the router
+for 10 minutes counts as offline; a device on another AP / switch behind the router is seen only by its traffic.
+
+The web UI's device list opens a detail view per device (click the name): leases, WiFi association (signal,
+connected time), the traffic of its current connections (mon.devices), and every rule that uses it or one of
+its groups.
+
 ## Cost
 
 Binary: stripped linux/arm64 `mr` 10 158 240 → 10 223 776 bytes (+64 KiB; text +74.5 KiB) for the whole
@@ -102,11 +130,11 @@ no inventory → rendered files unchanged (`tools/ci.d/dev.sh` checks that no pa
 
 ## Left out (see the issue)
 
-- `watch: true` (online / offline events per device), `firewall.unknown_devices: allow | notify | isolate`
+- `firewall.unknown_devices: allow | notify | isolate`
   (new-device *notification* exists: event `new_device`; isolation of unknown MACs needs a default-deny
   set of known MACs and would lock out every phone with a new private address), device type guessing
-  (OUI table + DHCP fingerprints), a per-device detail page (lease / signal / traffic / connections /
-  rules on one screen), `runtime.json` for all temporary states.
+  (OUI table + DHCP fingerprints), the per-device connection cut (needs `nf_conntrack_netlink` in the image),
+  `runtime.json` for all temporary states.
 
 ## 怎么用
 

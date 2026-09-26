@@ -5,7 +5,9 @@ command=/usr/bin/lucky
 command_args="-cd /etc/lucky"
 supervise_daemon_args="--env GOGC=50 --env GOMEMLIMIT=20MiB"
 respawn_delay=5
-respawn_max=0
+# a crash loop stops after 10 respawns in 10 minutes: mr doctor reports it, mr doctor --heal restarts it
+respawn_max=10
+respawn_period=600
 depend() {
 	need net
 	after mr-firewall

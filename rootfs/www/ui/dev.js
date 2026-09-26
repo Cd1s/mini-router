@@ -53,7 +53,7 @@ const refsCell = refs=>refs.length ? h("span",{title:refs.join("\n"), style:"cur
 const okBtn = t=>h("button",{class:"btn p",onclick:e=>e.target.closest(".modal").remove()}, t||"知道了");
 
 function editDevice(orig, save){
-  const o = clone(orig); o.macs ||= [];
+  const o = clone(orig); o.macs ||= []; o.limit ||= {};
   const dom = (S.cfg.dhcp||{}).domain||"lan";
   const m = modal(orig.name ? "编辑设备 · "+orig.name : "添加设备", form(
       ...field("名称", inText(o,"name",{placeholder:"kid-tablet"}), "小写字母、数字和 -，以字母开头；也是它的 DNS 名 <名称>."+dom+"。端口转发、设备管控、策略路由、代理例外里直接写这个名字"),
@@ -61,15 +61,35 @@ function editDevice(orig, save){
       ...field("固定 IPv4", inText(o,"ip",{placeholder:"留空 = 动态分配"}), "填了就是静态 DHCP 分配，端口转发可以写设备名；多个 MAC 共用它时同一时间只能一个在线"),
       ...field("类型", inSel(o,"type",TYPES)),
       ...field("归属", inText(o,"owner",{placeholder:"例如 小明"})),
-      ...field("说明", inText(o,"desc"))),
+      ...field("说明", inText(o,"desc")),
+      ...field("上下线提醒", inBool(o,"watch"), "上线 / 离线超过 10 分钟记入事件（可推送通知）"),
+      ...field("限速 Mbit/s", h("span",{class:"row"}, "↓", inNum(o.limit,"down",{style:"width:90px"}), "↑", inNum(o.limit,"up",{style:"width:90px"})), "0 = 不限；限速的设备不走硬件加速")),
     [h("button",{class:"btn",onclick:()=>m.remove()},"取消"),
      h("button",{class:"btn p",onclick:()=>{
        o.name = String(o.name||"").trim();
        if (!o.name) return toast("请填写名称");
        if (!o.macs.length) return toast("至少填一个 MAC");
        if (o.name!==orig.name && devs().some(d=>d.name===o.name)) return toast("已有设备 "+o.name);
-       for (const k of ["ip","type","owner","desc"]) if (!o[k]) delete o[k];
+       for (const k of ["down","up"]) if (!(o.limit[k]>0)) delete o.limit[k];
+       for (const k of ["ip","type","owner","desc","watch"]) if (!o[k]) delete o[k];
+       if (!Object.keys(o.limit).length) delete o.limit;
        save(o); m.remove(); touch(); }},"确定")]);
+}
+
+// one device: lease, WiFi, traffic of its current connections, the rules that use it (or its groups)
+async function devDetail(d, ls, cl){
+  const macs = (d.macs||[]).map(lc), mine = x=>macs.includes(lc(x.mac));
+  let tf = [];
+  try { tf = ((await api("mon.devices")).devices||[]).filter(mine); } catch(e){}
+  const inG = Object.keys(groups()).filter(g=>groups()[g].includes(d.name));
+  const refs = [...refsOf(d.name), ...inG.flatMap(g=>refsOf("group:"+g).map(r=>r+" (group:"+g+")"))];
+  const list = (a, f)=>a.length ? a.map(x=>h("div",{}, f(x))) : "—";
+  modal("设备 · "+d.name, h("dl",{class:"kv"},
+    h("dt",{},"MAC"), h("dd",{class:"mono"}, macs.join(" ")),
+    h("dt",{},"租约"), h("dd",{}, list((ls.leases||[]).filter(mine), l=>l.ip+" · "+(l.network||"")+(l.expires ? " · 剩余 "+fmtDur(Math.max(0, l.expires-(ls.now||0))) : ""))),
+    h("dt",{},"WiFi"), h("dd",{}, list((cl.stations||[]).filter(mine), s=>(s.ssid||s.ifname)+" · "+s.signal+" · "+fmtDur(s.connected))),
+    h("dt",{},"流量"), h("dd",{}, list(tf, x=>x.conns+" 个连接 · ↑ "+fmtBytes(x.up)+" ↓ "+fmtBytes(x.down))),
+    h("dt",{},"引用"), h("dd",{}, list(refs, r=>r))), [okBtn("关闭")]);
 }
 
 registerPage("network", "devices", "设备", 30, async ()=>{
@@ -126,7 +146,7 @@ registerPage("network", "devices", "设备", 30, async ()=>{
       const l = macs.map(m=>lease[m]).find(Boolean), w = macs.map(m=>wifi[m]).find(Boolean), p = macs.map(m=>paused[m]).find(Boolean);
       const inG = Object.keys(groups()).filter(g=>groups()[g].includes(d.name));
       return [
-        h("div",{}, h("b",{},d.name), h("div",{class:"dev-sub"}, [d.type?typeName(d.type):"", d.owner||"", inG.map(g=>"#"+g).join(" ")].filter(Boolean).join(" · "))),
+        h("div",{}, h("a",{href:"#", onclick:e=>{ e.preventDefault(); devDetail(d, ls, cl); }}, h("b",{},d.name)), d.watch ? h("span",{class:"tag",style:"margin-left:6px"},"提醒") : null, d.limit ? h("span",{class:"tag warn",style:"margin-left:6px"},"限速") : null, h("div",{class:"dev-sub"}, [d.type?typeName(d.type):"", d.owner||"", inG.map(g=>"#"+g).join(" ")].filter(Boolean).join(" · "))),
         h("div",{class:"dev-macs mono"}, macs.map(m=>h("div",{},m))),
         d.ip ? mono(d.ip) : l ? h("span",{class:"mono mut",title:"动态分配的当前地址"}, l.ip) : h("span",{class:"mut"},"—"),
         h("span",{class:"row"}, w ? h("span",{class:"tag ok",title:w.ifname+" · "+w.signal},"WiFi 在线") : l ? h("span",{class:"tag"},"有租约") : h("span",{class:"mut"},"—"),

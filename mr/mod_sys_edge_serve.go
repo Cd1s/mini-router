@@ -23,7 +23,11 @@ package main
 
 import (
 	"context"
+	"crypto/pbkdf2"
+	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -61,6 +65,44 @@ type edgeRoute struct {
 	errs   atomic.Int64
 	denied atomic.Int64
 	logged atomic.Int64 // last upstream error logged (unix): at most one per minute
+	// basic auth: the hash, and the credentials already verified (sha256 of user + password)
+	salt, hash []byte
+	authMu     sync.Mutex
+	authOK     map[[32]byte]bool
+}
+
+// edgeAuthSem: one PBKDF2 check at a time (a flood of wrong passwords costs one core, not all).
+var edgeAuthSem = make(chan struct{}, 1)
+
+// authorized: basic auth of r against the route's hash; verified credentials are cached (at most 32).
+func (rt *edgeRoute) authorized(r *http.Request) bool {
+	if rt.Auth == nil {
+		return true
+	}
+	u, pw, ok := r.BasicAuth()
+	if !ok || u != rt.Auth.User {
+		return false
+	}
+	key := sha256.Sum256([]byte(u + "\x00" + pw))
+	rt.authMu.Lock()
+	hit := rt.authOK[key]
+	rt.authMu.Unlock()
+	if hit {
+		return true
+	}
+	edgeAuthSem <- struct{}{}
+	k, err := pbkdf2.Key(sha256.New, pw, rt.salt, rt.Auth.Iter, len(rt.hash))
+	<-edgeAuthSem
+	if err != nil || subtle.ConstantTimeCompare(k, rt.hash) != 1 {
+		return false
+	}
+	rt.authMu.Lock()
+	if len(rt.authOK) >= 32 {
+		clear(rt.authOK)
+	}
+	rt.authOK[key] = true
+	rt.authMu.Unlock()
+	return true
 }
 
 type edgeCertEntry struct {
@@ -119,7 +161,14 @@ func newEdgeServer(ec edgeConf, hash string) (*edgeServer, error) {
 		if err != nil {
 			return nil, fmt.Errorf("edge.json: route %q: %v", r.Name, err)
 		}
-		rt := &edgeRoute{edgeConfRoute: r, lan: lan, any: len(r.Allow) == 0, nets: nets}
+		rt := &edgeRoute{edgeConfRoute: r, lan: lan, any: len(r.Allow) == 0, nets: nets, authOK: map[[32]byte]bool{}}
+		if a := r.Auth; a != nil {
+			rt.salt, _ = hex.DecodeString(a.Salt)
+			rt.hash, _ = hex.DecodeString(a.Hash)
+			if !reEdgeUser.MatchString(a.User) || len(rt.salt) < 8 || len(rt.hash) != 32 || a.Iter < 1000 || a.Iter > 10000000 {
+				return nil, fmt.Errorf("edge.json: route %q: bad auth", r.Name)
+			}
+		}
 		target := &url.URL{Scheme: scheme, Host: net.JoinHostPort(ip.String(), strconv.Itoa(port))}
 		rt.proxy = &httputil.ReverseProxy{
 			Rewrite: func(pr *httputil.ProxyRequest) {
@@ -272,6 +321,15 @@ func (s *edgeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rt.denied.Add(1)
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
+	}
+	if !rt.authorized(r) {
+		rt.denied.Add(1)
+		w.Header().Set("WWW-Authenticate", `Basic realm="`+rt.Host+`", charset="UTF-8"`)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if rt.Auth != nil {
+		r.Header.Del("Authorization") // the service never sees the edge password
 	}
 	rt.reqs.Add(1)
 	rt.proxy.ServeHTTP(w, r)

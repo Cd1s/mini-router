@@ -172,7 +172,7 @@ func TestDDNSValidate(t *testing.T) {
 		{Name: "z.example.com", Zone: "example.com", Token: "cf_missing"},
 		{Name: "w.example.com", Zone: "example.com", Token: "cf_bad"},
 		{Name: "v.example.com", Zone: "example.com", Token: "cf_ok", IPv4: "wan9"},
-		{Name: "u.example.com", Zone: "example.com", Token: "cf_ok", IPv6: "2001:db8::10"},
+		{Name: "u.example.com", Zone: "example.com", Token: "cf_ok", IPv6: "fe80::10"},
 		{Name: "s.example.com", Zone: "example.com", Token: "cf_ok", IPv4: "off", IPv6: "off"},
 		{Name: "r.example.com", Zone: "example.com", Token: "cf_ok", TTL: 30},
 		{Name: "q.example.com", Zone: "example.com\nx", Token: "cf_ok"},
@@ -183,7 +183,7 @@ func TestDDNSValidate(t *testing.T) {
 	for _, s := range []string{
 		"services.ddns.interval: 5-60", "records[2].name: duplicate", `records[3].name: "home.example.org" is not inside zone`,
 		"records[4].name: a host name", "records[5].provider", "records[6].token_secret: secret name", `records[7].token_secret: secret "cf_missing" missing`,
-		"records[8].token_secret: the secret is not an API token", `records[9].ipv4: active | off | a WAN name, got "wan9"`,
+		"records[8].token_secret: the secret is not an API token", `records[9].ipv4: active | off | a WAN name`, `got "wan9" (no such WAN)`,
 		`records[10].ipv6: off | router | ::IID`, "records[11]: ipv4 and ipv6 are both off", "records[12].ttl", "records[13].zone",
 		`records[14].ipv6`,
 	} {

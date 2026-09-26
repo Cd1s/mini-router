@@ -1,8 +1,10 @@
 #!/sbin/openrc-run
 description="WiFi access points (hostapd, mt76)"
 supervisor=supervise-daemon
-command=/usr/sbin/hostapd
+# the wrapper runs the post-setup after every start, respawns included, then execs /usr/sbin/hostapd
+command=/usr/libexec/mr/wifi-hostapd
 respawn_delay=3
+# never gives up: the uplink / WiFi is the way back in (a router far from home)
 respawn_max=0
 depend() {
 	need mr-network
@@ -20,9 +22,4 @@ start_pre() {
 	done
 	[ -n "$command_args" ] || { eerror "no hostapd config for an existing radio (run mr apply)"; return 1; }
 	return 0
-}
-start_post() {
-	# tx power, bridge isolation of isolated SSIDs (waits for BSSes that come up late, e.g. after DFS CAC),
-	# then the firewall again so the offload flowtable covers every AP netdev
-	( sleep 8; sh /etc/mini-router/gen/wifi-post.sh; /usr/sbin/mr fw ) >/dev/null 2>&1 &
 }

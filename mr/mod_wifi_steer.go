@@ -316,6 +316,41 @@ type steerState struct {
 	Sta    map[string]*steerSta `json:"sta"`
 	Count  map[string]int       `json:"count"` // sent accepted rejected noreply error moved
 	Recent []steerRec           `json:"recent"`
+	Dev    map[string]*steerDev `json:"dev,omitempty"` // per station since Since (at most steerDevMax, least recent dropped)
+}
+
+// steerDev: one station's answers (#91): accepted, rejected, no reply / error, moved to 5 GHz.
+type steerDev struct {
+	Last     int64 `json:"last"`
+	Accepted int   `json:"accepted,omitempty"`
+	Rejected int   `json:"rejected,omitempty"`
+	NoReply  int   `json:"noreply,omitempty"`
+	Moved    int   `json:"moved,omitempty"`
+}
+
+const steerDevMax = 64
+
+// dev: the station's counters (created, the least recently asked one dropped beyond steerDevMax).
+func (st *steerState) dev(mac string, now int64) *steerDev {
+	if st.Dev == nil {
+		st.Dev = map[string]*steerDev{}
+	}
+	d := st.Dev[mac]
+	if d == nil {
+		if len(st.Dev) >= steerDevMax {
+			old := ""
+			for m, x := range st.Dev {
+				if old == "" || x.Last < st.Dev[old].Last {
+					old = m
+				}
+			}
+			delete(st.Dev, old)
+		}
+		d = &steerDev{}
+		st.Dev[mac] = d
+	}
+	d.Last = now
+	return d
 }
 
 func loadSteerState() *steerState {
@@ -476,6 +511,7 @@ func steerMarkMoved(st *steerState, to string, now int64) {
 		if r, err := hostapdCmd(to, "STA "+mac, time.Second); err == nil && strings.HasPrefix(strings.ToLower(r), mac) {
 			e.Moved = true
 			st.Count["moved"]++
+			st.dev(mac, now).Moved++
 			for i := len(st.Recent) - 1; i >= 0; i-- {
 				if st.Recent[i].MAC == mac {
 					st.Recent[i].Moved = true
@@ -509,6 +545,14 @@ func steerSend(st *steerState, p steerPair, s hapdSta, cand string, now int64) s
 	e.Last, e.Result, e.To, e.Moved = now, key, p.To, false
 	st.Count["sent"]++
 	st.Count[key]++
+	switch d := st.dev(s.MAC, now); key {
+	case "accepted":
+		d.Accepted++
+	case "rejected":
+		d.Rejected++
+	default:
+		d.NoReply++
+	}
 	st.Recent = append(st.Recent, steerRec{T: now, MAC: s.MAC, SSID: p.SSID, From: p.From, To: p.To, Signal: s.Signal, Result: res})
 	if len(st.Recent) > steerRecentMax {
 		st.Recent = st.Recent[len(st.Recent)-steerRecentMax:]
@@ -529,5 +573,5 @@ func steerSummary(c *Config) map[string]any {
 		min = steerMinSignal
 	}
 	return map[string]any{"enabled": c.WiFi.Steering.Enabled, "min_signal_2g": min, "excluded": len(c.WiFi.Steering.Exclude),
-		"pairs": pairs, "counts": st.Count, "since": st.Since, "recent": st.Recent}
+		"pairs": pairs, "counts": st.Count, "since": st.Since, "recent": st.Recent, "devices": st.Dev}
 }

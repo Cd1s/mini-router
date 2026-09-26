@@ -64,6 +64,13 @@ it was switched on.
   `/run/mr-mon/flows` and the next call diffs against it, so connections opening/closing between
   polls do not distort the numbers. The first call (or one after > 2 min) only sets the baseline.
 * "连接内累计" is the sum over connections that are still in the table — not a total since boot.
+* **Monthly traffic** (`system.traffic_stats: true`, #33; `mod_mon_traffic.go`): the sampler runs `mr mon account`
+  every minute (`--account` from `/etc/conf.d/mr-mon`). Per device: the per-connection deltas since the last run
+  (own snapshot `/run/mr-mon/traffic.flows`), so short connections that leave the table between runs and, without
+  the flowtable `counter` (above), offloaded bytes are missing — a lower bound. Per physical WAN device: its byte
+  counters (exact, offload included). RAM `/run/mr-mon/traffic.json`, flash copy
+  `/etc/mini-router/state/traffic.json` at most once an hour and at the month change (router time); current and
+  previous month; at most 256 devices a month. Card 本月流量 on 流量统计.
 * The sampler stores uptime + raw cumulative counters; `mr` computes rates and wall-clock times when
   asked, so NTP stepping the clock after boot (no RTC) does not break the history. A counter going
   backwards (device re-created) or a gap > 10 min gives an empty point instead of a spike.
@@ -79,7 +86,8 @@ it was switched on.
 | Action | Method | Returns |
 |---|---|---|
 | `mon.now` | GET | `t` (unix ms), `up` (uptime s), `hz`, `cpu` / `cpus[]` (user nice system idle iowait irq softirq steal, cumulative), `mem` (KiB: total avail free buffers cached swap_total swap_free), `load[3]`, `procs`, `procs_running`, `ct`, `ct_max`, `temps[]` ({zone, type, mc}), `ifaces[]` ({name, role: wan / wan-dev / lan / port / wifi / vpn, state, rx, tx, rxp, txp, err, drop}) |
-| `mon.history` | GET | columns `t` (unix s), `rx`, `tx` (bytes/s), `cpu` (%), `mem` (used KiB), `ct`, `temp` (°C) — `null` where unknown; `mem_total`, `wan` (devices summed), `collector` {ok, age, samples} |
+| `mon.traffic` | GET | monthly traffic (`system.traffic_stats`): `cur` / `prev` {month, dev: {MAC: {up, down, name}}, wan: {device: {up, down}}}, `saved` (last flash copy), `enabled` |
+| `mon.history` | GET | columns `t` (unix s), `rx`, `tx` (bytes/s), `cpu` (%), `mem` (used KiB), `ct`, `temp` (°C), `wtemp` (hottest mt76 radio, °C), `wduty` (its lowest TX duty cycle %, < 100 = thermal throttling; hwmon `mt7*`, #91) — `null` where unknown; `mem_total`, `wan` (devices summed), `collector` {ok, age, samples} |
 | `mon.devices` | GET | `devices[]` {id, mac, name, ips[], conns, up, down (bytes in open connections), up_rate, down_rate (bytes/s)}, `other` (same shape), `dt` (0 = baseline only), `acct`, `flowtable`, `flow_counter`, `entries`, `truncated`, `available` |
 | `mon.conns` | GET, or POST with a filter | `total`, `matched`, `by_proto`, `by_state` (TCP), `by_offload` {hw, sw, none}, `by_family` (whole table); `top_src`, `top_dst` (top 10 by bytes, filtered set); `conns[]` {p, f, st, ttl (-1 while offloaded), src, dst, sport, dport, icmp, nat_src/nat_sport (SNAT), nat_dst/nat_dport (DNAT), ob, rb, op, rp, off: hw/sw, assured, unreplied, mark}; `names` {ip: name} |
 | `mon.procs` | GET | `procs[]` {pid, ppid, name, state, user, rss, vsz (KiB), threads, cpu (ticks), start, kernel, cmd}, `up`, `hz`, `ncpu`, `mem_total` |
@@ -103,6 +111,7 @@ Command lines in `mon.procs` have secret-looking values masked (`--authkey ***`,
 
 ```sh
 mr mon now                      # same JSON as the web UI
+mr mon traffic                  # monthly traffic (mr mon account: the sampler's per-minute run)
 mr mon history                  # 24 h columns; `mr mon history FILE` reads another sampler file
 mr mon devices                  # call twice a few seconds apart to get rates
 mr mon conns '{"ip":"192.168.1.66","limit":20}'

@@ -1,0 +1,13 @@
+#!/bin/sh
+# mr-hostapd's command (supervise-daemon): hostapd itself, plus the post-setup after every start — a
+# respawn too, where OpenRC's start_post would not run (#91). In the background, 8 s later: tx power and
+# bridge isolation of isolated SSIDs (wifi-post.sh waits for BSSes that come up late, e.g. after DFS
+# CAC), the firewall again so the offload flowtable covers every AP netdev (a respawned hostapd
+# re-creates the extra BSS netdevs), and the wifi-off / wifi-on schedules (`mr wifi window`).
+(
+	sleep 8
+	sh /etc/mini-router/gen/wifi-post.sh
+	/usr/sbin/mr fw
+	/usr/sbin/mr wifi window
+) < /dev/null > /dev/null 2>&1 &
+exec /usr/sbin/hostapd "$@"

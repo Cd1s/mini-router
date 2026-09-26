@@ -312,7 +312,9 @@ function steerCard(s, who){
     h("dt",{},"同名 SSID"), h("dd",{}, (s.pairs||[]).length ? s.pairs.map(p=>h("div",{}, p.ssid+" ", h("span",{class:"mono mut"}, p.from+" → "+p.to))) : "-"),
     h("dt",{},"统计"), h("dd",{}, (c.sent||0)+" 次建议 · "+(c.accepted||0)+" 接受 · "+(c.rejected||0)+" 拒绝 · "+(c.noreply||0)+" 无应答 · "+(c.moved||0)+" 已换到 5G",
       s.since ? h("span",{class:"mut"}," （"+stamp(s.since)+" 起）") : null));
-  return card("频段引导 (802.11v)", [head, roTable(["时间","设备 / 2.4G 信号","结果"], rows)], null, true);
+  const devs = Object.entries(s.devices||{}).sort((a,b)=>b[1].last-a[1].last).map(([m,d])=>[who(m), d.accepted||0, d.rejected||0, d.noreply||0, d.moved||0]);
+  return card("频段引导 (802.11v)", [head, roTable(["时间","设备 / 2.4G 信号","结果"], rows),
+    devs.length ? roTable(["设备","接受","拒绝","无应答","已换到 5G"], devs) : null], null, true);
 }
 
 function scanView(sc, r){
