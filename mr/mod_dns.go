@@ -85,8 +85,9 @@ type DNS struct {
 	Records      []Record `yaml:"records"`  // local DNS records (home servers)
 	Split        []Split  `yaml:"split"`    // per-domain upstream (DNS 分流)
 
-	// keep LAN devices on the router's DNS (mod_dns_sovereignty.go)
+	// keep LAN devices on the router's DNS (mod_dns_sovereignty.go); ad blocking (mod_dns_adblock.go)
 	Sovereignty DNSSovereignty `yaml:"sovereignty"`
+	Adblock     Adblock        `yaml:"adblock"`
 }
 
 // DoT is the stubby (DNS-over-TLS) forwarder. It listens on 127.0.0.1:Port only.
@@ -267,7 +268,7 @@ func renderDnsmasq(c *Config) string {
 	for _, l := range recordLines(c) {
 		b.WriteString(l + "\n")
 	}
-	for _, l := range dnsLocalOnly(c) {
+	for _, l := range append(dnsLocalOnly(c), adblockLines(c)...) {
 		b.WriteString(l + "\n")
 	}
 	w("dhcp-leasefile=%s", LeaseFile)
@@ -484,6 +485,7 @@ func init() {
 			if _, _, err := dohBlocklist(c, true); err != nil {
 				return err
 			}
+			adblockRender(c, out)
 			out.Add("/etc/dnsmasq.conf", 0644, renderDnsmasq(c))
 			if c.Services.Stubby.Enabled {
 				out.Add(StubbyConf, 0644, renderStubby(c))
@@ -514,6 +516,8 @@ func init() {
 				return "dnsmasq"
 			case StubbyConf:
 				return "stubby"
+			case adblockConf:
+				return "dnsmasq"
 			case "/etc/resolv.conf":
 				return "-"
 			}
@@ -532,6 +536,7 @@ func init() {
 			"dns.leases":   apiDNSLeases,
 			"dns.release":  apiDNSRelease,
 			"dns.querylog": apiDNSQueryLog,
+			"dns.adblock":  apiDNSAdblock,
 		},
 		Commands: map[string]func(c *Config, args []string) error{
 			"dns": dnsCommand,
@@ -747,6 +752,7 @@ func dnsValidate(c *Config, v *Validator) {
 	}
 	validRecords(c, v)
 	sovereigntyValidate(c, v)
+	adblockValidate(c, v)
 	for _, h := range c.DNS.AddnHosts {
 		if !rePath.MatchString(h) {
 			v.Add("dns.addn_hosts: absolute path required, got %q", h)

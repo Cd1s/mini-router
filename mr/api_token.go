@@ -72,7 +72,7 @@ var tokenActions = map[string]string{
 	"mon.now": "read", "mon.history": "read", "mon.devices": "read", "mon.conns": "read", "mon.procs": "read", "mon.dmesg": "read",
 	"sys.services": "read", "sys.time": "read", "sys.doctor": "read", "sys.events": "read", "sys.edge": "read",
 	// operate: runtime actions that do not change the config
-	"net.redial": "operate", "wifi.kick": "operate", "wifi.scan": "operate", "dns.release": "operate",
+	"net.redial": "operate", "wifi.kick": "operate", "wifi.scan": "operate", "dns.release": "operate", "dns.adblock": "operate",
 	"proxy.delay": "operate", "proxy.select": "operate", "service": "operate", "diag": "operate",
 	// apply: config changes, through plan → apply → confirm with automatic rollback
 	"plan": "apply", "validate": "apply", "apply": "apply", "confirm": "apply", "revert": "apply", "rollback": "apply",

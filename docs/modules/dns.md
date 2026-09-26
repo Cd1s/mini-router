@@ -42,7 +42,10 @@ records), `mr/mod_dns_query.go` (tiny DNS client, statistics, post-apply read-ba
   a dnsmasq built with nftset: the image ships Alpine's `dnsmasq-dnssec-nftset` (DNSSEC is compiled in but off);
   plain `dnsmasq` refuses such a config (`dnsmasq --test` in the init script), so the apply rolls back.
 
-Not included on purpose: adblock lists, DHCPv6-only (no SLAAC) mode (Android cannot use it),
+- **Ad blocking** (`dns.adblock`, Cd1s/mini-router#30, off by default): blocklists as dnsmasq `local=` lines, no new
+  process (see below).
+
+Not included on purpose: AdGuard Home (≈34 MiB, killed by the OOM killer with big lists), DHCPv6-only (no SLAAC) mode (Android cannot use it),
 DHCPv6 lease release, MX records.
 
 Cost: no new daemon. Flash: a few KB of Go code in `mr`. RAM: none at rest; stubby (~2 MB RSS) only
@@ -151,6 +154,13 @@ dns:
     private_relay: allow      # allow (default) | block: mask.icloud.com / mask-h2.icloud.com → NXDOMAIN
     block_dot: false          # true: LAN → port 853 (DoT / DoQ) refused
     doh_blocklist_file: ""    # /etc/mini-router/dns/doh.ips: LAN → port 443 of these IPs / CIDRs refused
+  adblock:
+    enabled: false
+    lists:                    # https only; plain domains, hosts, adblock (||name^) or dnsmasq (local=/name/) lines
+      - https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/multi-onlydomains.txt   # ~165k
+      # - https://anti-ad.net/domains.txt                                                         # ~110k, Chinese sites
+    allow: [example.com]      # never blocked, with everything under it
+    max_domains: 300000       # default; an update above it keeps the previous lists
 ```
 
 DNS sovereignty (`dns.sovereignty`). Encrypted DNS that bypasses the router doesn't break anything by
@@ -171,6 +181,25 @@ fake-ip split (ECH does not matter here: the split works on the DNS name, not on
   is refused. A bad line stops `mr apply` (the error names the line, never its content); edit the file,
   then `mr apply` (or `mr fw`) loads it. Keep it under `/etc/mini-router/dns/` so backups include it.
   Agents and API tokens cannot set it (a `*_file` key).
+
+**Ad blocking** (`dns.adblock`). `mr dns adblock update` downloads the lists (https only, the router's own
+connection: not through the proxy), keeps valid names (at least two labels, no IPs; element-hiding rules, exceptions
+and `server=/name/#` lines are not names), drops duplicates and names under another listed name, removes the allowed
+ones, and writes `/etc/mini-router/state/adblock.conf`: one `local=/name/` per domain, plus `server=/name/#` for an
+allowed name under a blocked one (forwarded as usual). Both dnsmasq instances load it (`conf-file=`): a blocked name
+and everything under it answer NXDOMAIN. The lists' own hosts, the NTP servers and the local domain are never blocked.
+
+- An update never makes things worse: a list that fails to download, is larger than 64 MiB or does not look like a
+  domain list (under half of its lines usable, e.g. an HTML error page) keeps the previous file; so does a result
+  above `max_domains`. A new file restarts dnsmasq (and the proxy's dnsmasq): DNS pauses 1–2 s; if dnsmasq does not
+  answer again within 30 s the previous file is put back.
+- Schedule: crond runs `mr dns adblock update --cron` hourly at a minute fixed per router; it downloads only when the
+  file is 20 h old or was built from other settings, so switching it on, or a failed update, is (re)tried within the
+  hour. Never while a change waits for confirmation. `mr dns adblock update` / 立即更新 runs it now.
+- `mr apply` renders an empty file when there is none (dnsmasq refuses a missing `conf-file`); an existing list is
+  never part of a plan or a snapshot.
+- Cost: no process. RAM: dnsmasq ≥ 2.86 keeps large `local=` sets compactly (CI prints dnsmasq's RSS with 150k names;
+  the proxy's instance holds a second copy). Flash: ~25 bytes a name before UBIFS compression, rewritten once a day.
 
 Both dnsmasq instances (the main one and the proxy's) answer the NXDOMAIN names. The refusals are a
 chain of their own (`dns_guard`, prerouting priority mangle − 1) in front of the policy marks and the
@@ -243,11 +272,14 @@ mr dns query NAME [TYPE] [SERVER]     ask dnsmasq (or SERVER ip[#port]); TYPE A 
 mr dns leases                         DHCP leases (JSON)
 mr dns release IP [MAC]               make dnsmasq drop a DHCPv4 lease
 mr dns querylog on [MINUTES]|off|show temporary query logging (default 10 min, max 60)
+mr dns adblock status                 ad blocking: domains, last update, per-list results (JSON)
+mr dns adblock update [--cron]        download the lists now (--cron: only when due; --no-reload: no restart)
 ```
 
 Web UI actions (logged-in sessions only): `dns.stats` (GET), `dns.leases` (GET), `dns.release`
 (POST `{ip, mac}` — the pair must exist in the lease file and the IP must be inside a LAN network),
-`dns.querylog` (GET = state + last 300 lines; POST `{on, minutes}`), `dnslist` (split list editor).
+`dns.querylog` (GET = state + last 300 lines; POST `{on, minutes}`), `dnslist` (split list editor), `dns.adblock`
+(GET = status; POST `{update: true}` starts an update in the background; API tokens: scope operate).
 No handler builds a shell command; `rc-service dnsmasq restart` is the only exec, with fixed argv.
 
 ## Checks
@@ -265,6 +297,11 @@ No handler builds a shell command; `rc-service dnsmasq restart` is the only exec
   and → 443 of a listed resolver are refused (IPv4 and IPv6), DoT to a proxied range is refused before
   the proxy socket could take it, the router's own 853 and the resolver's other ports still work.
 - `mr/mod_dns_sovereignty_test.go`: defaults, validation, blocklist parsing (bad lines named, not echoed).
+- `mr/mod_dns_adblock_test.go`: every list format, subdomain folding and allow, validation, render (empty file only
+  when missing), cron line; updates against a TLS test server: unchanged lists do not restart dnsmasq, `--cron`
+  skips a fresh file and rebuilds after a settings change, failed / HTML / oversized lists keep the file, a dnsmasq
+  that does not come back gets the previous file. `tools/ci.d/dns.sh` runs the real update against a local HTTPS
+  server (150k names) and the real dnsmasq answers them.
 - stubby 0.4.3 (Alpine 3.24) accepts the rendered stubby.yml (`stubby -C … -i`, checked once in an
   arm64 Alpine container; not part of CI because it needs network access).
 
@@ -286,6 +323,10 @@ No handler builds a shell command; `rc-service dnsmasq restart` is the only exec
   或全部走 DoT（需同时开启 stubby；NTP 域名会用“引导 DNS”明文解析，保证开机对时）。
 - **DHCP 选项**：网络 › DHCP / IPv6 RA › DHCP 选项，按网络设置下发的 DNS、NTP、搜索域和其他编号选项。
 - **IPv6**：同页 › IPv6 通告 (RA)。一般保持 SLAAC；需要固定段地址时选“有状态 DHCPv6 + SLAAC”。
+- **去广告**：网络 › DNS › 去广告 → 点“+ HaGeZi Multi NORMAL”（或填别的列表地址），打开“启用”，“保存并应用”，
+  再点“立即更新”。约半分钟后状态显示拦截的域名数。某个网站被误拦：把它的域名加进“白名单”再保存。
+- **防止设备绕过路由器的 DNS**：网络 › DNS › 上游与缓存 › 防绕过。Firefox 金丝雀默认开；需要时打开“拦截 DoT /
+  DoQ”，或填一个 DoH 服务器 IP 列表文件。
 - **看缓存命中率 / 排查解析**：网络 › DNS › 统计 / 查询日志。查询日志默认关闭，开启会重启 dnsmasq
   （约 1 秒），到时自动关闭，重启路由器也不会保留。
 

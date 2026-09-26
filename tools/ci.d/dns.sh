@@ -5,7 +5,10 @@
 #  2. the rendered lab dnsmasq.conf runs for real in a throwaway network + mount namespace:
 #     the lab's local records answer (`mr dns query`), the CHAOS statistics answer (`mr dns stats`),
 #     and `mr dns release` makes dnsmasq drop a lease (DHCPRELEASE, lease file never edited);
-#     the Firefox canary and (lab) iCloud Private Relay names answer NXDOMAIN from the router itself.
+#     the Firefox canary and (lab) iCloud Private Relay names answer NXDOMAIN from the router itself;
+#     ad blocking: `mr dns adblock update` fetches the lab's lists from a local HTTPS server (plain and
+#     hosts format, 150k names) and the real dnsmasq answers them NXDOMAIN, an allowed name under a
+#     blocked one is forwarded; dnsmasq's RSS and start time with the list are printed.
 set -eu
 : "${OUT:?}" "${ROOT:?}"
 
@@ -40,6 +43,40 @@ for d in $(sed -n 's/^interface=//p' "$CONF"); do
 done
 ip addr add "$ADDR" dev "$BR"
 echo "$(($(date +%s) + 3600)) 02:00:5e:00:00:01 $LEASEIP ci-host 01:02:00:5e:00:00:01" > /tmp/dhcp.leases
+# the lab's ad blocking lists over HTTPS (a throwaway CA the mr client trusts through SSL_CERT_FILE)
+mkdir -p /tmp/lists
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 -subj /CN=127.0.0.1 \
+	-addext subjectAltName=IP:127.0.0.1 -keyout /tmp/lists.key -out /tmp/lists.crt 2>/dev/null
+{
+	echo "# a plain domain list"
+	echo "ads.example"
+	echo "track.ads.example"
+	echo "*.wild.example"
+	echo "example.com##.banner"
+	seq 1 150000 | awk '{printf "ad%d.bulk%d.example\n", $1, $1 % 997}'
+} > /tmp/lists/ads.txt
+printf '127.0.0.1 localhost\n::1 ip6-localhost\n0.0.0.0 hosts-ad.example # tracker\n0.0.0.0 a.example b.example\n0.0.0.0 c.example\n' > /tmp/lists/hosts.txt
+python3 - /tmp/lists <<'PY' > /dev/null 2>&1 &
+import functools, http.server, ssl, sys
+h = functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[1])
+s = http.server.ThreadingHTTPServer(("127.0.0.1", 8453), h)
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain("/tmp/lists.crt", "/tmp/lists.key")
+s.socket = ctx.wrap_socket(s.socket, server_side=True)
+s.serve_forever()
+PY
+lpid=$!
+i=0
+until out=$(SSL_CERT_FILE=/tmp/lists.crt mr dns adblock update --no-reload 2>&1); do
+	i=$((i + 1))
+	[ "$i" -lt 20 ] || { echo "FAIL: mr dns adblock update: $out"; exit 1; }
+	sleep 0.2
+done
+kill $lpid
+echo "$out" | grep -q '^150006 domains blocked$' || { echo "FAIL: adblock update: $out (150000 bulk + ads.example + wild.example + 4 from hosts)"; exit 1; }
+grep -q '^server=/cdn.ads.example/#$' /etc/mini-router/state/adblock.conf || { echo "FAIL: allowed name not forwarded"; exit 1; }
+if grep -q 'track.ads.example\|localhost\|example.com' /etc/mini-router/state/adblock.conf; then echo "FAIL: adblock file keeps a subdomain / localhost / an element-hiding rule"; exit 1; fi
+echo "ok: $out"
+t0=$(date +%s%N)
 dnsmasq --conf-file="$CONF" --keep-in-foreground --pid-file= --user=root --group=root --log-facility=/tmp/dnsmasq.log &
 pid=$!
 trap 'kill $pid 2>/dev/null || true' EXIT
@@ -50,6 +87,7 @@ until mr dns query localhost A >/dev/null 2>&1; do
 	[ "$i" -lt 50 ] || fail "dnsmasq never answered"
 	sleep 0.1
 done
+echo "adblock: dnsmasq answered $((($(date +%s%N) - t0) / 1000000)) ms after start; $(grep VmRSS /proc/$pid/status | tr -s ' \t' ' ') with 150006 blocked names"
 check() {
 	out=$(mr dns query "$1" "$2") || fail "query $1 $2"
 	echo "$out" | grep -qF "$3" || fail "$1 $2: want $3, got: $out"
@@ -70,6 +108,15 @@ for n in use-application-dns.net mask.icloud.com mask-h2.icloud.com; do
 	echo "$out" | grep -q 'NXDOMAIN, 0 answers' || fail "$n: want NXDOMAIN, got: $out"
 	echo "ok: $n -> NXDOMAIN"
 done
+for n in ads.example x.track.ads.example ad777.bulk777.example deep.wild.example hosts-ad.example b.example; do
+	out=$(mr dns query "$n" A 2>&1) || true
+	echo "$out" | grep -q 'NXDOMAIN, 0 answers' || fail "blocked $n: want NXDOMAIN, got: $out"
+done
+for n in cdn.ads.example img.cdn.ads.example notlisted.example; do
+	out=$(mr dns query "$n" A 2>&1) || true
+	if echo "$out" | grep -q NXDOMAIN; then fail "$n is not blocked but answers NXDOMAIN"; fi
+done
+echo "ok: adblock: listed names and their subdomains NXDOMAIN; allowed and unlisted names forwarded"
 mr dns stats | grep -q '"cache_size": 8000' || fail "mr dns stats: $(mr dns stats 2>&1)"
 echo "ok: mr dns stats"
 grep -q " $LEASEIP " /tmp/dhcp.leases || fail "test lease not loaded"

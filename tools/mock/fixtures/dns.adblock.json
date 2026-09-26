@@ -1,0 +1,9 @@
+{
+ "enabled": true,
+ "domains": 164218,
+ "updated": 1790248800,
+ "current": true,
+ "last": {"time": 1790248800, "ok": true, "domains": 164218, "changed": true, "lists": [
+  {"url": "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/multi-onlydomains.txt", "domains": 164218, "lines": 164218}
+ ]}
+}

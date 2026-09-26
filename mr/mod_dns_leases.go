@@ -353,7 +353,8 @@ const dnsUsage = `mr dns stats                         dnsmasq cache / upstream 
 mr dns query NAME [TYPE] [SERVER]    ask dnsmasq (or SERVER ip[#port]); TYPE A AAAA CNAME PTR SRV TXT
 mr dns leases                        DHCP leases (JSON)
 mr dns release IP [MAC]              make dnsmasq drop a DHCPv4 lease
-mr dns querylog on [MINUTES]|off|show  temporary query logging (default 10 min, max 60, gone after reboot)`
+mr dns querylog on [MINUTES]|off|show  temporary query logging (default 10 min, max 60, gone after reboot)
+mr dns adblock status | update [--cron] [--no-reload]   ad blocking lists (dns.adblock)`
 
 func dnsCommand(c *Config, args []string) error {
 	if len(args) == 0 {
@@ -365,6 +366,8 @@ func dnsCommand(c *Config, args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "adblock":
+		return adblockCommand(c, args[1:])
 	case "stats":
 		st, err := queryDnsmasqStats(dnsLocal)
 		if err != nil {
