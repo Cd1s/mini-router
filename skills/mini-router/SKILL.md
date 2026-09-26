@@ -58,6 +58,8 @@ and do one change at a time.
 ```yaml
 guard: {never_expose: [ssh, panel, dns], always_bypass: [desktop], offload: hardware, ssh_lan_only: true}
 lan: {bridge: br-lan, ports: [lan1, lan2], ipv4: 192.168.1.1/24, ipv6_ra: true}
+# side router / AP (no wan, no ipv6_ra): mode: bypass | ap, lan.gateway: <main router>,
+#   bypass: {clients: route-only | all | selected, macs: [...]}; route-only: `mr proxy routes` = the main router's static routes
 wan:
   - {name: wan, device: wan, proto: pppoe, username: "…", password_secret: pppoe_password, ipv6: true, ipv6_pd: true}  # mtu: 1500 = RFC 4638 (falls back to 1492)
   - {name: wan2, device: eth2, proto: dhcp}           # proto: pppoe | dhcp | static (ipv4:, gateway:, dns:)

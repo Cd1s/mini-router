@@ -67,6 +67,9 @@ func schemaEnums() map[string][]string {
 		"APIToken.Scope":              e("read", "operate", "apply"),
 
 		"DNSSovereignty.PrivateRelay": e("", "allow", "block"),
+
+		"Config.Mode":    e("", "router", "bypass", "ap"),
+		"Bypass.Clients": e("", "route-only", "all", "selected"),
 	}
 }
 

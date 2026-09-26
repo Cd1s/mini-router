@@ -102,6 +102,9 @@ func renderSysctl(c *Config) string {
 		"net.ipv4.tcp_notsent_lowat":         "131072",
 		"net.ipv4.tcp_slow_start_after_idle": "0",
 	}
+	if c.apMode() { // an AP bridges, it never routes
+		base["net.ipv4.ip_forward"], base["net.ipv6.conf.all.forwarding"], base["net.ipv6.conf.default.forwarding"] = "0", "0", "0"
+	}
 	for k, v := range c.System.Sysctl {
 		base[k] = v
 	}

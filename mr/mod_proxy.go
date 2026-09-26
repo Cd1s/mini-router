@@ -221,6 +221,7 @@ func init() {
 			"proxy.lists":  apiProxyLists,
 			"proxy.parse":  apiProxyParse,
 			"proxy.fetch":  apiProxyFetch,
+			"proxy.routes": apiProxyRoutes,
 		},
 		Commands: map[string]func(c *Config, args []string) error{"proxy": proxyCmd},
 	})

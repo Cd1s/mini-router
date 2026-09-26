@@ -22,6 +22,8 @@ type LAN struct {
 	Ports  []string `yaml:"ports"`
 	IPv4   string   `yaml:"ipv4"` // CIDR, e.g. 192.168.1.6/24
 	IPv6RA bool     `yaml:"ipv6_ra"`
+	// Gateway: the main router, in mode bypass / ap (mode.go)
+	Gateway string `yaml:"gateway,omitempty"`
 }
 
 type WAN struct {
@@ -459,8 +461,8 @@ func netValidate(c *Config, v *Validator) {
 }
 
 func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
-	if len(c.WAN) == 0 {
-		v.Add("wan: at least one WAN required")
+	if len(c.WAN) == 0 && c.routerMode() {
+		v.Add("wan: at least one WAN required (or mode bypass / ap)")
 	}
 	seen := map[string]bool{}
 	ifnames := map[string]string{}

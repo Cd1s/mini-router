@@ -34,6 +34,7 @@ func renderNft(c *Config, exists func(string) bool) string {
 	clk := fwClockFor(c)
 	trustedSet := quoteList(fwZoneIfs(c, "lan"))
 	wanSet := "{ " + quoteList(c.WANIfnames()) + " }"
+	hasWAN := len(c.WAN) > 0 // mode bypass / ap: none (an empty anonymous set is a syntax error)
 	ctState := "ct state vmap { established : accept, related : accept, invalid : drop }"
 	if !on(fw.DropInvalid) {
 		ctState = "ct state vmap { established : accept, related : accept }"
@@ -52,7 +53,7 @@ func renderNft(c *Config, exists func(string) bool) string {
 	w("\tset lan6 {\n\t\ttype ipv6_addr\n\t\tflags interval\n\t\telements = { fe80::/10, ff00::/8 }\n\t}")
 
 	haveFT := false
-	if fw.Offload != "off" {
+	if fw.Offload != "off" && !c.apMode() { // an AP routes nothing
 		var devs []string
 		for _, m := range modules {
 			if m.FlowDevs != nil {
@@ -126,10 +127,12 @@ func renderNft(c *Config, exists func(string) bool) string {
 	}
 	r("meta l4proto igmp accept")
 	hook("input")
-	if fw.LogDrops {
+	if fw.LogDrops && hasWAN {
 		r("iifname %s limit rate 10/minute burst 20 packets log prefix \"mr-drop wan-in: \" level info", wanSet)
 	}
-	r("iifname %s counter drop comment \"wan-in-drop\"", wanSet)
+	if hasWAN {
+		r("iifname %s counter drop comment \"wan-in-drop\"", wanSet)
+	}
 	w("\t}")
 
 	w("\tchain forward {\n\t\ttype filter hook forward priority filter; policy drop;")
@@ -164,8 +167,10 @@ func renderNft(c *Config, exists func(string) bool) string {
 
 	// ---- mangle ----
 	w("\tchain mangle_forward {\n\t\ttype filter hook forward priority mangle; policy accept;")
-	r("oifname %s tcp flags syn / syn,rst tcp option maxseg size set rt mtu", wanSet)
-	r("iifname %s tcp flags syn / syn,rst tcp option maxseg size set rt mtu", wanSet)
+	if hasWAN {
+		r("oifname %s tcp flags syn / syn,rst tcp option maxseg size set rt mtu", wanSet)
+		r("iifname %s tcp flags syn / syn,rst tcp option maxseg size set rt mtu", wanSet)
+	}
 	w("\t}")
 	w("\tchain mark_pre {\n\t\ttype filter hook prerouting priority mangle + 1; policy accept;")
 	hook("mark")
@@ -254,7 +259,13 @@ func fwNft(c *Config, hook string, n *Nft) {
 			}
 		}
 	case "srcnat":
-		n.W("oifname { %s } meta nfproto ipv4 masquerade", quoteList(c.WANIfnames()))
+		if len(c.WAN) > 0 {
+			n.W("oifname { %s } meta nfproto ipv4 masquerade", quoteList(c.WANIfnames()))
+		}
+		if c.bypassNAT() {
+			// mode bypass (all / selected): the main router answers this box, so its replies come back here
+			n.W("iifname %q oifname %q meta nfproto ipv4 masquerade comment \"bypass-nat\"", c.LAN.Bridge, c.LAN.Bridge)
+		}
 		if len(fwd) > 0 {
 			// NAT loopback inside one subnet: the target must answer via the router
 			for _, ln := range c.LANNets() {

@@ -58,6 +58,10 @@ Register exactly one `Module` in `init()`:
   `""`). It runs inside pppd / udhcpc / dhcpcd: return at once, start slow work detached (sys: DDNS sync, the event
   log's WAN / failover events and their notification).
 
+**Mode.** `mode:` (core, `mode.go`): router (default), bypass (旁路由) or ap. Every module reads it through
+`c.routerMode()` / `c.bypassMode()` / `c.apMode()`; `Config.Validate` checks the cross-module rules after the modules
+(no WANs, a `lan.gateway`, …). docs/modules/net.md, "mode".
+
 **Guard and risk.** `guard:` (core, `guard.go`) holds the owner's baselines — `never_expose` (ssh, panel, dns: no
 `firewall.open` or forward to the router reaches their ports from the WAN), `always_bypass` (devices never proxied),
 `offload` (minimum flow offload), `ssh_lan_only`; `Config.Validate` checks it after every module, so no path (web UI,

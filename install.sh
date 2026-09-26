@@ -10,6 +10,7 @@
 #   MR_WAN            WAN interface                      MR_WAN_PROTO   dhcp | pppoe | static
 #   MR_PPPOE_USER / MR_PPPOE_PASS                        MR_WAN_ADDR / MR_WAN_GW / MR_WAN_DNS (static)
 #   MR_LAN_PORTS      LAN interfaces, space separated    MR_LAN_IP      e.g. 192.168.1.1/24
+#   MR_MODE           router (default) | bypass (旁路由, one port is fine) | ap; bypass / ap: MR_GATEWAY = the main router
 #   MR_WIFI           1 = set up WiFi (if a radio exists) MR_WIFI_SSID / MR_WIFI_KEY / MR_COUNTRY
 #   MR_ADMIN_PASS     web UI password (>= 8 chars)       MR_TZ          POSIX TZ, e.g. UTC0, CST-8
 #   MR_VERSION        release tag (default latest)       MR_REPO        GitHub repo (default Cd1s/mini-router)
@@ -143,6 +144,20 @@ fi
 defwan=$(ip route show default 2> /dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
 [ -n "$defwan" ] || defwan=${ifaces%% *}
 echo "网卡 / interfaces: $ifaces"
+ask MR_MODE "工作模式 router 主路由 / bypass 旁路由 / ap 纯 AP / mode" router
+case $MR_MODE in router | bypass | ap) ;; *) die "mode must be router, bypass or ap" ;; esac
+if [ "$MR_MODE" != router ]; then
+	# behind a main router: one port is enough (ap: list every port); the box keeps the address it has
+	# now, so an install over SSH does not lose the connection
+	[ "$MR_MODE" = ap ] && defports=$ifaces || defports=$defwan
+	ask MR_LAN_PORTS "网口（空格分隔）/ ports" "$(echo $defports)"
+	[ -n "$MR_LAN_PORTS" ] || die "at least one interface is needed"
+	for p in $MR_LAN_PORTS; do [ -e "/sys/class/net/$p" ] || die "no interface $p"; done
+	curip=$(ip -4 -o addr show dev "${MR_LAN_PORTS%% *}" 2> /dev/null | awk '{print $4; exit}')
+	curgw=$(ip route show default 2> /dev/null | awk '{print $3; exit}')
+	MR_WAN=- MR_WAN_PROTO=-
+fi
+if [ "$MR_MODE" = router ]; then
 ask MR_WAN "WAN 网口（接光猫/上级路由）/ WAN interface" "$defwan"
 [ -e "/sys/class/net/$MR_WAN" ] || die "no interface $MR_WAN"
 deflan=$(echo "$ifaces" | tr ' ' '\n' | grep -vx "$MR_WAN" | tr '\n' ' ' | sed 's/ $//')
@@ -167,6 +182,10 @@ dhcp) ;;
 *) die "WAN type must be dhcp, pppoe or static" ;;
 esac
 ask MR_LAN_IP "路由器 LAN 地址/掩码 / router LAN address" "192.168.1.1/24"
+else
+ask MR_LAN_IP "本机地址/掩码（固定，不要在主路由的地址池里）/ this box's address" "${curip:-192.168.1.2/24}"
+ask MR_GATEWAY "主路由地址 / the main router" "${curgw:-192.168.1.1}"
+fi
 MR_WIFI=${MR_WIFI:-}
 if [ "$HAVE_WIFI" = 1 ]; then
 	ask MR_WIFI "发现无线网卡，设置 WiFi？/ set up WiFi? (y/n)" y
@@ -204,11 +223,13 @@ umask 077
 	echo "  sysctl: {net.ipv4.tcp_congestion_control: bbr}"
 	echo "  zram: false"
 	echo "  watchdog: $wd"
+	[ "$MR_MODE" = router ] || echo "mode: $MR_MODE    # docs/modules/net.md: 旁路由 / 纯 AP"
 	echo "lan:"
 	echo "  bridge: br-lan"
 	echo "  ports: [$lan_list]"
 	echo "  ipv4: $MR_LAN_IP"
-	echo "  ipv6_ra: true"
+	if [ "$MR_MODE" = router ]; then echo "  ipv6_ra: true"; else echo "  ipv6_ra: false"; echo "  gateway: $MR_GATEWAY"; fi
+	if [ "$MR_MODE" != router ]; then echo "wan: []"; else
 	echo "wan:"
 	echo "  - name: wan"
 	echo "    device: $MR_WAN"
@@ -228,6 +249,7 @@ umask 077
 	esac
 	echo "    ipv6: true"
 	echo "    ipv6_pd: true"
+	fi
 	echo "policy_routes: []"
 	echo "static_routes: []"
 	echo "multicast: {igmp_snooping: false, igmp_proxy: false}"
@@ -295,6 +317,7 @@ if [ "${MR_APPLY:-1}" = 0 ]; then
 	exit 0
 fi
 say "5/5 应用 / applying"
+[ "$MR_MODE" = router ] || echo "mode $MR_MODE · main router $MR_GATEWAY"
 echo "WAN $MR_WAN ($MR_WAN_PROTO) · LAN $MR_LAN_PORTS · $MR_LAN_IP · WiFi $([ "$MR_WIFI" = 1 ] && echo "$MR_WIFI_SSID" || echo off)"
 echo "网络会被重新配置 / the network is reconfigured now."
 if [ "$YES" != 1 ]; then

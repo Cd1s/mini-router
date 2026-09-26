@@ -207,7 +207,30 @@ registerPage("network", "lan", "LAN 与网络", 20, async ()=>{
       ...field("租期", pool(inText(d,"lease",{placeholder:"12h"})))),
       h("button",{class:"btn sm d",onclick:()=>{ if(confirm("删除网络 "+n.name+"？绑定到它的 WiFi 也要改。")){ c.networks.splice(i,1); touch(); draw(); }}},"删除"));
   };
+  // 工作模式（mode, #24 / #26）：主路由 / 旁路由 / 纯 AP
+  const routes = h("div",{class:"mut"});
+  const modeCard = ()=>{
+    const mode = c.mode || "";
+    const bp = c.bypass || {}; const attach = ()=>{ if (!c.bypass) c.bypass = bp; touch(); };
+    const body = [...field("工作模式", inSel(c,"mode",[["","主路由（默认）"],["bypass","旁路由：挂在主路由下，负责 DNS 和代理"],["ap","纯 AP / 交换机：只桥接，不路由"]], ()=>draw()),
+      mode ? "旁路由和纯 AP 没有 WAN、端口转发、多线路、策略路由和附加网络；保存时会列出需要先删掉的项目" : null)];
+    if (mode) body.push(...field("主路由地址", inText(c.lan,"gateway",{placeholder:"192.168.1.1"}), "本机的默认网关和 DNS 上游。本机地址用固定地址，不要落在主路由的地址池里"));
+    if (mode==="bypass") {
+      body.push(...field("客户端", onEdit(inSel(bp,"clients",[["","只管代理（推荐）"],["all","全部设备"],["selected","指定设备"]], ()=>draw()), attach),
+        !bp.clients ? "主路由仍是所有设备的网关和 DHCP；在主路由上把 DNS 指向本机，并添加下面的静态路由。只有被代理的连接经过本机，其余流量和主路由的硬件加速不受影响" :
+        bp.clients==="all" ? "本机发 DHCP（先关掉主路由的 DHCP），所有设备以本机为网关和 DNS。本机挂了全家断网" :
+        "本机发 DHCP（先关掉主路由的 DHCP）；只有下面这些设备以本机为网关和 DNS，其余设备仍走主路由"));
+      if (bp.clients==="selected") body.push(...field("设备 MAC", onEdit(inList(bp,"macs",{placeholder:"aa:bb:cc:dd:ee:ff, …"}), attach)));
+      if (bp.clients) body.push(...field("NAT", h("label",{class:"sw"}, h("input",{type:"checkbox", checked: bp.nat!==false, onchange:e=>{ bp.nat = e.target.checked; attach(); }}), h("span")),
+        "转发的流量伪装成本机地址（默认开）。关掉后主路由会把回包直接发给设备，连接会被丢弃"));
+      if (!bp.clients) { body.push(...field("主路由静态路由", routes, "代理网段（fake-ip 和规则里的 IP 段）都指向本机。应用后生成；命令行：mr proxy routes"));
+        api("proxy.routes").then(j=>routes.replaceChildren(...(j.routes.length ? j.routes.map(r=>h("div",{class:"mono"},r)) : [h("span",{},"（保存并应用、开启代理后显示）")]))).catch(e=>routes.textContent=e.message); }
+    }
+    return card("工作模式", form(...body.filter(Boolean)));
+  };
+  const onEdit = (el, fn)=>{ el.addEventListener("input", fn); el.addEventListener("change", fn); return el; };
   const draw = ()=>box.replaceChildren(
+    modeCard(),
     card("LAN（主网络）", form(
       ...field("网桥", inText(c.lan,"bridge")),
       ...field("IPv4 地址 / 掩码", inText(c.lan,"ipv4",{placeholder:"192.168.1.1/24"}), "修改后如果浏览器失去连接，超时未确认会自动回滚"),

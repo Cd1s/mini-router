@@ -132,6 +132,13 @@ func dnsDefaults(c *Config) {
 		}
 	}
 	raDefaults(&c.DHCP.IPv6)
+	if c.DNS.Upstream == "" && !c.routerMode() && c.LAN.Gateway != "" {
+		// mode bypass / ap: no WAN hands out DNS servers; the main router answers
+		c.DNS.Upstream = "manual"
+		if len(c.DNS.Servers) == 0 {
+			c.DNS.Servers = []string{c.LAN.Gateway}
+		}
+	}
 	if c.DNS.Upstream == "" {
 		c.DNS.Upstream = "isp"
 	}
@@ -272,9 +279,14 @@ func renderDnsmasq(c *Config) string {
 		b.WriteString(l + "\n")
 	}
 	w("dhcp-leasefile=%s", LeaseFile)
-	// one tagged pool per network; router/DNS options follow the tag so each network gets its own gateway
+	// one tagged pool per network; router/DNS options follow the tag so each network gets its own gateway.
+	// Mode ap and bypass route-only hand out nothing (the main router does).
 	ra := false
-	for _, n := range dhcpNets(c) {
+	nets := dhcpNets(c)
+	if !c.routerMode() && !c.bypassServesDHCP() {
+		nets = nil
+	}
+	for _, n := range nets {
 		ip, nn, err := net.ParseCIDR(n.cidr)
 		if err != nil {
 			continue
@@ -285,7 +297,14 @@ func renderDnsmasq(c *Config) string {
 			if len(n.opts.DNS) > 0 {
 				dns = strings.Join(n.opts.DNS, ",")
 			}
-			w("dhcp-option=tag:%s,option:router,%s\ndhcp-option=tag:%s,option:dns-server,%s", n.tag, ip, n.tag, dns)
+			if c.bypassClients() == "selected" && c.bypassMode() {
+				// everyone gets the main router; the listed devices (tag bypass: a host's own tag beats the
+				// range's) get this box as gateway and DNS
+				w("dhcp-option=tag:%s,option:router,%s\ndhcp-option=tag:%s,option:dns-server,%s", n.tag, c.LAN.Gateway, n.tag, c.LAN.Gateway)
+				w("dhcp-option=tag:bypass,option:router,%s\ndhcp-option=tag:bypass,option:dns-server,%s", ip, dns)
+			} else {
+				w("dhcp-option=tag:%s,option:router,%s\ndhcp-option=tag:%s,option:dns-server,%s", n.tag, ip, n.tag, dns)
+			}
 			if len(n.opts.NTP) > 0 {
 				w("dhcp-option=tag:%s,option:ntp-server,%s", n.tag, strings.Join(n.opts.NTP, ","))
 			}
@@ -301,8 +320,18 @@ func renderDnsmasq(c *Config) string {
 			renderRA(&b, n.bridge, n.ipv6)
 		}
 	}
+	bypassTag := map[string]bool{} // mode bypass, clients selected
+	if c.bypassMode() && c.bypassClients() == "selected" {
+		for _, m := range c.Bypass.MACs {
+			bypassTag[strings.ToLower(m)] = true
+		}
+	}
 	for _, h := range c.DHCP.Hosts {
 		line := "dhcp-host=" + strings.ToLower(h.MAC) + "," + h.IP
+		if bypassTag[strings.ToLower(h.MAC)] {
+			line = "dhcp-host=" + strings.ToLower(h.MAC) + ",set:bypass," + h.IP
+			delete(bypassTag, strings.ToLower(h.MAC))
+		}
 		if h.Name != "" {
 			line += "," + h.Name
 		}
@@ -310,6 +339,11 @@ func renderDnsmasq(c *Config) string {
 			line += "," + l
 		}
 		b.WriteString(line + "\n")
+	}
+	for _, m := range c.Bypass.MACs { // selected devices without a static lease (config order)
+		if bypassTag[strings.ToLower(m)] {
+			w("dhcp-host=%s,set:bypass", strings.ToLower(m))
+		}
 	}
 	if ra {
 		b.WriteString("enable-ra\n")
