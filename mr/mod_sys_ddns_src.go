@@ -16,7 +16,8 @@ package main
 //	                       fixed address); IPv6 its global address in a LAN prefix from the neighbour
 //	                       table — inside the delegated prefix of the WAN a policy route pins the device to
 //	                       (policy_routes mac / device without dst / domains, first match) when it has one
-//	                       there (Cd1s/mini-router#108); among those the EUI-64 one if there is one, else
+//	                       there (Cd1s/mini-router#108; with none there, the one published before while it is
+//	                       in that prefix); among those the EUI-64 one if there is one, else
 //	                       the one published before while it is still there, else the lowest (privacy
 //	                       addresses change: give such a device a stable address, or use ::IID).
 //	a fixed address      — published as is (IPv4: public only).
@@ -320,22 +321,28 @@ func (x *ddnsSrc) byMAC(mac string, v6 bool, prev *ddnsState) (string, string) {
 			}
 		}
 	}
-	if len(cands) == 0 {
-		return "", mac + " has no global IPv6 address in the neighbour table (yet)"
-	}
 	if pin := ddnsPinnedPrefixes(x.c, mac); len(pin) > 0 {
-		var in []net.IP
+		in := func(ip net.IP) bool {
+			return slices.ContainsFunc(pin, func(p *net.IPNet) bool { return p.Contains(ip) })
+		}
+		var pinned []net.IP
 		for _, ip := range cands {
-			for _, p := range pin {
-				if p.Contains(ip) {
-					in = append(in, ip)
-					break
-				}
+			if in(ip) {
+				pinned = append(pinned, ip)
 			}
 		}
-		if len(in) > 0 {
-			cands = in
+		if len(pinned) > 0 {
+			cands = pinned
+		} else if prev != nil {
+			// a pinned device that talks through another prefix (nat6) keeps its address in the pinned
+			// one, which leaves the neighbour table: the published one stays while its prefix is on the LAN
+			if ip := net.ParseIP(prev.Published); ip != nil && in(ip) && slices.ContainsFunc(pfx, func(p *net.IPNet) bool { return p.Contains(ip) }) {
+				return ip.String(), ""
+			}
 		}
+	}
+	if len(cands) == 0 {
+		return "", mac + " has no global IPv6 address in the neighbour table (yet)"
 	}
 	hw, _ := net.ParseMAC(mac)
 	eui := []byte{hw[0] ^ 2, hw[1], hw[2], 0xff, 0xfe, hw[3], hw[4], hw[5]}
