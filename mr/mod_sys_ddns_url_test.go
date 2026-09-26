@@ -475,6 +475,19 @@ func TestDDNSSourceMAC(t *testing.T) {
 	if ip, _ := (&ddnsSrc{c: c}).local(rec, "AAAA", nil); ip != "2001:db8:2:2:aaaa::9" {
 		t.Errorf("pinned WAN's prefix first: %q", ip)
 	}
+	// the device talks only through the other prefix now (nat6): the published pinned address stays
+	// while its prefix is on the LAN; one outside the pinned prefix does not
+	nb = []monNeigh{n("2001:db8:1:2:1111::9", mac)}
+	if ip, _ := (&ddnsSrc{c: c}).local(rec, "AAAA", &ddnsState{Published: "2001:db8:2:2::c001"}); ip != "2001:db8:2:2::c001" {
+		t.Errorf("pinned published one kept: %q", ip)
+	}
+	if ip, _ := (&ddnsSrc{c: c}).local(rec, "AAAA", &ddnsState{Published: "2001:db8:2:3::c001"}); ip != "2001:db8:1:2:1111::9" {
+		t.Errorf("published one off the LAN: %q", ip)
+	}
+	if ip, _ := (&ddnsSrc{c: c}).local(rec, "AAAA", nil); ip != "2001:db8:1:2:1111::9" {
+		t.Errorf("nothing pinned, nothing published: %q", ip)
+	}
+	nb = []monNeigh{n("2001:db8:1:2:0:ff:fe00:10", mac), n("2001:db8:2:2:bbbb::9", mac), n("2001:db8:2:2:aaaa::9", mac)}
 	c.Policy[len(c.Policy)-1].Dst = "2001:db8:99::/48" // not every destination: no pin
 	if ip, _ := (&ddnsSrc{c: c}).local(rec, "AAAA", nil); ip != "2001:db8:1:2:0:ff:fe00:10" {
 		t.Errorf("dst policy does not pin: %q", ip)
