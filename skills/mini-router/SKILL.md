@@ -59,7 +59,7 @@ and do one change at a time.
 guard: {never_expose: [ssh, panel, dns], always_bypass: [desktop], offload: hardware, ssh_lan_only: true}
 lan: {bridge: br-lan, ports: [lan1, lan2], ipv4: 192.168.1.1/24, ipv6_ra: true}
 wan:
-  - {name: wan, device: wan, proto: pppoe, username: "…", password_secret: pppoe_password, ipv6: true, ipv6_pd: true}
+  - {name: wan, device: wan, proto: pppoe, username: "…", password_secret: pppoe_password, ipv6: true, ipv6_pd: true}  # mtu: 1500 = RFC 4638 (falls back to 1492)
   - {name: wan2, device: eth2, proto: dhcp}           # proto: pppoe | dhcp | static (ipv4:, gateway:, dns:)
 policy_routes:                                        # pick the WAN for NEW connections (selectors are ANDed)
   - {name: nas, mac: "aa:bb:cc:dd:ee:02", via: wan2}  # mac / src / dst / domains

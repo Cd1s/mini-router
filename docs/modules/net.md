@@ -94,7 +94,7 @@ wan:
     proto: pppoe              # pppoe | dhcp | static
     username: "user@example-isp"
     password_secret: pppoe_password   # secrets.yaml 里的键名
-    mtu: 1492                 # pppoe 默认 1492；dhcp/static 0 = 不改
+    mtu: 1492                 # pppoe 默认 1492，可设 1500（RFC 4638，见下）；dhcp/static 0 = 不改
     metric: 0                 # 默认路由跃点：越小越优先（主备顺序）；每条 WAN 必须不同（同 metric 的默认路由会互相覆盖）
     peerdns: true             # 用运营商下发的 DNS（pppoe / dhcp）
     ipv6: true                # dhcpcd：RA / DHCPv6
@@ -119,6 +119,18 @@ wan:
 既不能同时是 LAN 口，也不能做任何网络的带标签端口（trunk），否则 LAN 侧网络会被桥到运营商那一侧。
 DHCP / 静态 WAN 被删除、改名或换了接口（VLAN / 口）时，应用会删掉它留在旧接口上的地址和默认路由
 （按 `/run/mini-router/wan/<wan>.json` 里记录的接口）；改地址时新地址和旧地址在同一网段也不会一起丢（`promote_secondaries`）。
+
+**PPPoE 1500 MTU（RFC 4638）**：`mtu` 大于 1492 时，network.sh 把 PPPoE 所在的物理口设成 `mtu + 8`（1500 → 1508，
+VLAN 的父口先设，子接口不能超过它；DSA 端口的 conduit 由内核自动加标签开销），pppd 2.5 的 pppoe 插件就会在发现阶段带上
+`PPP-Max-Payload`；运营商不回这个标签时 pppd 按 RFC 4638 自己退回 1492，不会断网。同一个物理口上还有不打 VLAN 的
+DHCP / 静态 WAN 时拒绝（它的 IP MTU 会跟着变成 1508）：把它放到 VLAN 上，或者 PPPoE 用 1492。apply 之后若网卡拒绝了这个 MTU，
+验证失败并回滚。`mr wan status` 的 `mtu` 是会话实际的 MTU（1500 = 运营商同意了）。AX6000 的 `wan` 口最大 MTU 15338，1508 没问题。
+
+**IPv6 前缀变化（RFC 9096）**：同一次开机内，dhcpcd 撤掉旧的委派前缀时，dnsmasq 会把旧前缀以首选寿命 0 继续通告到有效期结束，
+客户端立刻改用新前缀。重启（断电、升级）之后 dnsmasq 不知道以前通告过什么：每次 dhcpcd 事件都把 RA 网桥上的前缀记到
+`/etc/mini-router/state/lan6-prefixes.json`（变化时才写闪存），开机后第一次事件发现记录里的前缀没回来，就把它以首选寿命 10 秒、
+有效寿命 = `dhcp.ipv6.lease`（最多 2 小时）重新挂回网桥：dnsmasq 看到它过期，就把它当旧前缀以首选寿命 0 通告，客户端停止使用。
+运营商给回同一个前缀时什么也不做。
 
 ### multiwan
 

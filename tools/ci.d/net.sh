@@ -5,6 +5,10 @@
 #  2. functional test in two network namespaces with the real tools: busybox udhcpc + the mr hook
 #     against a dnsmasq DHCP server, a static WAN via `mr routes`, and the busybox sh health checker
 #     taking a WAN down and up again (routes, rules, balance map in the loaded nft ruleset, DNS).
+#  4. PPPoE mtu 1500 (RFC 4638): the rendered link commands give the PPPoE port 1508 and a DHCP VLAN on it
+#     1500 in the real kernel; IPv6 renumbering (RFC 9096): after a "reboot" (another boot id in the
+#     record) the real `mr hook dhcpcd` puts a prefix that did not come back on the bridge, and a real
+#     dnsmasq advertises it to a client with preferred lifetime 0 while the current one stays preferred.
 #  3. policy route by domain, end to end in three network namespaces: the rendered nftset= lines in a
 #     real dnsmasq (unprivileged, like the router's) fill the rendered nft sets from an upstream's answers,
 #     a LAN client's connection to such an address leaves through the policy's WAN (others through the
@@ -48,9 +52,11 @@ rm -rf "$T" && mkdir -p "$T/bin"
 mkdir -p /run/mini-router && mount -t tmpfs tmpfs /run/mini-router
 S=mrnet$$s C=mrnet$$c
 DS=mrdom$$s DC=mrdom$$c DL=mrdom$$l # policy route by domain (3.)
+RR=mrra$$r RC=mrra$$c                # PPPoE MTU / RFC 9096 (4.)
 cleanup() {
 	[ -f "$T/dnsmasq.pid" ] && kill "$(cat "$T/dnsmasq.pid")" 2> /dev/null
-	for n in "$S" "$C" "$DS" "$DC" "$DL"; do
+	[ -f "$T/ra-dnsmasq.pid" ] && kill "$(cat "$T/ra-dnsmasq.pid")" 2> /dev/null
+	for n in "$S" "$C" "$DS" "$DC" "$DL" "$RR" "$RC"; do
 		for p in $(ip netns pids "$n" 2> /dev/null); do kill "$p" 2> /dev/null; done
 		ip netns del "$n" 2> /dev/null
 	done
@@ -331,3 +337,92 @@ inD "$MRH" -c "$D/router-b.yaml" -s "$T/secrets.yaml" fw
 hasnt "changed list starts empty" "$(inD nft list set inet mr pr_0_4)" "192.0.2.80"
 [ "$(seen 192.0.2.80)" = 10.97.0.2 ] || fail "changed list: 192.0.2.80 still left via: $(seen 192.0.2.80)"
 echo "net: domain policy test ok"
+
+step "PPPoE mtu 1500 (RFC 4638): link MTUs in the real kernel"
+M4=$T/mtu4
+mkdir -p "$M4"
+cat > "$M4/router.yaml" << 'EOF'
+system: {hostname: mtutest}
+lan: {bridge: br-lan, ports: [lan2], ipv4: 192.168.1.6/24, ipv6_ra: true}
+wan:
+  - {name: wan, device: wan, proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, mtu: 1500, metric: 10}
+  - {name: tv, device: wan, vlan: 20, proto: dhcp, metric: 20}
+firewall: {offload: software}
+dhcp: {start: 100, end: 200, lease: 12h, domain: lan, ipv6: {mode: slaac, lease: 30m}}
+EOF
+echo 'pppoe_password: "x"' > "$M4/secrets.yaml"
+"$MRH" -c "$M4/router.yaml" -s "$M4/secrets.yaml" render "$M4/r" > /dev/null
+grep -q '^mtu 1500$' "$M4/r/etc/ppp/peers/wan" || fail "peer file does not ask for mtu 1500"
+ip netns add "$RR"
+ip -n "$RR" link add wan type dummy
+ip -n "$RR" link set wan up
+grep -E '^ip link set dev [a-z0-9.]+ mtu [0-9]+$|type vlan id' "$M4/r/etc/mini-router/gen/network.sh" > "$M4/links.sh"
+ip netns exec "$RR" sh -e "$M4/links.sh"
+[ "$(ip netns exec "$RR" cat /sys/class/net/wan/mtu)" = 1508 ] || fail "wan MTU $(ip netns exec "$RR" cat /sys/class/net/wan/mtu), want 1508"
+[ "$(ip netns exec "$RR" cat /sys/class/net/wan.20/mtu)" = 1500 ] || fail "wan.20 MTU $(ip netns exec "$RR" cat /sys/class/net/wan.20/mtu), want 1500"
+echo "net: PPPoE port 1508, DHCP VLAN 1500"
+
+step "IPv6 renumbering after a reboot (RFC 9096): real mr hook + real dnsmasq + a client's RA"
+ip netns add "$RC"
+for n in "$RR" "$RC"; do # link-local addresses usable at once (no DAD wait)
+	ip netns exec "$n" sysctl -qw net.ipv6.conf.all.accept_dad=0 net.ipv6.conf.default.accept_dad=0
+done
+ip -n "$RR" link add br-lan type bridge
+ip -n "$RR" link add vr type veth peer name vc netns "$RC"
+ip -n "$RR" link set vr master br-lan
+for l in br-lan vr; do ip -n "$RR" link set "$l" up; done
+ip -n "$RC" link set vc up
+ip -n "$RR" -6 addr add 2001:db8:2::1/64 dev br-lan noprefixroute nodad
+mkdir -p /etc/mini-router/state
+printf '{"boot":"an-earlier-boot","addrs":{"br-lan":["2001:db8:1::1/64","2001:db8:2::1/64"]}}' > /etc/mini-router/state/lan6-prefixes.json
+ip netns exec "$RR" env interface=br-lan reason=DELEGATED6 "$MRH" -c "$M4/router.yaml" -s "$M4/secrets.yaml" hook dhcpcd || true
+ip -n "$RR" -6 addr show dev br-lan | grep -q '2001:db8:1::1/64' || fail "the hook did not put the stale prefix back: $(ip -n "$RR" -6 addr show dev br-lan)"
+if grep -q 'an-earlier-boot' /etc/mini-router/state/lan6-prefixes.json; then
+	fail "record not rewritten for this boot: $(cat /etc/mini-router/state/lan6-prefixes.json)"
+fi
+cat > "$T/ra-dnsmasq.conf" << EOF
+port=0
+interface=br-lan
+enable-ra
+dhcp-range=::,constructor:br-lan,ra-only,30m
+ra-param=br-lan,4,1800
+pid-file=$T/ra-dnsmasq.pid
+EOF
+ip netns exec "$RR" dnsmasq -u root -C "$T/ra-dnsmasq.conf" --log-facility="$T/ra-dnsmasq.log"
+cat > "$T/ra.py" << 'PY'
+import socket, struct, sys, time
+s = socket.socket(socket.AF_INET6, socket.SOCK_RAW, socket.IPPROTO_ICMPV6)
+s.settimeout(1)
+s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_MULTICAST_HOPS, 255)
+idx = socket.if_nametoindex("vc")
+seen, deadline = {}, time.time() + 40
+while time.time() < deadline:
+    try:
+        s.sendto(struct.pack("!BBHI", 133, 0, 0, 0), ("ff02::2", 0, 0, idx))
+    except OSError:
+        time.sleep(0.5)  # the link-local address is not there yet
+        continue
+    end = time.time() + 2
+    while time.time() < end:
+        try:
+            b = s.recv(2048)
+        except socket.timeout:
+            continue
+        if not b or b[0] != 134:
+            continue
+        i = 16
+        while i + 2 <= len(b) and b[i + 1]:
+            t, l = b[i], b[i + 1] * 8
+            if t == 3 and l >= 32:
+                valid, pref = struct.unpack("!II", b[i + 4:i + 12])
+                seen[socket.inet_ntop(socket.AF_INET6, b[i + 16:i + 32])] = (valid, pref)
+            i += l
+    old, cur = seen.get("2001:db8:1::"), seen.get("2001:db8:2::")
+    if old and cur and old[1] == 0 and old[0] > 0 and cur[1] > 0:
+        print("old prefix valid %d preferred %d; current preferred %d" % (old[0], old[1], cur[1]))
+        sys.exit(0)
+print("RA prefixes seen: %r" % seen)
+sys.exit(1)
+PY
+ip netns exec "$RC" python3 "$T/ra.py" || fail "the client never saw the stale prefix deprecated (dnsmasq log: $(tail -5 "$T/ra-dnsmasq.log"))"
+echo "net: renumbering test ok"
