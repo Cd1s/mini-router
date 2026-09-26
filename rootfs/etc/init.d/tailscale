@@ -5,7 +5,7 @@ command=/usr/sbin/tailscaled
 # TS_PORT: services.tailscale.port, from /etc/conf.d/tailscale (rendered by mr; the firewall opens
 # the same UDP port on the WANs)
 command_args="--port ${TS_PORT:-41641} --state /etc/tailscale/tailscaled.state"
-supervise_daemon_args="--env TS_DEBUG_FIREWALL_MODE=nftables --env GOGC=50 --env GOMEMLIMIT=24MiB"
+supervise_daemon_args="--env TS_DEBUG_FIREWALL_MODE=nftables --env GOGC=50 --env GOMEMLIMIT=48MiB"
 respawn_delay=5
 # a crash loop stops after 10 respawns in 10 minutes: mr doctor reports it, mr doctor --heal restarts it
 respawn_max=10

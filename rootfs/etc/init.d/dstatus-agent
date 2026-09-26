@@ -3,7 +3,9 @@ description="DStatus probe agent"
 supervisor=supervise-daemon
 command=/usr/bin/dstatus-agent
 command_args="-c /etc/dstatus-agent/config.yaml"
-supervise_daemon_args="--env GOGC=50 --env GOMEMLIMIT=8MiB"
+# GOMEMLIMIT is a soft heap limit: below the live heap (~10 MB) the GC runs nonstop — 8MiB cost 81% of a
+# core on the AX6000, 32MiB 7% at the same RSS
+supervise_daemon_args="--env GOGC=50 --env GOMEMLIMIT=32MiB"
 respawn_delay=10
 # a crash loop stops after 10 respawns in 10 minutes: mr doctor reports it, mr doctor --heal restarts it
 respawn_max=10

@@ -8,7 +8,9 @@ supervisor=supervise-daemon
 command=/usr/bin/sing-box
 # --disable-color: sing-box colours its log even when stdout is not a terminal (escape codes in syslog)
 command_args="run --disable-color -c /run/mr-proxy/config.json -c /run/mr-proxy/api.json -D /run/mr-proxy"
-supervise_daemon_args="--env GOGC=50 --env GOMEMLIMIT=48MiB"
+# soft heap limit above the working set under load (~77 MB RSS with traffic on every protocol): at or below it
+# the GC runs nonstop and costs CPU instead of saving memory
+supervise_daemon_args="--env GOGC=50 --env GOMEMLIMIT=96MiB"
 output_logger="logger -t sing-box -p daemon.info"
 error_logger="logger -t sing-box -p daemon.notice"
 respawn_delay=2

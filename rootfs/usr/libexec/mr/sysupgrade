@@ -398,6 +398,12 @@ kexec_installer() {
 	rm -f "$WORK/Image" "$WORK/initrd.cpio"
 	logger -t sysupgrade "installing mini-router $version via kexec" 2>/dev/null
 	echo "$(date '+%Y-%m-%d %H:%M:%S') sysupgrade: installing mini-router $version (kexec)" >> /etc/router-changes.log
+	# no OpenRC shutdown: end the PPPoE sessions (LCP terminate + PADT — else the ISP takes the new
+	# system's first session for a duplicate and hangs it up) and mark a planned stop for the boot event
+	for s in /etc/init.d/mr-pppoe.*; do
+		[ -e "$s" ] && rc-service --ifstarted "${s##*/}" stop > /dev/null 2>&1
+	done
+	/usr/sbin/mr event shutdown > /dev/null 2>&1
 	# mt76 keeps DMA-writing RX buffers after kexec into memory the new kernel (installer) reuses:
 	# stop WiFi and unload the driver first (the installer never loads it; the reboot brings it back)
 	rc-service --ifstarted mr-hostapd stop > /dev/null 2>&1

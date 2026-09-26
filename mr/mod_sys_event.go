@@ -727,12 +727,17 @@ func eventBoot(c *Config) error {
 	return nil
 }
 
-// eventShutdown marks a clean stop (mr-bootlog's stop while OpenRC goes down), with the reason the
-// change log gives for a reboot of the last 15 minutes (schedule, web UI).
+// eventShutdown marks a clean stop (mr-bootlog's stop while OpenRC goes down, and sysupgrade before its
+// kexec), with the reason the change log gives for a reboot or sysupgrade of the last 15 minutes.
 func eventShutdown() error {
 	m := shutdownMark{Time: eventNow().Unix(), BootID: eventBootID()}
-	if r := changeLogRecent(15 * time.Minute); len(r) > 0 && strings.Contains(r[0], "reboot") {
-		m.Why = eventClean(r[0], 80)
+	if r := changeLogRecent(15 * time.Minute); len(r) > 0 {
+		switch {
+		case strings.Contains(r[0], "sysupgrade"): // the kexec skips OpenRC: sysupgrade marks its stop itself
+			m.Why = "sysupgrade"
+		case strings.Contains(r[0], "reboot"):
+			m.Why = eventClean(r[0], 80)
+		}
 	}
 	b, _ := json.Marshal(m)
 	return writeAtomic(eventShutdownFile, b, 0600)
