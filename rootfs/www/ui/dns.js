@@ -70,7 +70,7 @@ registerPage("status", "clients", "终端设备", 20, async ()=>{
     const wifiRows = (cl.stations||[]).filter(x=>{ const l=byMac[x.mac.toLowerCase()]||{}; return match(l.name,l.ip,x.mac,x.ifname); }).map(x=>{
       const l=byMac[x.mac.toLowerCase()]||{};
       return [l.name&&l.name!=="*"?l.name:"-", mono(l.ip||"-"), mono(x.mac), x.ifname, x.signal, mono(x.tx_rate), mono(x.rx_rate), fmtDur(x.connected)]; });
-    info.textContent = (ls.leases||[]).length+" 个 DHCP 租约 · "+(cl.stations||[]).length+" 个无线终端";
+    info.textContent = tr((ls.leases||[]).length+" 个 DHCP 租约 · "+(cl.stations||[]).length+" 个无线终端");
     // replaceChildren() would render a null argument as the text "null": drop the optional card instead
     body.replaceChildren(...[
       card("DHCP 租约（"+leaseRows.length+"）", roTable(["名称","IPv4","MAC","网络","剩余","操作"], leaseRows), null, true),

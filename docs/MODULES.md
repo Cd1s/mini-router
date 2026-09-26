@@ -141,6 +141,22 @@ submitted config, the canonical encoding is written instead (comments lost, logg
 Style: professional router UI (think RouterOS/LuCI density), Chinese labels, technical terms as-is.
 Pages must work at 360 px width.
 
+**English UI (#31).** The source language stays Chinese; `rootfs/www/ui/lang/en.json` maps every UI string to
+English (`{"中文原文": "English"}`). It is fetched only in English mode (browser language `en*`, or the
+English / 中文 link in the nav's 账户 group, stored per browser) and then `h()` (text children and the
+`placeholder` / `title` / `aria-label` attributes), `toast`, `modal`, `confirm` and `tr()` translate: exact match
+first, else the literal fragments of a concatenation (`"已释放 " + ip`) are replaced; a string that still has CJK
+after that (a Chinese device name) is shown unchanged. So write UI text as plain literals (concatenating values
+is fine; the literal parts are the keys) and:
+- text that bypasses `h()` needs `tr()`: `el.textContent = tr("扫描中…")`, a string handed to
+  `append` / `replaceChildren`; a `<textarea>`'s content is never translated;
+- every new or changed literal needs its entry: `python3 tools/i18n.py missing` prints the untranslated ones
+  as a JSON skeleton (fill it in, add it to en.json, `python3 tools/i18n.py fmt` sorts it into source order and
+  drops unused keys). CI runs `python3 tools/i18n.py check` (missing keys, CJK or lost edge spaces in a
+  translation, un-`tr()`ed `textContent`). Keep leading / trailing spaces of a fragment; `：` → `: `.
+  Backend strings the UI shows (`mr/risk.go`, service labels) are keys too.
+- Try it with the mock: `localStorage["mr.lang"]="en"` in the browser console, reload.
+
 Test locally without a router: `python3 tools/mock/mockapi.py 8088` → http://127.0.0.1:8088/
 (fixtures in `tools/mock/fixtures/`; add your own for new API actions).
 

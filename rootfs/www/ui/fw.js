@@ -73,9 +73,9 @@ function schedEdit(o, key){
 }
 function schedText(sch){
   if (!sch || !sch.length) return "";
-  const dn = Object.fromEntries(DAYS);
+  const dn = {mon:"周一", tue:"周二", wed:"周三", thu:"周四", fri:"周五", sat:"周六", sun:"周日"};
   return sch.map(w=>{
-    const d = (w.days||[]).length===7 || !(w.days||[]).length ? "每天" : "周"+w.days.map(x=>dn[x]).join("");
+    const d = (w.days||[]).length===7 || !(w.days||[]).length ? "每天" : w.days.map(x=>dn[x]).join("、");
     return d+" "+(w.time||"全天");
   }).join("；");
 }

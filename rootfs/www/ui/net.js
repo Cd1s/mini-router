@@ -57,7 +57,7 @@ registerPage("status", "interfaces", "接口状态", 30, async ()=>{
         r ? fmtRate(r.rx)+" / "+fmtRate(r.tx) : "…", fmtBytes(p.rx_bytes)+" / "+fmtBytes(p.tx_bytes),
         h("span",{class:(p.rx_errors+p.tx_errors)?"err":""}, (p.rx_errors+p.tx_errors)+" / "+(p.rx_dropped+p.tx_dropped))];
     })));
-    when.textContent = "每 3 秒刷新";
+    when.textContent = tr("每 3 秒刷新");
   };
   await draw();
   S.timer = setInterval(()=>draw().catch(()=>{}), 3000);
@@ -150,7 +150,7 @@ registerPage("network", "multiwan", "多线路", 15, async ()=>{
       w.rtt_ms!=null ? w.rtt_ms.toFixed(1)+" ms" : "-", w.fails||0,
       w.route_metric!=null ? h("span",{class:w.route_metric>=10000?"err":""}, String(w.route_metric)) : "-",
       mono(w.table+" / "+w.mark), r.mode==="balance" ? String(w.weight??0) : "-"])));
-    when.textContent = r.checked ? "上次检测 "+Math.max(0,Math.round(now-r.checked))+" 秒前" : (r.mode ? "检测未运行" : "未启用健康检测");
+    when.textContent = tr(r.checked ? "上次检测 "+Math.max(0,Math.round(now-r.checked))+" 秒前" : (r.mode ? "检测未运行" : "未启用健康检测"));
   };
   try { await draw(); } catch(e){ stat.replaceChildren(h("div",{class:"err"}, e.message)); }
   S.timer = setInterval(()=>draw().catch(()=>{}), 5000);

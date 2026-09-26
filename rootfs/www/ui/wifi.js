@@ -70,7 +70,7 @@ function tuneCard(w){
   const pairs = h("div",{class:"hint"});
   const showPairs = ()=>{
     const p = steerPairs(w);
-    pairs.replaceChildren(p.length ? "可引导："+p.map(x=>x.ssid+"（"+x.from+" → "+x.to+"）").join("，")
+    pairs.replaceChildren(p.length ? tr("可引导："+p.map(x=>x.ssid+"（"+x.from+" → "+x.to+"）").join("，"))
       : h("span",{style:"color:var(--warn)"}, "没有两个频段同名、同加密、同密码、同网络的 SSID：开启后校验会失败。把 2.4G 和 5G 的 SSID 改成同一个名字即可。"));
   };
   showPairs();
@@ -235,7 +235,7 @@ registerPage("wireless", "wifi-channels", "信道分析", 30, async ()=>{
       h("tbody",{}, rows.length ? rows : h("tr",{}, h("td",{colspan:6,class:"mut"}, r.error ? "读取失败："+r.error : "（暂无数据；扫描一次后会有更多信道）")))));
     const btn = h("button",{class:"btn sm p", disabled:!!scanning[r.phy], onclick:async()=>{
       if (!confirm("扫描时 "+bandName(r.band)+" 会短暂离开当前信道，已连接的终端会卡顿几秒。继续？")) return;
-      scanning[r.phy] = true; btn.disabled = true; btn.textContent = "扫描中…";
+      scanning[r.phy] = true; btn.disabled = true; btn.textContent = tr("扫描中…");
       try { scans[r.phy] = await api("wifi.scan",{phy:r.phy}); } catch(e){ toast("扫描失败："+e.message, 5000); }
       scanning[r.phy] = false; draw().catch(()=>{}); }}, scanning[r.phy] ? "扫描中…" : "扫描周边网络");
     const kv = h("dl",{class:"kv",style:"padding:12px 16px;margin:0"},

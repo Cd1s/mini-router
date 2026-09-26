@@ -159,7 +159,7 @@ registerPage("network", "devices", "设备", 30, async ()=>{
     });
     const pRows = pz.map(p=>[h("b",{}, p.name||"-"), mono(p.mac), p.ref||"-", pauseLeft(p),
       h("button",{class:"btn sm",onclick:()=>unpause(p.mac, p.name||p.mac)},"恢复")]);
-    info.textContent = devs().length+" 台设备 · "+Object.keys(groups()).length+" 个分组"+(pz.length ? " · "+pz.length+" 个 MAC 暂停中" : "");
+    info.textContent = tr(devs().length+" 台设备 · "+Object.keys(groups()).length+" 个分组"+(pz.length ? " · "+pz.length+" 个 MAC 暂停中" : ""));
     body.replaceChildren(...[
       card("设备清单（"+rows.length+"）", h("div",{class:"dev-t"}, roTable(["名称","MAC","IPv4","状态","引用","操作"], rows)), h("span",{class:"row"}, pick,
         h("button",{class:"btn sm p",onclick:()=>editDevice({name:"",macs:[]}, d=>{ attach(); S.cfg.devices.push(d); render(); })},"+ 添加")), true),

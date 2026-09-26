@@ -2,15 +2,17 @@
 # mini-router checks. Runs on the build host (never on the Mac):
 #   sh tools/ci.sh
 # Called automatically by .githooks/pre-push. Several copies may run at once (one per worktree):
-# everything runs in a private mount namespace with tmpfs over /etc/mini-router and /etc/lucky,
-# and netns names are per-process, so runs never see each other.
+# everything runs in a private mount namespace with tmpfs over /etc/mini-router, /etc/lucky and mr's
+# runtime directories (locks, event.due, notification state), and netns names are per-process, so
+# runs never see each other.
 set -eu
+RUNDIRS="/run/mini-router /run/mr-clock /run/mr-edge /run/mr-mon /run/mr-proxy"
 if [ -z "${MR_CI_NS:-}" ]; then
-	mkdir -p /etc/mini-router /etc/lucky
+	# shellcheck disable=SC2086
+	mkdir -p /etc/mini-router /etc/lucky $RUNDIRS
 	MR_CI_NS=1 exec unshare -m --propagation private sh "$0" "$@"
 fi
-mount -t tmpfs tmpfs /etc/mini-router
-mount -t tmpfs tmpfs /etc/lucky
+for d in /etc/mini-router /etc/lucky $RUNDIRS; do mount -t tmpfs tmpfs "$d"; done
 
 [ ! -f /etc/profile.d/buildtools.sh ] || . /etc/profile.d/buildtools.sh # dash: a failing `.` exits the shell
 cd "$(dirname "$0")/.."
@@ -61,6 +63,9 @@ if command -v node >/dev/null; then
 else
 	echo "node not found; skipped"
 fi
+
+step "web UI English dictionary (rootfs/www/ui/lang/en.json)"
+python3 tools/i18n.py check
 
 # check_config NAME YAML SECRETS: validate, render, then load the result into the real tools.
 check_config() {
