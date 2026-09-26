@@ -111,6 +111,19 @@ func TestDoctorUpgradeHealGuard(t *testing.T) {
 	if f := docUpgrade(c, e); len(f) != 1 || f[0].Sev != "ok" {
 		t.Errorf("upgrade, same files: %+v", f)
 	}
+	// #99: a stale saved plan (boot before the WANs existed) is re-checked; a real change still warns
+	plan = "plan:\n  reload  firewall\n"
+	os.MkdirAll(filepath.Dir(upgradePlanFile), 0755)
+	os.WriteFile(upgradePlanFile, []byte(plan), 0600)
+	e.plan = func(*Config) (*Plan, error) { return &Plan{Firewall: true}, nil }
+	if f := docUpgrade(c, e); len(f) != 1 || f[0].Sev != "warn" || !fileExists(upgradePlanFile) {
+		t.Errorf("upgrade, pending: %+v", f)
+	}
+	e.plan = func(*Config) (*Plan, error) { return &Plan{}, nil }
+	if f := docUpgrade(c, e); len(f) != 1 || f[0].Sev != "ok" || fileExists(upgradePlanFile) {
+		t.Errorf("upgrade, stale: %+v", f)
+	}
+	e.plan = nil
 	e.nftChain = func(string) string {
 		return "tcp dport 853 counter packets 3 bytes 180 reject\nudp dport 853 counter packets 2 bytes 90 reject\n"
 	}

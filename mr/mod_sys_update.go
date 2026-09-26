@@ -5,7 +5,8 @@ package main
 //
 //   - upgrade plan check: the first boot of a new MR_VERSION (eventBoot) starts `mr plan -v` in the
 //     background into /run/mini-router/upgrade-plan.txt; when the new renderers would change generated
-//     files, `mr doctor` says so (check "upgrade") until the next apply. Never applied automatically.
+//     files, `mr doctor` says so (check "upgrade") until the next apply, or until the current plan is
+//     empty (a stale boot-time plan is removed). Never applied automatically.
 //   - update check (notify.update_check): crond runs `mr notify update-check` once a day; it asks GitHub
 //     for the latest release of Cd1s/mini-router (verified TLS, no proxy, answer capped) and a newer one
 //     becomes an `update` event, once per release. Never downloads or installs anything.
@@ -80,6 +81,14 @@ func docUpgrade(c *Config, e *docEnv) []docFinding {
 		return []docFinding{{Sev: "warn", Title: "New firmware", Detail: "mr plan failed: " + eventClean(firstLine(s), 160), Fix: fix}}
 	case n == 0 && !fw:
 		return []docFinding{docOK("New firmware", "renders the same files as before")}
+	}
+	// the boot-time plan can run before every WAN / tailscale0 exists (flowtable devices differ):
+	// when the plan is empty now, the saved one is stale (Cd1s/mini-router#99)
+	if e.plan != nil {
+		if p, err := e.plan(c); err == nil && p.Empty() {
+			os.Remove(upgradePlanFile)
+			return []docFinding{docOK("New firmware", "renders the same files as before")}
+		}
 	}
 	d := fmt.Sprintf("the new version would change %d generated file(s)", n)
 	if fw {
