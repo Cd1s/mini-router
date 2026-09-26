@@ -247,6 +247,9 @@ func validateNotify(c *Config, v *Validator) {
 	if d := n.Doctor; d != nil && *d != 0 && (*d < 5 || *d > 1440) {
 		v.Add("notify.doctor_interval: 5-1440 minutes or 0 (off), got %d", *d)
 	}
+	if n.AutoHeal && notifyDoctorInterval(c) == 0 {
+		v.Add("notify.auto_heal: needs the background doctor (notify.doctor_interval, or a channel)")
+	}
 	validateArchive(c, v)
 	if proxyNotifyOut(c) != "" {
 		p := &c.Proxy
@@ -268,10 +271,7 @@ func notifySecrets(c *Config) []string {
 		}
 	}
 	if a := c.Notify.Archive; a != nil {
-		out = append(out, a.URL)
-		if a.Token != "" {
-			out = append(out, a.Token)
-		}
+		out = append(out, a.URL, a.Token, a.Password, a.Secret) // "" are dropped by secretKeys
 	}
 	return out
 }

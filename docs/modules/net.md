@@ -170,8 +170,8 @@ DHCP / 静态 WAN 时拒绝（它的 IP MTU 会跟着变成 1508）：把它放�
 验证失败并回滚。`mr wan status` 的 `mtu` 是会话实际的 MTU（1500 = 运营商同意了）。AX6000 的 `wan` 口最大 MTU 15338，1508 没问题。
 
 **IPv6 前缀变化（RFC 9096）**：同一次开机内，dhcpcd 撤掉旧的委派前缀时，dnsmasq 会把旧前缀以首选寿命 0 继续通告到有效期结束，
-客户端立刻改用新前缀。重启（断电、升级）之后 dnsmasq 不知道以前通告过什么：每次 dhcpcd 事件都把 RA 网桥上的前缀记到
-`/etc/mini-router/state/lan6-prefixes.json`（变化时才写闪存），开机后第一次事件发现记录里的前缀没回来，就把它以首选寿命 10 秒、
+客户端立刻改用新前缀。重启（断电、升级）之后 dnsmasq 不知道以前通告过什么：每次 dhcpcd 事件都把 RA 网桥上的前缀按委派它的 WAN 记到
+`/etc/mini-router/state/lan6-prefixes.json`（变化时才写闪存），开机后某条 WAN 重新把前缀委派到网桥时（之前的事件、别的 WAN 的事件都不判断它），发现记录里的前缀没回来，就把它以首选寿命 10 秒、
 有效寿命 = `dhcp.ipv6.lease`（最多 2 小时）重新挂回网桥：dnsmasq 看到它过期，就把它当旧前缀以首选寿命 0 通告，客户端停止使用。
 运营商给回同一个前缀时什么也不做。
 
@@ -229,8 +229,8 @@ dhcpcd 钩子把每条 WAN 的前缀记在 `/run/mini-router/wan/<名>.pd6`，�
 从别的 WAN 出去——这是默认的 `fallback: main`（能上网，但换了出口）。`fallback: drop` = 这些流量只准走 `via`：
 filter/forward 最前面（hook `forward_first`，在 flow offload 和“已建立连接放行”之前）加一条
 `iifname {LAN} <同样的条件> oifname {其它所有 WAN} counter drop comment "fallback:<名称>"`，所以断线期间
-新连接和已有连接都出不去，恢复后自动恢复；访问 LAN、tailscale 不受影响。注意：`via` 没有 IPv6 时，这台设备
-也就没有 IPv6 外网（想只管 IPv4 就写 `src`）；设备的 DNS 仍由路由器经任意线路查询；被透明代理接管的连接走代理。
+新连接和已有连接都出不去，恢复后自动恢复；访问 LAN、tailscale 不受影响。IPv6 只拦策略本来会路由的流量
+（源地址在 `via` 委派的前缀里，`ip6 saddr @pd6_<n>`）：来自别的 WAN 前缀的源地址照常走默认 WAN；设备的 DNS 仍由路由器经任意线路查询；被透明代理接管的连接走代理。
 家里配置没有用它，输出不变。
 
 #### 按域名（domains / domains_file）

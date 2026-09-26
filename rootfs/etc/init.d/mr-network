@@ -11,6 +11,9 @@ start() {
 	# runtime dirs dnsmasq's resolv-file polling and the WAN hooks expect (tmpfs /run is empty at boot)
 	mkdir -p /run/mini-router /run/ppp
 	sysctl -q -p /etc/sysctl.d/90-mini-router.conf 2>/dev/null
+	# MGLRU (with or without zram): the working set of the last second is never evicted; when memory
+	# cannot hold it, the OOM killer acts instead of thrashing
+	[ ! -w /sys/kernel/mm/lru_gen/min_ttl_ms ] || echo 1000 > /sys/kernel/mm/lru_gen/min_ttl_ms
 	sh /etc/mini-router/gen/network.sh
 	rc=$?
 	/usr/sbin/mr routes >/dev/null 2>&1	# WANs that are already up (service restart)

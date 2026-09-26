@@ -314,7 +314,7 @@ func selfCmd(args ...string) (string, []string) {
 	return self, append(pre, args...)
 }
 
-func startDetached(name string, args ...string) {
+var startDetached = func(name string, args ...string) {
 	cmd := exec.Command(name, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	devnull, _ := os.OpenFile(os.DevNull, os.O_RDWR, 0)

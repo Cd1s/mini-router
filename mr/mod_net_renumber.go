@@ -9,8 +9,9 @@ package main
 // advertised before a reboot, power cut or upgrade: ISPs that hand out a new prefix per PPPoE session
 // leave the clients holding the dead one as preferred until the RA lifetime (dhcp.ipv6.lease) ends.
 //
-// So the prefixes on the RA bridges are recorded on flash (written only when they change), and after a
-// reboot every recorded address that has not come back is put on its bridge once more for
+// So the prefixes on the RA bridges are recorded on flash (written only when they change), per WAN that
+// delegated them (the dhcpcd hook's pd6 record), and after a reboot every recorded address that has not
+// come back is put on its bridge once more for
 // lan6StalePreferred seconds of preferred lifetime: dnsmasq sees it, advertises it, sees the kernel
 // deprecate it and then advertises it as an old prefix like any other. If the ISP hands out the same
 // prefix again, dhcpcd re-adds the address and dnsmasq advertises it as before. Runs from the dhcpcd
@@ -21,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"sort"
@@ -37,10 +39,37 @@ var (
 // enough for dnsmasq to notice it and advertise it once, short enough that clients stop using it at once.
 const lan6StalePreferred = 10
 
-// lan6State is what the RA bridges advertised, per boot.
+// lan6State is what the RA bridges advertised, per boot. Keys are "<wan> <bridge>" (lan6Key).
 type lan6State struct {
 	Boot  string              `json:"boot"`
-	Addrs map[string][]string `json:"addrs"` // bridge -> ["2001:db8:1::1/64", ...]
+	Addrs map[string][]string `json:"addrs"` // "wan br-lan" -> ["2001:db8:1::1/64", ...]
+	// records of an earlier boot whose WAN has not delegated to that bridge (yet) in this one: judged
+	// once it has
+	Pending map[string][]string `json:"pending,omitempty"`
+}
+
+func lan6Key(wan, br string) string { return wan + " " + br }
+
+// lan6ByWAN files the bridges' addresses (cur, by bridge) under the WAN whose delegated prefix holds
+// them (pds, by WAN). Every WAN x bridge pair gets a key, empty while that WAN has not delegated there.
+func lan6ByWAN(cur map[string][]string, wans []string, pds map[string][]netip.Prefix) map[string][]string {
+	out := map[string][]string{}
+	for br, as := range cur {
+		for _, w := range wans {
+			k := lan6Key(w, br)
+			out[k] = nil
+			for _, a := range as {
+				ap, err := netip.ParsePrefix(a)
+				for _, p := range pds[w] {
+					if err == nil && p.Contains(ap.Addr()) {
+						out[k] = append(out[k], a)
+						break
+					}
+				}
+			}
+		}
+	}
+	return out
 }
 
 // lan6Addrs parses `ip -j -6 addr show dev BRIDGE scope global` into the addresses dnsmasq advertises
@@ -85,30 +114,45 @@ func lan6CIDR(s string) (string, bool) {
 	return fmt.Sprintf("%s/%d", ip, ones), true
 }
 
-// lan6Plan compares what the bridges have now (cur) with the record. Within one boot dnsmasq has seen
-// every change itself; in a new boot, recorded addresses that are not back are stale. Bridges that no
-// longer do RA are left out (nothing advertises there).
+// lan6Plan compares what the bridges have now (cur, lan6ByWAN) with the record. Within one boot dnsmasq
+// has seen every change itself; in a new boot, recorded addresses that are not back are stale — judged
+// per WAN only once that WAN has delegated to the bridge again: dhcpcd events come before the
+// delegation, WANs delegate at different times, and a prefix the ISP hands out again must not be
+// deprecated in between. WANs and bridges that no longer do RA are left out (nothing advertises there).
 func lan6Plan(prev lan6State, boot string, cur map[string][]string) (stale map[string][]string, next lan6State) {
-	next = lan6State{Boot: boot, Addrs: map[string][]string{}}
+	next = lan6State{Boot: boot, Addrs: map[string][]string{}, Pending: map[string][]string{}}
 	for br, as := range cur {
 		if len(as) > 0 {
 			next.Addrs[br] = as
 		}
 	}
-	stale = map[string][]string{}
-	if prev.Boot == "" || prev.Boot == boot {
-		return stale, next
+	old := prev.Pending
+	if prev.Boot != "" && prev.Boot != boot {
+		old = map[string][]string{}
+		for _, m := range []map[string][]string{prev.Addrs, prev.Pending} {
+			for br, as := range m {
+				old[br] = append(old[br], as...)
+			}
+		}
 	}
-	for br, as := range prev.Addrs {
+	stale = map[string][]string{}
+	for br, as := range old { // br: a lan6Key
 		now, ok := cur[br]
 		if !ok {
 			continue
 		}
+		if len(now) == 0 {
+			next.Pending[br] = as
+			continue
+		}
 		for _, a := range as {
-			if s, valid := lan6CIDR(a); valid && !containsString(now, s) {
+			if s, valid := lan6CIDR(a); valid && !containsString(now, s) && !containsString(stale[br], s) {
 				stale[br] = append(stale[br], s)
 			}
 		}
+	}
+	if len(next.Pending) == 0 {
+		next.Pending = nil
 	}
 	return stale, next
 }
@@ -122,25 +166,38 @@ func containsString(xs []string, x string) bool {
 	return false
 }
 
-// raLeaseSecs: how long a stale prefix stays advertised as old: the RA lease (the valid lifetime the
-// clients were given), at most 2 h like dnsmasq; "infinite" = 2 h.
-func raLeaseSecs(lease string) int {
+// raMaxLease: RFC 9096 (ND_PREFERRED_LIMIT 2700 s, ND_VALID_LIMIT 5400 s) for the LAN prefixes. dnsmasq
+// advertises a constructor: prefix with min(the bridge address's lifetime, the range's lease) as both
+// preferred and valid lifetime — there is no separate preferred cap — so the lease is held at 2700 s.
+const raMaxLease = 2700
+
+// leaseSecs: a lease ("45m", "12h", "3600") in seconds; 0 = infinite or unreadable.
+func leaseSecs(lease string) int {
 	mult := map[byte]int{'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 604800}
-	secs := 7200
-	if n, err := strconv.Atoi(lease); err == nil && n > 0 { // plain seconds, as dnsmasq reads them
-		secs = n
-	} else if l := len(lease); l > 1 && mult[lease[l-1]] > 0 {
-		if n, err := strconv.Atoi(lease[:l-1]); err == nil && n > 0 && n <= 7200 {
-			secs = n * mult[lease[l-1]]
-		}
+	num, m := lease, 1
+	if l := len(lease); l > 1 && mult[lease[l-1]] > 0 {
+		num, m = lease[:l-1], mult[lease[l-1]]
 	}
-	if secs > 7200 {
-		secs = 7200
+	n, err := strconv.Atoi(num)
+	if err != nil || n <= 0 {
+		return 0
 	}
-	return secs
+	return min(n, 1<<20) * m
 }
 
-// lan6Renumber records the prefixes of the RA bridges and, in the first dhcpcd event after a reboot,
+// raLease: the lease rendered into an RA dhcp-range, at most raMaxLease.
+func raLease(lease string) string {
+	if s := leaseSecs(lease); s <= 0 || s > raMaxLease {
+		return "45m"
+	}
+	return lease
+}
+
+// raLeaseSecs: how long a stale prefix stays advertised as old: the valid lifetime the clients were
+// given (raLease).
+func raLeaseSecs(lease string) int { return leaseSecs(raLease(lease)) }
+
+// lan6Renumber records the prefixes of the RA bridges and, after a reboot, once a bridge has a prefix again,
 // announces the ones that did not come back as stale (see the top of this file).
 func lan6Renumber(c *Config) {
 	boot := strings.TrimSpace(readFile(bootIDFile))
@@ -166,14 +223,25 @@ func lan6Renumber(c *Config) {
 	if err == nil {
 		json.Unmarshal(old, &prev)
 	}
-	stale, next := lan6Plan(prev, boot, cur)
-	var brs []string
-	for br := range stale {
-		brs = append(brs, br)
+	var wans []string
+	pds := map[string][]netip.Prefix{}
+	for _, w := range c.WAN {
+		wans = append(wans, w.Name)
+		for _, l := range strings.Fields(readFile(pd6File(w.Name))) {
+			if p, err := netip.ParsePrefix(l); err == nil {
+				pds[w.Name] = append(pds[w.Name], p)
+			}
+		}
 	}
-	sort.Strings(brs)
-	for _, br := range brs {
-		for _, a := range stale[br] {
+	stale, next := lan6Plan(prev, boot, lan6ByWAN(cur, wans, pds))
+	var keys []string
+	for k := range stale {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		_, br, _ := strings.Cut(k, " ")
+		for _, a := range stale[k] {
 			logf("lan6: %s on %s was advertised before the reboot and is gone: announcing it as stale (RFC 9096)", a, br)
 			run("ip", "-6", "addr", "add", a, "dev", br, "valid_lft", strconv.Itoa(lease[br]),
 				"preferred_lft", strconv.Itoa(lan6StalePreferred), "noprefixroute", "nodad")

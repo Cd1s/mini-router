@@ -283,7 +283,7 @@ func writeSnapshot(name string, paths []string) error {
 	tw.Write(list)
 	tw.Close()
 	gz.Close()
-	return writeAtomic(name, buf.Bytes(), 0600)
+	return writeDurable(name, buf.Bytes(), 0600)
 }
 
 // undoLists puts the list files of a restore back from their snapshot.
@@ -333,7 +333,7 @@ func restoreStage(rs *restoreSet) (y []byte, sec map[string]string, snap string,
 		}
 		if sysHistoryDir == HistoryDir {
 			live, _ := loadConfig(sysConfigPath, sysSecretsPath)
-			pruneHistory(historyKeep(live))
+			pruneHistory(historyKeep(live), snap)
 		}
 		for _, p := range changed {
 			if err := writeAtomic(p, rs.lists[p], 0644); err != nil {

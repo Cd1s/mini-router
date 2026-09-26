@@ -1,7 +1,9 @@
 package main
 
 import (
+	"net/netip"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -54,8 +56,63 @@ func TestLan6Plan(t *testing.T) {
 	}
 }
 
+// The first dhcpcd events after a boot (PREINIT, CARRIER) come before the delegation: the bridge has
+// no prefix yet. Nothing is stale then; the record waits until a prefix arrives, and the one the ISP
+// handed out again is never announced as stale.
+func TestLan6PlanWaitsForPrefix(t *testing.T) {
+	prev := lan6State{Boot: "boot-1", Addrs: map[string][]string{"br-lan": {"2001:db8:1::1/64", "2001:db8:2::1/64"}}}
+	stale, next := lan6Plan(prev, "boot-2", map[string][]string{"br-lan": nil})
+	if len(stale) != 0 {
+		t.Fatalf("no prefix yet: stale %v", stale)
+	}
+	stale, next = lan6Plan(next, "boot-2", map[string][]string{"br-lan": {"2001:db8:1::1/64"}})
+	if !reflect.DeepEqual(stale, map[string][]string{"br-lan": {"2001:db8:2::1/64"}}) {
+		t.Errorf("prefix back: stale %v", stale)
+	}
+	if next.Pending != nil {
+		t.Errorf("still pending: %v", next.Pending)
+	}
+	// judged once only
+	if stale, _ = lan6Plan(next, "boot-2", map[string][]string{"br-lan": {"2001:db8:1::1/64"}}); len(stale) != 0 {
+		t.Errorf("second event: stale %v", stale)
+	}
+}
+
+// Two PPPoE WANs delegate to br-lan at different times (the home config): wan2's recorded prefix is
+// judged only once wan2 has delegated again, never while only wan's prefix is back.
+func TestLan6PlanPerWAN(t *testing.T) {
+	wans := []string{"wan", "wan2"}
+	pds := map[string][]netip.Prefix{"wan": {netip.MustParsePrefix("2001:db8:a::/56")}}
+	prev := lan6State{Boot: "boot-1", Addrs: map[string][]string{"wan br-lan": {"2001:db8:a::1/64"}, "wan2 br-lan": {"2001:db8:b::1/64"}}}
+	stale, next := lan6Plan(prev, "boot-2", lan6ByWAN(map[string][]string{"br-lan": {"2001:db8:a::1/64"}}, wans, pds))
+	if len(stale) != 0 || !reflect.DeepEqual(next.Pending, map[string][]string{"wan2 br-lan": {"2001:db8:b::1/64"}}) {
+		t.Fatalf("only wan back: stale %v, pending %v", stale, next.Pending)
+	}
+	pds["wan2"] = []netip.Prefix{netip.MustParsePrefix("2001:db8:c::/56")} // wan2 got a new prefix
+	stale, next = lan6Plan(next, "boot-2", lan6ByWAN(map[string][]string{"br-lan": {"2001:db8:a::1/64", "2001:db8:c::1/64"}}, wans, pds))
+	if !reflect.DeepEqual(stale, map[string][]string{"wan2 br-lan": {"2001:db8:b::1/64"}}) || next.Pending != nil {
+		t.Errorf("wan2 renumbered: stale %v, pending %v", stale, next.Pending)
+	}
+	if !reflect.DeepEqual(next.Addrs, map[string][]string{"wan br-lan": {"2001:db8:a::1/64"}, "wan2 br-lan": {"2001:db8:c::1/64"}}) {
+		t.Errorf("record %v", next.Addrs)
+	}
+}
+
+// RFC 9096: what dnsmasq advertises (min of address lifetime and lease) stays within 2700 s.
+func TestRALeaseCap(t *testing.T) {
+	var b strings.Builder
+	renderRA(&b, "br-lan", RA{Lease: "1d"})
+	renderRA(&b, "br-iot", RA{Lease: "30m"})
+	renderRA(&b, "br-guest", RA{Lease: "infinite"})
+	for _, s := range []string{"constructor:br-lan,ra-only,45m\n", "constructor:br-iot,ra-only,30m\n", "constructor:br-guest,ra-only,45m\n"} {
+		if !strings.Contains(b.String(), s) {
+			t.Errorf("missing %q in\n%s", s, b.String())
+		}
+	}
+}
+
 func TestRALeaseSecs(t *testing.T) {
-	for in, want := range map[string]int{"": 7200, "1800": 1800, "9000": 7200, "30m": 1800, "1h": 3600, "12h": 7200, "infinite": 7200, "90s": 90, "0m": 7200} {
+	for in, want := range map[string]int{"": 2700, "1800": 1800, "9000": 2700, "30m": 1800, "1h": 2700, "12h": 2700, "infinite": 2700, "90s": 90, "0m": 2700, "99999999999d": 2700} {
 		if got := raLeaseSecs(in); got != want {
 			t.Errorf("raLeaseSecs(%q) = %d, want %d", in, got, want)
 		}

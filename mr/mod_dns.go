@@ -54,7 +54,7 @@ type RA struct {
 	Mode     string   `yaml:"mode"`        // slaac (ra-only, default) | stateless (ra-stateless) | stateful (DHCPv6 range + SLAAC)
 	Start    string   `yaml:"start"`       // stateful: first interface id, e.g. "::1000"
 	End      string   `yaml:"end"`         // stateful: last interface id, e.g. "::ffff"
-	Lease    string   `yaml:"lease"`       // prefix / DHCPv6 lease lifetime (default 12h)
+	Lease    string   `yaml:"lease"`       // prefix / DHCPv6 lease lifetime (default and at most 45m: raLease)
 	DNS      []string `yaml:"dns"`         // RDNSS + DHCPv6 DNS; empty = the router ("::" = its global address)
 	Interval int      `yaml:"ra_interval"` // seconds between unsolicited RAs (default 60)
 	Lifetime int      `yaml:"ra_lifetime"` // router lifetime in seconds (default 1800)
@@ -159,7 +159,7 @@ func raDefaults(r *RA) {
 		r.Mode = "slaac"
 	}
 	if r.Lease == "" {
-		r.Lease = "12h"
+		r.Lease = "45m"
 	}
 	if r.Interval == 0 {
 		r.Interval = 60
@@ -362,6 +362,7 @@ func renderDnsmasq(c *Config) string {
 // global address the bridge has (constructor:), i.e. the delegated prefix dhcpcd put there.
 func renderRA(b *strings.Builder, bridge string, r RA) {
 	raDefaults(&r)
+	r.Lease = raLease(r.Lease)
 	switch r.Mode {
 	case "stateless":
 		fmt.Fprintf(b, "dhcp-range=::,constructor:%s,ra-stateless,%s\n", bridge, r.Lease)
@@ -900,8 +901,8 @@ func validRA(v *Validator, p string, r RA) {
 			v.Add("%s.dns: IPv6 address required (\"::\" = the router), got %q", p, d)
 		}
 	}
-	if r.Interval != 0 && (r.Interval < 4 || r.Interval > 1800) {
-		v.Add("%s.ra_interval: 4-1800 seconds, got %d", p, r.Interval)
+	if r.Interval != 0 && (r.Interval < 4 || r.Interval > 900) { // dnsmasq: lifetimes >= 3 x interval, RFC 9096 cap 2700 s
+		v.Add("%s.ra_interval: 4-900 seconds, got %d", p, r.Interval)
 	}
 	if r.Lifetime != 0 && (r.Lifetime < 60 || r.Lifetime > 9000 || r.Lifetime < r.Interval) {
 		v.Add("%s.ra_lifetime: 60-9000 seconds and not below ra_interval, got %d", p, r.Lifetime)

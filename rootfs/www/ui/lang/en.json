@@ -376,7 +376,7 @@
 "留空 = 路由器": "empty = router",
 "IPv6 地址，“::” 表示路由器自己的全局地址": "IPv6 addresses; “::” = the router's own global address",
 "RA 间隔（秒）": "RA interval (s)",
-"0 = 默认 60；4-1800": "0 = default 60; 4-1800",
+"0 = 默认 60；4-900": "0 = default 60; 4-900",
 "路由器生存期（秒）": "Router lifetime (s)",
 "0 = 默认 1800；60-9000": "0 = default 1800; 60-9000",
 "路由器优先级": "Router priority",
@@ -1870,5 +1870,6 @@
 "）连接，而 WiFi 会重启": "), and WiFi will restart",
 "你正从 WAN（": "You are connected from the WAN (",
 "）连接，而这条线路会重拨": "), and this line will redial",
-"你正在用 SSH，而 SSH 服务会重启": "You are using SSH, and the SSH service will restart"
+"你正在用 SSH，而 SSH 服务会重启": "You are using SSH, and the SSH service will restart",
+"无法判断改动了什么": "Cannot tell what changes"
 }

@@ -339,3 +339,37 @@ func TestApplyStaleCandidate(t *testing.T) {
 		t.Errorf("snapshot left behind: %d files", len(ents))
 	}
 }
+
+// Writers of one path at the same time (hooks, the web UI, cron) must not share a temp file: with a
+// fixed name one rename took the other's half-written file away and the other failed.
+func TestWriteAtomicConcurrent(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "state.json")
+	var wg sync.WaitGroup
+	errs := make(chan error, 400)
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				if err := writeAtomic(p, []byte(strings.Repeat(string(rune('a'+g)), 4096)), 0600); err != nil {
+					errs <- err
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(p)
+	if len(b) != 4096 || strings.Trim(string(b), string(b[:1])) != "" {
+		t.Errorf("mixed content (%d bytes)", len(b))
+	}
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0600 {
+		t.Errorf("mode %v", fi.Mode())
+	}
+	if m, _ := filepath.Glob(p + ".*"); len(m) != 0 {
+		t.Errorf("temp files left: %v", m)
+	}
+}

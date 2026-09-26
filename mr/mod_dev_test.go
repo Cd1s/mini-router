@@ -119,7 +119,9 @@ func TestDevRender(t *testing.T) {
 		`iifname "br-lan" ether saddr 02:00:00:00:10:01 ip daddr != 192.168.1.0/24 ct state new ct mark set 0x102`,
 		`iifname "br-lan" ether saddr `+kids+` ip saddr 192.168.1.0/24 ip daddr != 192.168.1.0/24 ct state new`,
 		// fallback: drop, at the top of forward (before the access rules and flow offload)
-		`iifname "br-lan" ether saddr 02:00:00:00:10:01 oifname "pppoe-wan" counter drop comment "fallback:office"`,
+		`iifname "br-lan" ether saddr 02:00:00:00:10:01 meta nfproto ipv4 oifname "pppoe-wan" counter drop comment "fallback:office"`,
+		// IPv6: only sources in wan2's prefix (what the policy routes); another prefix takes the default WAN
+		`iifname "br-lan" ether saddr 02:00:00:00:10:01 ip6 saddr @pd6_1 oifname "pppoe-wan" counter drop comment "fallback:office"`,
 		`iifname "br-lan" ether saddr `+kids+` ip saddr 192.168.1.0/24 oifname "pppoe-wan2" counter drop comment "fallback:kids"`)
 	fwd := nft[strings.Index(nft, "chain forward {"):]
 	if a, b := strings.Index(fwd, "fallback:office"), strings.Index(fwd, "update @ac_4"); a < 0 || b < 0 || a > b || b > strings.Index(fwd, "flow add") {

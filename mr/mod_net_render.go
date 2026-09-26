@@ -180,9 +180,9 @@ const pppoeOverhead = 8
 //     link MTU - 8, so a link the kernel could not raise also ends at 1492.
 //   - DHCP / static: the configured mtu (0 = leave it).
 //   - the parent of a VLAN subinterface: at least what the subinterface needs.
-//   - otherwise a PPPoE device gets plain Ethernet's 1500 (undoes an earlier 1508), and a DHCP /
-//     static VLAN subinterface of a device raised above 1500 is kept at 1500 (a new VLAN device
-//     inherits its parent's MTU).
+//   - otherwise plain Ethernet's 1500: it undoes an earlier 1508 (also after a PPPoE WAN became
+//     DHCP / static: the device would keep 1508 as its IP MTU), and keeps a VLAN subinterface of a
+//     device raised above 1500 at 1500 (a new VLAN device inherits its parent's MTU).
 //
 // On a DSA switch port the kernel raises the conduit (e.g. eth0) by the tag overhead by itself.
 func wanLinkMTUs(c *Config) map[string]int {
@@ -202,7 +202,7 @@ func wanLinkMTUs(c *Config) map[string]int {
 		}
 	}
 	for _, w := range c.WAN {
-		if w.Proto != "pppoe" && (w.MTU > 0 || w.VLAN == 0 || need[w.Device] <= 1500) {
+		if w.Proto != "pppoe" && w.MTU > 0 {
 			continue
 		}
 		m := 1500
@@ -406,15 +406,19 @@ func policyFallbackRules(c *Config) []string {
 		if p.Dst != "" {
 			dst, _ = parseIPOrCIDR(p.Dst)
 		}
-		fams := []int{0} // 0: no address match, both families
-		if src != nil || dst != nil || p.byDomain() {
-			fams = policyFams(p)
-		}
-		for _, fam := range fams {
+		for _, fam := range policyFams(p) {
 			s := policyHead(c, p)
 			kw := map[int]string{4: "ip", 6: "ip6"}[fam]
+			if fam == 4 && src == nil && dst == nil && !p.byDomain() {
+				s += " meta nfproto ipv4"
+			}
 			if src != nil {
 				s += fmt.Sprintf(" %s saddr %s", kw, cidrStr(src))
+			}
+			if fam == 6 {
+				// only what the policy routes (policyRules): a source from another WAN's prefix is left
+				// unmarked on purpose and takes the default route (Cd1s/mini-router#63)
+				s += " ip6 saddr @" + pd6Set(c, p.Via)
 			}
 			if dst != nil {
 				s += fmt.Sprintf(" %s daddr %s", kw, cidrStr(dst))
