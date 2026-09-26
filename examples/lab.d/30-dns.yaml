@@ -49,11 +49,11 @@ dns:
   rebind_protection: true
   local_service: true
   redirect: true
-  addn_hosts: [/etc/lucky/dnsmasq.hosts]
+  addn_hosts: [/etc/mini-router/dns/extra.hosts]
   records:
     - {name: nas, type: A, value: 192.168.1.10}                      # nas and nas.lan
     - {name: nas.lan, type: AAAA, value: "fd00::10"}
-    - {name: "*.home.example.com", type: A, value: 192.168.1.6}      # split-horizon for Lucky's reverse proxy
+    - {name: "*.home.example.com", type: A, value: 192.168.1.6}      # split-horizon for the reverse proxy
     - {name: photos.lan, type: CNAME, value: nas.lan}
     - {name: 192.168.1.11, type: PTR, value: printer.lan}
     - {name: _smb._tcp.lan, type: SRV, value: "nas.lan:445"}

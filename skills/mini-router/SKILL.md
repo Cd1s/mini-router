@@ -144,13 +144,13 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
   failover, rollback, login locks, new devices, boots (and why), firmware changes, new `mr doctor` findings (background run
   every `doctor_interval` minutes, default 30). After apply: `mr notify test`, `mr notify status` (pending, last error,
   retry). API tokens and agents cannot change `notify` — ask the owner.
-- **HTTPS reverse proxy with certificates** (`services.edge`; replaces lucky's 443 proxy; `mr edge serve` runs as
+- **HTTPS reverse proxy with certificates** (`services.edge`; `mr edge serve` runs as
   service `mr-edge` only while on): same Cloudflare token kind as DDNS (reuse `cf_ddns_token`), then
   `services: {edge: {enabled: true, open: true, acme: {token_secret: cf_ddns_token, wildcard: [example.com]},
   routes: [{name: nas, host: nas.example.com, to: "http://192.168.1.10:5000"}, {name: ha, host: ha.example.com,
   to: "http://192.168.1.20:8123", allow: [lan]}]}}` (`to`: http(s)://LAN-IP:port only; `allow`: `lan` and / or CIDRs,
   empty = everyone; `open`: reachable from the WANs; try `acme.staging: true` first). A `firewall.open` of the same tcp
-  port is refused while it is on (remove lucky's `lucky-https`, disable lucky in the same apply). Plan risk is high.
+  port is refused while it is on. Plan risk is high.
   Check: `mr edge status` (`serving`, certificates `state` / `error`, requests per route); issue now: `mr edge renew`
   (certificates come from Let's Encrypt via DNS-01 in 1–2 minutes; renewed daily when a third of the lifetime is left).
 - **Pause a device's internet** (runtime only: no apply, no confirm, ends by itself; a reboot ends it too):

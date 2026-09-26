@@ -226,19 +226,6 @@
    "cmd": "/usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --port=41641"
   },
   {
-   "pid": 2300,
-   "ppid": 1,
-   "name": "lucky",
-   "state": "S",
-   "user": "root",
-   "rss": 21234,
-   "vsz": 1210112,
-   "threads": 9,
-   "cpu": 412334,
-   "start": 2200,
-   "cmd": "/usr/bin/lucky -cd /etc/lucky"
-  },
-  {
    "pid": 2350,
    "ppid": 1,
    "name": "dstatus-agent",

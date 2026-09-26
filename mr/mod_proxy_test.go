@@ -95,7 +95,7 @@ func TestProxyRender(t *testing.T) {
 	for _, s := range []string{
 		"port=1054", "interface=br-lan", "no-dhcp-interface=br-lan", "bind-dynamic", "cache-size=8000", "min-cache-ttl=3600",
 		"resolv-file=/run/ppp/resolv.conf", "stop-dns-rebind", "rebind-domain-ok=/lan/", "rebind-domain-ok=//",
-		"server=/lan/127.0.0.1", "server=//127.0.0.1", "rev-server=192.168.1.0/24,127.0.0.1", "addn-hosts=/etc/lucky/dnsmasq.hosts",
+		"server=/lan/127.0.0.1", "server=//127.0.0.1", "rev-server=192.168.1.0/24,127.0.0.1",
 		"server=/example-a.com/127.0.0.1#5453", "server=/openai.com/127.0.0.1#1053", "server=/telegram.org/127.0.0.1#1053",
 		"server=/example-b.net/127.0.0.1#1053",
 	} {

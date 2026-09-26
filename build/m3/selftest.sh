@@ -294,7 +294,7 @@ PROBE
 	boot P3
 	has P3 '^no$' firstboot
 	has P3 '192.168.1.6' lan
-	for s in mr-pppoe.wan mr-pppoe.wan2 tailscale lucky stubby dropbear mr-panel; do has P3 "^$s\$" default; done
+	for s in mr-pppoe.wan mr-pppoe.wan2 tailscale stubby dropbear mr-panel; do has P3 "^$s\$" default; done
 	sort "/t/res/P3/services" > /t/s1 && sort "/t/res/P3/default" > /t/s2
 	cmp -s /t/s1 /t/s2 || fail "P3: default runlevel != gen/services: $(diff /t/s1 /t/s2 | tr '\n' ' ')"
 	has P3 'wiped at the next boot' factory-reset

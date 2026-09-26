@@ -45,7 +45,7 @@ const C = ()=>{
   const c = S.cfg;
   c.system ||= {}; c.system.ntp ||= []; c.system.sysctl ||= {};
   c.services ||= {};
-  for (const k of ["tailscale","lucky","dstatus","stubby","ssh","panel"]) c.services[k] ||= {};
+  for (const k of ["tailscale","dstatus","stubby","ssh","panel"]) c.services[k] ||= {};
   c.services.ssh.authorized_keys ||= [];
   c.schedules ||= [];
   return c;
@@ -267,8 +267,7 @@ function edgeCard(c, st, svc){
         oninput:e=>{ acme.wildcard = e.target.value.split(/[\s,]+/).filter(Boolean); attach(); }}), "这些域名下一级的站点共用一张 *.域名 证书（子域名不会出现在证书公开日志里）；其余每个域名一张"),
       ...field("测试 CA", sw(!!acme.staging, v=>{ acme.staging = v; }), "Let's Encrypt staging：证书不受浏览器信任，只用来试配置"))),
     h("div",{class:"sys-note",style:"padding:0 16px"},
-      "“转发到”写内网服务的 IP 和端口（http:// 或 https://，https 不校验内网自签证书）。“允许访问”：lan = 局域网和 Tailscale；也可以写 IP / 网段；留空 = 所有能到达端口的人。",
-      " 从 lucky 迁移：先关掉 lucky 的 443 反代、删除防火墙里开放 443 的规则，再在这里打开“对外网开放”。"),
+      "“转发到”写内网服务的 IP 和端口（http:// 或 https://，https 不校验内网自签证书）。“允许访问”：lan = 局域网和 Tailscale；也可以写 IP / 网段；留空 = 所有能到达端口的人。"),
     t.el,
     h("div",{class:"row",style:"padding:10px 16px 0"}, h("b",{},"状态"), run, h("span",{class:"sp",style:"flex:1"}), renew),
     stBox], t.add, true);
@@ -291,8 +290,6 @@ registerPage("services", "services", "服务", 10, async ()=>{
   const svcCard = (title, name, body, extra)=>h("div",{class:"card sys-svc"},
     h("h2",{}, dot(name), title, h("span",{class:"sp"}), state(name), canRestart(name)?restartBtn(name):null),
     h("div",{class:"body"}, body, extra||null));
-  const lanHost = location.hostname;
-  const luckyURL = ()=>"http://"+(lanHost.includes(":")?"["+lanHost+"]":lanHost)+":"+(sv.lucky.port||16601)+"/";
 
   const ts = d.tailscale || null;
   const tsBody = [form(
@@ -309,10 +306,6 @@ registerPage("services", "services", "服务", 10, async ()=>{
 
   const cards = [
     svcCard("Tailscale", "tailscale", tsBody),
-    svcCard("Lucky（DDNS / 反代 / 证书）", "lucky", form(
-      ...field("启用", inBool(sv.lucky,"enabled")),
-      ...field("管理端口", inNum(sv.lucky,"port",{min:1,max:65535}), "只用于下面的链接；Lucky 自己的端口在它的界面里改"),
-      h("span"), h("div",{}, h("a",{href:luckyURL(), target:"_blank", rel:"noopener noreferrer"}, "打开 Lucky 管理界面 ↗")))),
     svcCard("dstatus 探针", "dstatus-agent", form(...field("启用", inBool(sv.dstatus,"enabled"), "配置文件 /etc/dstatus-agent/config.yaml（没有则不启动）"))),
     svcCard("stubby（DNS over TLS）", "stubby", form(...field("启用", inBool(sv.stubby,"enabled"), "DNS 页面的上游选 DoT 或分流到 127.0.0.1#5453 时需要"))),
     svcCard("SSH (dropbear)", "dropbear", form(...field("启用", inBool(sv.ssh,"enabled")),

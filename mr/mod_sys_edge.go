@@ -1,7 +1,7 @@
 package main
 
 // sys module: HTTPS reverse proxy with automatic certificates (services.edge, Cd1s/mini-router#6) —
-// the built-in replacement for lucky's "443 + SSL" reverse proxy.
+// a built-in "443 + SSL" reverse proxy.
 //
 //	mr edge serve   the only resident part, run by the OpenRC service mr-edge while services.edge is on:
 //	                terminates TLS (1.2+, HTTP/1.1 and HTTP/2) for the route hosts and proxies each to one
@@ -292,8 +292,6 @@ func edgeReservedPort(c *Config, port int) string {
 		return "DNS / DHCP / NTP"
 	case port == edgeWANPort:
 		return "the edge's internal WAN port"
-	case sv.Lucky.Enabled && port == sv.Lucky.Port:
-		return "lucky's web UI"
 	}
 	return ""
 }
@@ -573,16 +571,25 @@ func edgeNft(c *Config, hook string, n *Nft) {
 	}
 }
 
-// edgeDnsmasq: the route hosts resolve to the main LAN address on the LAN (A only; AAAA queries get no
-// answer, so clients use IPv4 to the router).
+// edgeDnsmasq: the route hosts resolve to the router on the LAN — A and AAAA, the LAN bridge's addresses
+// as they are now (interface-name follows a new delegated prefix). A host-record gave only A and dnsmasq
+// forwarded the AAAA query upstream: IPv6 clients went to the public address (a CDN, another host).
 func edgeDnsmasq(c *Config) []string {
-	ip, _, ok := strings.Cut(c.LAN.IPv4, "/")
-	if !edgeOn(c) || !edgeLANDNS(c) || !ok {
+	var out []string
+	for _, h := range edgeLANHosts(c) {
+		out = append(out, fmt.Sprintf("interface-name=%s,%s", h, c.LAN.Bridge))
+	}
+	return out
+}
+
+// edgeLANHosts: the route hosts answered on the LAN by dnsmasq (lan_dns).
+func edgeLANHosts(c *Config) []string {
+	if !edgeOn(c) || !edgeLANDNS(c) || c.LAN.Bridge == "" {
 		return nil
 	}
 	var out []string
 	for _, r := range edgeRoutes(c) {
-		out = append(out, fmt.Sprintf("host-record=%s,%s", r.Host, ip))
+		out = append(out, r.Host)
 	}
 	return out
 }

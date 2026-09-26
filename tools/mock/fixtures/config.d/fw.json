@@ -13,7 +13,7 @@
     {"name": "nas-ssh-office", "enabled": false, "proto": ["tcp"], "port": "2222", "to": "192.168.1.241", "to_port": "22", "wan": ["wan2"], "src_ip": ["203.0.113.0/24"], "desc": "office -> NAS ssh"}
    ],
    "open": [
-    {"name": "lucky-https", "enabled": true, "proto": ["tcp"], "port": "443"},
+    {"name": "https", "enabled": true, "proto": ["tcp"], "port": "443"},
     {"name": "wg-office", "enabled": true, "proto": ["udp"], "port": "51820", "wan": ["wan"], "src_ip": ["203.0.113.0/24", "2001:db8:100::/48"], "desc": "WireGuard from the office"}
    ],
    "ipv6_allow": [

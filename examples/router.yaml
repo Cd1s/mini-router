@@ -56,8 +56,6 @@ firewall:
     - {name: vps-45000-45100, proto: [tcp, udp], port: 45000-45100, to: 192.168.1.241}
     - {name: desktop-7443,    proto: [tcp],      port: "7443",      to: 192.168.1.66, to_port: "9999"}
     - {name: workstation,     proto: [tcp, udp], port: 46001-46020, to: 192.168.1.237}
-  open:
-    - {name: lucky-https, proto: [tcp], port: "443"}
 
 dhcp:
   start: 100
@@ -79,7 +77,6 @@ dns:
   rebind_protection: true
   local_service: true
   redirect: true
-  addn_hosts: [/etc/lucky/dnsmasq.hosts]
   split:                        # DNS 分流
     - name: cloudflare-dot
       domains_file: /etc/mini-router/dns/cloudflare-dot.domains
@@ -106,8 +103,21 @@ wifi:
 
 services:
   tailscale: {enabled: true, port: 41641}
-  lucky: {enabled: true}
   dstatus: {enabled: true}
   stubby: {enabled: true}
   ssh: {enabled: true, port: 22, password_login: false}
   panel: {enabled: true}
+  ddns:                     # Cloudflare; the token (secrets: cf_token) also signs the edge certificates
+    enabled: true
+    records:
+      - {name: wd.example.com, zone: example.com, token_secret: cf_token, ipv4: wan, ipv6: "mac:02:c3:06:d6:7f:8a"}
+      - {name: wd4.example.com, zone: example.com, token_secret: cf_token, ipv4: wan}
+      - {name: cnx1.example.net, zone: example.net, token_secret: cf_token, ipv4: wan}
+  edge:                     # HTTPS reverse proxy on 443 (replaced lucky, 2026-09-26)
+    enabled: true
+    open: true
+    acme: {provider: cloudflare, token_secret: cf_token, wildcard: [example.com, example.net]}
+    routes:
+      - {name: openwrt, host: openwrt.example.net, to: "http://192.168.1.6:80", allow: [lan]}   # this web UI: LAN + tailscale only
+      - {name: immich, host: immich.example.com, to: "http://192.168.1.66:4453"}                # Immich's own login
+      - {name: pic, host: pic.example.com, to: "http://192.168.1.66:4453"}

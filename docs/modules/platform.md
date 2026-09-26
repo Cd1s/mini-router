@@ -83,14 +83,14 @@ sing-box **1.14.1**，tag `v1.14.1` = `1ac1a339cb12…`（与官方二进制内�
 Alpine 3.24 aarch64（docker arm64 + binfmt）：
 
 - 软件包（`out/m3/packages.txt`）：M2 的集合（busybox + OpenRC、dropbear、iproute2（minimal + ss，不带 tc）、iw、
-  nftables、ppp-pppoe、dhcpcd、dnsmasq、hostapd、wireless-regdb、stubby、curl、jq、inotify-tools、busybox-extras）
+  nftables、ppp-pppoe、dhcpcd、dnsmasq、hostapd、wireless-regdb、stubby、curl、jq、busybox-extras）
   + `mtd-utils-ubi`、`kexec-tools`、`ssl_client`（busybox wget 的 https）、`igmpproxy`。不装 `alpine-base`
   里的 alpine-conf（setup 脚本）和 busybox-suid。dnsmasq 用 `dnsmasq-dnssec-nftset` 这个构建（按域名选 WAN 的
   `nftset=`，net 模块）：libnftables / gmp 本来就随 nftables 装了，只多一个 nettle（约 0.65 MB 安装大小）；DNSSEC 编进去但不开。
 - `hostapd` 换成 `build/hostapd` 的 noscan 版二进制（构建时检查）；`/usr/bin/sing-box`（上面那份）；`/usr/sbin/mr`；
-  `EXTRA_BINS`（默认 M2 的 `bins.tgz`：tailscaled 1.102.4 精简版、lucky 3.0、dstatus-agent，属主改为 root）。
+  `EXTRA_BINS`（默认 M2 的 `bins.tgz`：tailscaled 1.102.4 精简版、dstatus-agent，属主改为 root；包里多余的程序解压后删掉）。
 - 仓库 `rootfs/` 的所有文件（全部 init 脚本：mr-network、mr-firewall、mr-pppoe、mr-udhcpc、mr-wanmon、mr-hostapd、
-  mr-mon、mr-proxy、mr-proxy-dns、mr-panel、mr-zram、tailscale、lucky、dstatus-agent …，钩子、Web UI）。
+  mr-mon、mr-proxy、mr-proxy-dns、mr-panel、mr-zram、tailscale、dstatus-agent …，钩子、Web UI）。
 - 内核模块 + 固件：只带 MT7976 用的固件，去掉 `mt7986_wm_mt7975.bin`、`mt7986_rom_patch_mt7975.bin`；
   不带 OpenWrt 的 `/etc/modules.d`；`depmod` 前把 OpenWrt 的 `modules.builtin` 改成 kmod 认的 `kernel/<名>` 格式。
 - 系统用户 / 组 `sing-box`（`/sbin/nologin`，home `/var/empty`）：mr-proxy 以它 + `CAP_NET_ADMIN` 运行。
@@ -159,7 +159,7 @@ FIT 偏移不越界、DTB 的 compatible 是本机；空间够（rootfs_data 至
 
 安装：
 
-- **从闪存运行时**：`rootfs` 卷正挂着，不能原地写。先停掉占内存的服务（mr-proxy、tailscale、lucky、dstatus、mr-mon），
+- **从闪存运行时**：`rootfs` 卷正挂着，不能原地写。先停掉占内存的服务（mr-proxy、tailscale、dstatus、mr-mon），
   在 `/tmp` 组一个安装用 initramfs（busybox、ubi 工具、本脚本、mr-preinit、新的 FIT 和 squashfs），从新 FIT 里取出
   内核（unlzma）和 DTB，`kexec -l`；停看门狗服务（magic close）后用 devmem 直接把 MT7986 硬件看门狗设成 30 秒单级复位
   （否则内核在 kexec 时会关掉它），`kexec -e`。**新内核**起来（顺带验证它能启动）→ 安装程序接管看门狗 → 写 rootfs →
@@ -190,13 +190,13 @@ FIT 偏移不越界、DTB 的 compatible 是本机；空间够（rootfs_data 至
 
 | | |
 |---|---|
-| rootfs（解压） | 约 174 MiB（178,496 KiB），其中 Go 程序 137 MB：sing-box 75.3、dstatus-agent 25.6、tailscaled 16.7、lucky 10.0、mr 5.3 |
-| squashfs（`rootfs` 卷） | 54,562,816 字节（52.0 MiB） |
+| rootfs（解压） | 约 164 MiB（移除一个 10 MB 的第三方程序前实测 178,496 KiB），其中 Go 程序 127 MB：sing-box 75.3、dstatus-agent 25.6、tailscaled 16.7、mr 5.3 |
+| squashfs（`rootfs` 卷） | 54,562,816 字节（52.0 MiB，同上为移除前实测；现在约小 4 MiB） |
 | FIT（`kernel` 卷） | 4,735,944 字节 |
 | rootfs_data | 约 44 MiB（首次刷机后：857 LEB − kernel 46 − rootfs 462 = 349 LEB；UBIFS 实际可用约 40 MiB） |
 | 测试 initramfs | 见 `out/m3/sizes.txt`（解压后整个 rootfs 在内存里） |
 
-内存（估算，未在硬件上测）：M2（initramfs，rootfs 113 MB 常驻内存）实测 used ≈ 150 MB（含 tailscale / lucky / dstatus）。
+内存（估算，未在硬件上测）：M2（initramfs，rootfs 113 MB 常驻内存）实测 used ≈ 150 MB（含 tailscale / dstatus 和当时的一个第三方反代程序）。
 M3 从闪存运行，rootfs 不占内存（squashfs 页缓存可回收），进程和 M2 相同：**空闲时 used ≈ 150 MB，可用 ≈ 300 MB**
 （MemTotal 约 484 MB）；开代理再加 sing-box 约 45 MB。kexec 测试系统里 rootfs 常驻内存，可用约少 170 MB。
 sysupgrade 从闪存运行时峰值约 3 × 镜像大小（/tmp 里的镜像、解包、installer cpio，加上 kexec 加载时的副本），所以先停大服务。
@@ -242,7 +242,7 @@ MR_VERSION=$(git rev-parse --short HEAD) ./build/m3/build.sh   # 镜像
 mkdir -p cfg/etc/mini-router cfg/root/.ssh
 cp router.yaml secrets.yaml cfg/etc/mini-router/    # 还有 dns/*.domains、proxy/* 等
 cp ~/.ssh/id_ed25519.pub cfg/root/.ssh/authorized_keys
-# 可选：cfg/etc/dropbear/*_host_key（保持 SSH 主机密钥不变）、cfg/etc/tailscale/tailscaled.state、cfg/etc/lucky/…
+# 可选：cfg/etc/dropbear/*_host_key（保持 SSH 主机密钥不变）、cfg/etc/tailscale/tailscaled.state
 sh tools/provision.sh -o out cfg                    # → out/provision.cpio、out/overlay.tar.gz（0600，含密钥）
 ```
 

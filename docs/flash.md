@@ -24,7 +24,7 @@ M3 的设计和校验细节见 [modules/platform.md](modules/platform.md)。**�
 
    ```sh
    mkdir -p ~/m3/cfg/etc/mini-router/dns ~/m3/cfg/root/.ssh ~/m3/cfg/etc/dropbear
-   # 可选：服务状态（etc/tailscale、etc/lucky、etc/dstatus-agent …），从旧系统拷过来
+   # 可选：服务状态（etc/tailscale、etc/dstatus-agent …），从旧系统拷过来
    cp examples/router.yaml secrets.yaml ~/m3/cfg/etc/mini-router/
    cp ~/.ssh/<密钥>.pub ~/m3/cfg/root/.ssh/authorized_keys
    # 可选：保持 SSH 主机密钥不变，从 OpenWrt 拷 dropbear 的主机密钥
@@ -60,7 +60,7 @@ cat /etc/mini-router-release; rc-status; mr status | head -c 2000
 
 - 两条 PPPoE 都拨上、IPv4 / IPv6 出网；LAN DHCP、DNS（含 stubby 分流）
 - 2.4G / 5G WiFi，设备能连；`nft list flowtables` 有 `flags offload`，`grep -c HW_OFFLOAD /proc/net/nf_conntrack` > 0
-- desktop 走 wan2；端口转发两条线都通；tailscale 在线、192.168.60.0/24 可达；lucky / dstatus / Web UI / 面板
+- desktop 走 wan2；端口转发两条线都通；tailscale 在线、192.168.60.0/24 可达；dstatus / Web UI / 面板
 - 开了代理的话：`mr proxy check`
 - `free -m`：内存测试时整个 rootfs 在内存里，可用内存比刷机后少约 170 MB，属正常
 
@@ -102,7 +102,7 @@ df -h /overlay; ubinfo -a | grep -E 'Name|Size'
 cat /etc/router-changes.log | tail -3
 ```
 
-重复第 1 节的检查清单，再 `reboot` 一次，确认配置和状态（tailscale 登录、lucky 配置）都保留。
+重复第 1 节的检查清单，再 `reboot` 一次，确认配置和状态（tailscale 登录、ddns / edge 证书）都保留。
 
 以后的升级：`sysupgrade -T` 校验后 `setsid /usr/libexec/mr/sysupgrade -y --sha256 … /tmp/<镜像> > /tmp/su.log 2>&1 &`。
 从闪存运行时它会 kexec 进新内核里的安装程序，路由器断网约 2 分钟；kexec 之前失败不会改动闪存，新内核卡住看门狗会
@@ -117,7 +117,7 @@ cat /etc/router-changes.log | tail -3
 - 刚刷完、还在 M3 内存系统里：直接用。
 - 已经从闪存跑 mini-router：像第 1 节一样用 `kexec-test.sh` 进 M3 内存系统（`kexec-test.sh` 在 mini-router 上也能用，
   它自带 devmem）。为了给 dump 留内存，provision 目录可以只放 `router.yaml` + `authorized_keys` + 主机密钥，
-  或者进去后先停掉大服务：`rc-service tailscale stop; rc-service lucky stop; rc-service dstatus-agent stop; rc-service mr-proxy stop`。
+  或者进去后先停掉大服务：`rc-service tailscale stop; rc-service dstatus-agent stop; rc-service mr-proxy stop`。
 
 然后（三个 dump 共约 110 MB，放 `/tmp`）：
 

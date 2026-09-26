@@ -383,6 +383,7 @@ func refreshRoutes(c *Config) {
 		}
 		wanUp(c, w, ifn, local, gw)
 	}
+	srcDefaults6(c) // health changes move it with the WAN metrics
 	writeResolv(c)
 }
 
@@ -424,6 +425,7 @@ func hookDhcpcd(c *Config) error {
 	// prefixes; after a reboot, the first one that finds a prefix there announces those that did not come back (RFC 9096,
 	// mod_net_renumber.go)
 	defer lan6Renumber(c)
+	defer srcDefaults6(c) // every event: the LAN bridge's (address added) as well as the WAN's
 	iface, reason := os.Getenv("interface"), os.Getenv("reason")
 	w := c.wanByIfname(iface)
 	if w == nil {
@@ -469,6 +471,86 @@ func hookDhcpcd(c *Config) error {
 	}
 	runOnWAN(c, w.Name, "ipv6")
 	return refreshLan6()
+}
+
+// protoSrc6 marks the main-table IPv6 default routes srcDefaults6 installs.
+const protoSrc6 = "97"
+
+// srcDefaults6: the router's own IPv6 traffic (no source chosen yet) follows the main table's default
+// route, and without a src on it the kernel may pick an address from another WAN's prefix, which this
+// WAN's upstream drops (Cd1s/mini-router#97). With more than one WAN, each WAN with a delegated prefix
+// gets `default [via gw] dev WAN src <our address in its prefix> metric <WAN metric+1> proto 97`: in WAN
+// metric order, below the RA routes (1024; metric 0 would mean 1024 too), a down WAN raised like IPv4.
+// A WAN without prefix, address or gateway loses it (a PPPoE device takes it along when it goes).
+func srcDefaults6(c *Config) {
+	addrs := globalAddrs6()
+	health := wanHealthMap(c)
+	for i := range c.WAN {
+		w := &c.WAN[i]
+		dev := w.Ifname()
+		metric := -1
+		if src := wanSrc6(strings.Fields(readFile(pd6File(w.Name))), addrs); src != "" && len(c.WAN) > 1 {
+			var via []string
+			if w.Proto != "pppoe" {
+				if gw6 := mainDefault6(dev); gw6 != "" {
+					via = []string{"via", gw6}
+				}
+			}
+			if w.Proto == "pppoe" || via != nil {
+				metric = src6Metric(w, health[w.Name] != "down")
+				run("ip", src6Args(dev, via, src, metric)...)
+			}
+		}
+		rs, _ := ipJSON("-6", "route", "show", "default", "dev", dev, "proto", protoSrc6).([]any)
+		for _, r := range rs {
+			r, _ := r.(map[string]any)
+			if m, _ := r["metric"].(float64); int(m) != metric {
+				run("ip", "-6", "route", "del", "default", "dev", dev, "proto", protoSrc6, "metric", fmt.Sprint(int(m)))
+			}
+		}
+	}
+}
+
+func src6Metric(w *WAN, healthy bool) int {
+	if healthy {
+		return w.Metric + 1
+	}
+	return w.Metric + 1 + downMetric
+}
+
+func src6Args(dev string, via []string, src string, metric int) []string {
+	args := append([]string{"-6", "route", "replace", "default"}, via...)
+	return append(args, "dev", dev, "src", src, "proto", protoSrc6, "metric", fmt.Sprint(metric))
+}
+
+// globalAddrs6: the router's global IPv6 addresses that are still preferred (not deprecated / stale).
+func globalAddrs6() []string {
+	var out []string
+	l, _ := ipJSON("-6", "addr", "show", "scope", "global").([]any)
+	for _, x := range l {
+		m, _ := x.(map[string]any)
+		ai, _ := m["addr_info"].([]any)
+		for _, a := range ai {
+			a, _ := a.(map[string]any)
+			if s, _ := a["local"].(string); s != "" && a["preferred_life_time"] != float64(0) && a["tentative"] != true {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+// wanSrc6 returns the first of addrs inside one of the prefixes pfxs ("" if none).
+func wanSrc6(pfxs, addrs []string) string {
+	for _, a := range addrs {
+		ip := net.ParseIP(a)
+		for _, p := range pfxs {
+			if _, n, err := net.ParseCIDR(p); err == nil && ip != nil && n.Contains(ip) {
+				return ip.String()
+			}
+		}
+	}
+	return ""
 }
 
 var reIAPD = lazyRegexp(`^new_dhcp6_ia_pd([0-9]+)_prefix([0-9]+)=([0-9a-fA-F:]+)$`)

@@ -512,7 +512,7 @@ if root_is_ram; then
 fi
 
 # from flash: free RAM first (the payload is staged twice while the installer is built)
-for s in mr-proxy mr-proxy-dns tailscale lucky lucky-dns-inotify dstatus-agent mr-mon; do
+for s in mr-proxy mr-proxy-dns tailscale dstatus-agent mr-mon; do
 	rc-service --ifstarted "$s" stop > /dev/null 2>&1
 done
 sync

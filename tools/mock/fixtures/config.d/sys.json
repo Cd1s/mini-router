@@ -23,10 +23,6 @@
     "enabled": true,
     "port": 41641
    },
-   "lucky": {
-    "enabled": true,
-    "port": 16601
-   },
    "dstatus": {
     "enabled": true
    },

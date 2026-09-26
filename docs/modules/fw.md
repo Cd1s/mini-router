@@ -94,7 +94,7 @@ firewall:
       # WANs, LAN clients always reach the first of those forwards.
 
   open:                      # ports on the router itself, from WAN, IPv4 + IPv6
-    - name: lucky-https
+    - name: https
       proto: [tcp]
       port: "443"            # "443", "8000-8100", "80,443"
       wan: [wan]             # optional

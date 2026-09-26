@@ -68,9 +68,11 @@ ok "service settings"
 
 # 3. crontab
 C=$L/etc/crontabs/root
-if [ -e "$H/etc/crontabs/root" ]; then fail "home: crontab rendered without schedules"; fi
+# home: no schedules, but the DDNS check and the certificate renewal
+[ "$(grep -c '^[^#]' "$H/etc/crontabs/root")" = 2 ] && grep -q ' /usr/sbin/mr ddns sync --cron$' "$H/etc/crontabs/root" &&
+	grep -q ' /usr/sbin/mr edge renew --cron$' "$H/etc/crontabs/root" || fail "home crontab: $(cat "$H/etc/crontabs/root")"
 grep -qx 'crond' "$L/etc/mini-router/gen/services" || fail "lab: crond not enabled"
-if grep -qx 'crond' "$H/etc/mini-router/gen/services"; then fail "home: crond enabled without schedules"; fi
+grep -qx 'crond' "$H/etc/mini-router/gen/services" || fail "home: crond not enabled"
 grep -qx "export TZ='CET-1CEST,M3.5.0,M10.5.0/3'" "$L/etc/conf.d/crond" || fail "lab: crond zone"
 block=$(sed -n '/^# --- begin mini-router schedules/,/^# --- end mini-router schedules/p' "$C" | grep -v '^#')
 [ "$(echo "$block" | wc -l)" = 11 ] || fail "lab crontab: want 5 jobs + the DDNS check + the certificate check + the adblock check + the wifi, watchcat and presence ticks, got: $block"
@@ -125,7 +127,10 @@ assert [r["note"] for r in rows if r["source"].startswith("url:")] == ["looked u
 assert {r["provider"] for r in rows} == {"cloudflare", "alidns", "dnspod", "duckdns", "dyndns2", "webhook"}, rows
 EOF
 if grep -qE 'lab-token|not-real' "$OUT/ddns-status.json"; then fail "ddns status shows a secret"; fi
-[ "$("$MR" -c "$ROOT/examples/router.yaml" -s "$ROOT/mr/testdata/secrets.yaml" ddns status | tr -d ' \n')" = "[]" ] || fail "home: ddns status not empty"
+"$MR" -c "$ROOT/examples/router.yaml" -s "$ROOT/mr/testdata/secrets.yaml" ddns status > "$OUT/ddns-home.json" || fail "home: ddns status"
+python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); assert len(r) == 4 and {x["provider"] for x in r} == {"cloudflare"} and sorted(x["type"] for x in r) == ["A", "A", "A", "AAAA"], r' \
+	"$OUT/ddns-home.json" || fail "home: ddns status: $(cat "$OUT/ddns-home.json")"
+if grep -q 'not-real' "$OUT/ddns-home.json"; then fail "home: ddns status shows a secret"; fi
 # shellcheck disable=SC2086
 if "$MR" $CFG ddns update nope.example.com >/dev/null 2>&1; then fail "ddns update of an unknown record accepted"; fi
 ok "ddns status"

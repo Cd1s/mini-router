@@ -20,10 +20,11 @@ fail() { echo "FAIL: $*"; exit 1; }
 ok() { echo "ok: $*"; }
 
 # 1. rendering
-if [ -e "$H/etc/mini-router/gen/edge.json" ]; then fail "home: edge.json rendered"; fi
-if grep -qx 'mr-edge' "$H/etc/mini-router/gen/services"; then fail "home: mr-edge enabled"; fi
-if grep -q 'edge' "$OUT/home-nft.nft"; then fail "home: edge rules in the firewall"; fi
-if grep -q '^host-record=' "$H/etc/dnsmasq.conf"; then fail "home: host-record in dnsmasq.conf"; fi
+# home: the reverse proxy on 443, open, the route hosts answered on the LAN (A + AAAA)
+[ -e "$H/etc/mini-router/gen/edge.json" ] || fail "home: no edge.json"
+grep -qx 'mr-edge' "$H/etc/mini-router/gen/services" || fail "home: mr-edge not enabled"
+grep -q 'dport 443 redirect to :44300 comment "edge"' "$OUT/home-nft.nft" || fail "home: no edge redirect in the firewall"
+grep -q '^interface-name=.*,br-lan$' "$H/etc/dnsmasq.conf" || fail "home: no interface-name in dnsmasq.conf"
 E=$L/etc/mini-router/gen/edge.json
 grep -qx 'mr-edge' "$L/etc/mini-router/gen/services" || fail "lab: mr-edge not enabled"
 python3 - "$E" <<'EOF' || fail "lab edge.json"
@@ -33,12 +34,12 @@ assert c["port"] == 8443 and c["wan_port"] == 44300 and c["certs"] == "/etc/mini
 got = [(r["name"], r["host"], r["cert"], r.get("allow", [])) for r in c["routes"]]
 assert got == [("nas", "nas.example.com", "_.example.com", []), ("ha", "ha.example.com", "_.example.com", ["lan", "198.51.100.0/24"]),
                ("cam", "cam.lab.example.org", "cam.lab.example.org", ["lan"]), ("tailnet-app", "app.example.com", "_.example.com", []),
-               ("lucky-ui", "lucky.example.com", "_.example.com", ["lan"])], got
+               ("admin-ui", "admin.example.com", "_.example.com", ["lan"])], got
 EOF
 if grep -q 'lab-token\|cf_ddns_token' "$E"; then fail "edge.json names the token"; fi
 [ "$(stat -c %a "$E")" = 644 ] || fail "edge.json mode"
-for h in nas.example.com ha.example.com cam.lab.example.org app.example.com lucky.example.com; do
-	grep -qx "host-record=$h,192.168.1.6" "$L/etc/dnsmasq.conf" || fail "lab dnsmasq: no host-record for $h"
+for h in nas.example.com ha.example.com cam.lab.example.org app.example.com admin.example.com; do
+	grep -qx "interface-name=$h,br-lan" "$L/etc/dnsmasq.conf" || fail "lab dnsmasq: no interface-name for $h"
 done
 if grep -q 'old.example.com' "$L/etc/dnsmasq.conf"; then fail "lab dnsmasq: a disabled route resolves"; fi
 grep -q 'fib daddr type local tcp dport { 8443, 10443 } redirect to :44300 comment "edge"' "$OUT/lab-nft.nft" || fail "lab nft: no redirect"
@@ -189,7 +190,7 @@ case $r in "error "*) ;; *) fail "unknown SNI answered: $r" ;; esac
 r=$(c "$NS" cam.lab.example.org 192.168.1.6 8443)
 case $r in "error "*) ;; *) fail "a route without its certificate answered: $r" ;; esac
 r=$(ip netns exec "$NS" curl -sS --max-time 5 --cacert "$T/ca.pem" --resolve nas.example.com:8443:192.168.1.6 \
-	-H 'Host: lucky.example.com' -o /dev/null -w '%{http_code}' https://nas.example.com:8443/ 2>/dev/null || echo error)
+	-H 'Host: admin.example.com' -o /dev/null -w '%{http_code}' https://nas.example.com:8443/ 2>/dev/null || echo error)
 [ "$r" = 421 ] || fail "Host ≠ SNI: $r"
 ip netns exec "$NS" python3 - "$T/ca.pem" <<'EOF' || fail "WebSocket upgrade through the proxy"
 import socket, ssl, sys
@@ -238,8 +239,8 @@ for a in 203.0.113.1 "[2001:db8:e::1]"; do
 	case $r in '200 2 {"req": "GET /p?q=1 HTTP/1.1", "host": "nas.example.com:8443", "xff": "'*) ;; *) fail "WAN $a: nas: $r" ;; esac
 	r=$(c "$NW" ha.example.com "$a" 8443)
 	case $r in "error "*) ;; *) fail "WAN $a: the lan-only route ha answered: $r" ;; esac
-	r=$(c "$NW" lucky.example.com "$a" 8443)
-	case $r in "error "*) ;; *) fail "WAN $a: the lan-only route lucky-ui answered: $r" ;; esac
+	r=$(c "$NW" admin.example.com "$a" 8443)
+	case $r in "error "*) ;; *) fail "WAN $a: the lan-only route admin-ui answered: $r" ;; esac
 	r=$(c "$NW" nas.example.com "$a" 44300 --connect-timeout 2)
 	case $r in "error "*) ;; *) fail "WAN $a: the internal WAN port is reachable directly: $r" ;; esac
 done

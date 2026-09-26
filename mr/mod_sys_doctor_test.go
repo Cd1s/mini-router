@@ -83,6 +83,7 @@ func docFind(r docResult, id string) docFinding {
 func TestDoctorHealthy(t *testing.T) {
 	eventEnv(t)
 	c := testConfig(t)
+	c.Services.Edge = Edge{} // no certificates to check
 	r := runDoctor(c, fakeDocEnv())
 	if r.Risk != 0 || r.Warn != 0 || docProblems(r) != "" {
 		t.Fatalf("healthy router: %d risk, %d warn: %s", r.Risk, r.Warn, docProblems(r))
@@ -112,6 +113,7 @@ func TestDoctorHealthy(t *testing.T) {
 func TestDoctorFindings(t *testing.T) {
 	eventEnv(t)
 	c := testConfig(t)
+	c.Services.Edge = Edge{} // no certificates to check
 	run := func(f func(e *docEnv)) docResult {
 		e := fakeDocEnv()
 		f(e)
@@ -249,6 +251,7 @@ func TestDoctorFindings(t *testing.T) {
 func TestDoctorEvents(t *testing.T) {
 	_, now, _, kicks := eventEnv(t)
 	c := testConfig(t)
+	c.Services.Edge = Edge{} // no certificates to check
 	c.Notify.Channels = []NotifyChannel{{Name: "tg", Type: "telegram", Token: "x", ChatID: "1"}}
 	c.Notify.Events = notifyDefaultEvents()
 	e := fakeDocEnv()
@@ -293,6 +296,7 @@ func TestDoctorCommandAndAPI(t *testing.T) {
 	newDocEnv = fakeDocEnv
 	t.Cleanup(func() { newDocEnv = old })
 	c := testConfig(t)
+	c.Services.Edge = Edge{} // no certificates to check
 	if doctorCommand(c, []string{"--fix"}) == nil {
 		t.Error("mr doctor --fix accepted")
 	}
