@@ -142,7 +142,8 @@ inside() {
 	echo "A ok: rootfs $r0 -> $(lebs rootfs) LEBs, rootfs_data $(lebs rootfs_data) LEBs"
 
 	say "B: upgrade in place keeps rootfs_data"
-	datamount && echo keep > /data/mr/upper/etc/keepme && umount /data
+	datamount && echo keep > /data/mr/upper/etc/keepme && touch -d @1000000000 /data/mr/upper/etc/mini-router/state/clock && umount /data
+	t0=$(date +%s)
 	# make the volumes differ from the image so a missing write shows
 	R ubiupdatevol "$U"_"$(volid kernel)" /t/owrt-kernel
 	R ubiupdatevol "$U"_"$(volid rootfs)" /t/owrt-root
@@ -151,6 +152,7 @@ inside() {
 	check_volumes B
 	datamount
 	[ "$(cat /data/mr/upper/etc/keepme)" = keep ] || fail "B: rootfs_data not kept"
+	[ "$(date -r /data/mr/upper/etc/mini-router/state/clock +%s)" -ge "$t0" ] || fail "B: clock not saved (#103)"
 	[ "$(grep -c 'sysupgrade: installed' /data/mr/upper/etc/router-changes.log)" = 2 ] || fail "B: change log"
 	umount /data
 	echo "B ok"
