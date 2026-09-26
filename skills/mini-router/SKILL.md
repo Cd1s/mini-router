@@ -63,18 +63,22 @@ lan: {bridge: br-lan, ports: [lan1, lan2], ipv4: 192.168.1.1/24, ipv6_ra: true}
 wan:
   - {name: wan, device: wan, proto: pppoe, username: "…", password_secret: pppoe_password, ipv6: true, ipv6_pd: true}  # mtu: 1500 = RFC 4638 (falls back to 1492)
   - {name: wan2, device: eth2, proto: dhcp}           # proto: pppoe | dhcp | static (ipv4:, gateway:, dns:)
+devices:                                              # inventory: other sections use the name (docs/modules/dev.md)
+  - {name: nas, macs: ["aa:bb:cc:dd:ee:02"], ip: 192.168.1.20, type: server}  # ip = static lease; a MAC not also in dhcp.hosts
+  - {name: kid-tablet, macs: ["aa:bb:cc:dd:ee:21", "aa:bb:cc:dd:ee:22"], owner: kid}
+groups: {kids: [kid-tablet]}                          # elsewhere: "group:kids"
 policy_routes:                                        # pick the WAN for NEW connections (selectors are ANDed)
-  - {name: nas, mac: "aa:bb:cc:dd:ee:02", via: wan2}  # mac / src / dst / domains
+  - {name: nas, device: nas, via: wan2, fallback: drop}  # mac / device / src / dst / domains; drop = never another WAN
   - {name: video, domains: [video.example], via: wan2}  # + subdomains; dnsmasq fills nft set pr_<index>_4/_6
 dhcp:
   start: 100
   end: 249
   hosts:                                              # static leases (IP outside start..end)
-    - {name: nas, mac: "aa:bb:cc:dd:ee:ff", ip: 192.168.1.20}
+    - {name: printer, mac: "aa:bb:cc:dd:ee:ff", ip: 192.168.1.30}   # older form of a device with ip
 firewall:
   offload: hardware                                   # hardware | software | off
   forwards:                                           # WAN → LAN port forwards
-    - {name: web, proto: [tcp], port: "8443", to: 192.168.1.20, to_port: "443"}
+    - {name: web, proto: [tcp], port: "8443", to: nas, to_port: "443"}   # to: an IPv4 or a device with ip
     - {name: game, proto: [tcp, udp], port: 27000-27010, to: 192.168.1.30}
   open:                                               # ports on the router itself, from WAN
     - {name: https, proto: [tcp], port: "443"}
@@ -146,7 +150,11 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
   port is refused while it is on (remove lucky's `lucky-https`, disable lucky in the same apply). Plan risk is high.
   Check: `mr edge status` (`serving`, certificates `state` / `error`, requests per route); issue now: `mr edge renew`
   (certificates come from Let's Encrypt via DNS-01 in 1–2 minutes; renewed daily when a third of the lifetime is left).
-- **Wake a device (WOL)**: `mr wol <dhcp.hosts name>` or `mr wol aa:bb:cc:dd:ee:ff [network]` — magic packet to that
+- **Pause a device's internet** (runtime only: no apply, no confirm, ends by itself; a reboot ends it too):
+  `mr pause <device|group:NAME|dhcp.hosts name|MAC> 1h` (30m, 2h30m, 1d; max 7d), `mr pause list`,
+  `mr unpause <…|all>`. Cuts running connections at once (the firewall reload ends offloaded flows); LAN, DHCP and
+  DNS keep working. Permanent / scheduled blocks stay in `firewall.access` (`devices: ["group:kids"]` works there).
+- **Wake a device (WOL)**: `mr wol <device or dhcp.hosts name>` or `mr wol aa:bb:cc:dd:ee:ff [network]` — magic packet to that
   LAN network's broadcast through its bridge (never a WAN). Scheduled: `schedules: [{name: wake-nas, cron: "0 7 * * 1-5",
   action: wol, target: nas}]`. The device needs WOL enabled in its BIOS / NIC and usually a cable.
 

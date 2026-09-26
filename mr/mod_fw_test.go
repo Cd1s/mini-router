@@ -19,7 +19,8 @@ func fixedClock(t *testing.T, kernelMW int) {
 }
 
 // fwLabConfig: the home config plus a guest and an IoT network, with the firewall section of the
-// lab fragment examples/lab.d/40-fw.yaml (every fw feature).
+// lab fragment examples/lab.d/40-fw.yaml (every fw feature) and the device inventory it refers to
+// (35-dev.yaml).
 func fwLabConfig(t *testing.T) *Config {
 	t.Helper()
 	c := testConfig(t)
@@ -27,19 +28,23 @@ func fwLabConfig(t *testing.T) *Config {
 		{Name: "guest", IPv4: "192.168.20.1/24", Zone: "guest", DHCP: Pool{Enabled: true, Start: 100, End: 199}},
 		{Name: "iot", IPv4: "192.168.30.1/24", Zone: "lan"},
 	}
-	b, err := os.ReadFile("../examples/lab.d/40-fw.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
 	var frag struct {
-		Firewall Firewall `yaml:"firewall"`
+		Firewall Firewall            `yaml:"firewall"`
+		Devices  []Device            `yaml:"devices"`
+		Groups   map[string][]string `yaml:"groups"`
 	}
-	dec := yaml.NewDecoder(strings.NewReader(string(b)))
-	dec.KnownFields(true)
-	if err := dec.Decode(&frag); err != nil {
-		t.Fatal(err)
+	for _, f := range []string{"40-fw.yaml", "35-dev.yaml"} {
+		b, err := os.ReadFile("../examples/lab.d/" + f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dec := yaml.NewDecoder(strings.NewReader(string(b)))
+		dec.KnownFields(true)
+		if err := dec.Decode(&frag); err != nil {
+			t.Fatal(err)
+		}
 	}
-	c.Firewall = frag.Firewall
+	c.Firewall, c.Devices, c.Groups = frag.Firewall, frag.Devices, frag.Groups
 	c.defaults()
 	return c
 }
@@ -358,10 +363,12 @@ func TestFwAccessElements(t *testing.T) {
 		{"192.168.1.101", 20}, // also in the neighbour table: seen now, full timeout
 		{"192.168.1.44", 0},   // expiring: dropped
 	})
+	// ac4: kids-school-night controls devices of the inventory; kid-tablet's fixed address is a hint too
 	want := "add element inet mr ac0_4 { 192.168.1.101 }\n" +
 		"add element inet mr ac0_6 { 2001:db8:1::5 }\n" +
 		"add element inet mr ac1_4 { 192.168.1.80 }\n" +
-		"add element inet mr ac_4 { 192.168.1.33 timeout 3600s, 192.168.1.101, 192.168.1.80 }\n" +
+		"add element inet mr ac4_4 { 192.168.1.121 }\n" +
+		"add element inet mr ac_4 { 192.168.1.33 timeout 3600s, 192.168.1.101, 192.168.1.80, 192.168.1.121 }\n" +
 		"add element inet mr ac_6 { 2001:db8:1::77 timeout 100s, 2001:db8:1::5 }\n"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)

@@ -35,21 +35,35 @@ const wakeBtn = (mac, network)=>h("button",{class:"btn sm",title:"发送网络�
 
 // ---------------- 状态 › 终端设备 ----------------
 registerPage("status", "clients", "终端设备", 20, async ()=>{
-  let filter = "", ls = {}, cl = {};
+  let filter = "", ls = {}, cl = {}, pz = [];
   const body = h("div"), info = h("span",{class:"mut",style:"flex:1"});
-  const load = async ()=>{ [ls, cl] = await Promise.all([api("dns.leases"), api("clients").catch(()=>({stations:[]}))]); render(); };
+  const load = async ()=>{ [ls, cl, pz] = await Promise.all([api("dns.leases"), api("clients").catch(()=>({stations:[]})),
+    api("dev.paused").then(j=>j.paused||[]).catch(()=>[])]); render(); };
   const render = ()=>{
     const now = ls.now || Date.now()/1000;
     const byMac = {}; for (const l of ls.leases||[]) byMac[l.mac.toLowerCase()] = l;
-    const cfgMacs = new Set((S.cfg.dhcp.hosts||[]).map(x=>(x.mac||"").toLowerCase()));
+    const devOf = {}; for (const d of S.cfg.devices||[]) for (const m of d.macs||[]) devOf[m.toLowerCase()] = d; // 网络 › 设备
+    const cfgMacs = new Set([...(S.cfg.dhcp.hosts||[]).map(x=>(x.mac||"").toLowerCase()), ...Object.keys(devOf).filter(m=>devOf[m].ip)]);
+    const paused = {}; for (const p of pz) paused[p.mac.toLowerCase()] = p;
     const match = (...xs)=>!filter || xs.some(x=>String(x||"").toLowerCase().includes(filter));
+    // 暂停上网: a device of the inventory is paused as a whole (all its MACs), anything else by MAC
+    const pauseCtl = (mac, name)=>{
+      const d = devOf[mac], p = paused[mac], target = d ? d.name : mac, label = d ? d.name : (name && name!=="*" ? name : mac);
+      return p ? [h("span",{class:"tag warn"},"已暂停 · "+pauseLeft(p)), h("button",{class:"btn sm",onclick:async()=>{
+          try { await api("dev.unpause",{target}); toast("已恢复 "+label); await load(); } catch(e){ toast(e.message,4000); } }},"恢复")]
+        : h("button",{class:"btn sm",title:"暂停它的外网访问（不改配置，到时自动恢复）",onclick:()=>pauseDlg(target, label, load)},"暂停");
+    };
     const leaseRows = (ls.leases||[]).filter(l=>match(l.name,l.ip,l.mac,l.network)).map(l=>{
-      const mac = l.mac.toLowerCase();
+      const mac = l.mac.toLowerCase(), d = devOf[mac];
       const st = l.static ? h("span",{class:"tag ok"},"静态") : cfgMacs.has(mac) ? h("span",{class:"tag warn"},"待应用") :
-        h("button",{class:"btn sm",title:"把当前地址固定给这台设备",onclick:e=>{ S.cfg.dhcp.hosts.push({name:cleanName(l.name,l.ip), mac, ip:l.ip}); touch(); e.target.replaceWith(h("span",{class:"tag warn"},"待应用")); }},"设为静态");
+        h("button",{class:"btn sm",title:"把当前地址固定给这台设备",onclick:e=>{
+          if (d) d.ip = l.ip; else S.cfg.dhcp.hosts.push({name:cleanName(l.name,l.ip), mac, ip:l.ip});
+          touch(); e.target.replaceWith(h("span",{class:"tag warn"},"待应用")); }},"设为静态");
       const rel = confirmBtn("释放", "释放 "+l.ip+"（"+l.mac+"）的租约？\n设备下次续约时会重新申请地址；适合清理已离线设备或把地址腾给静态分配。", async()=>{
         await api("dns.release",{ip:l.ip, mac:l.mac}); toast("已释放 "+l.ip); await load(); });
-      return [l.name==="*"?h("span",{class:"mut"},"-"):l.name, mono(l.ip), mono(l.mac), l.network||"-", remain(l.expires, now), h("span",{class:"row"}, st, wakeBtn(l.mac, l.network), rel)];
+      const name = d ? h("span",{}, d.name, l.name && l.name!=="*" && l.name.toLowerCase()!==d.name ? h("span",{class:"dns-sub"}, l.name) : null)
+        : l.name==="*" ? h("span",{class:"mut"},"-") : l.name;
+      return [name, mono(l.ip), mono(l.mac), l.network||"-", remain(l.expires, now), h("span",{class:"row"}, st, pauseCtl(mac, l.name), wakeBtn(l.mac, l.network), rel)];
     });
     const v6Rows = (ls.leases6||[]).filter(l=>match(l.name,l.ip,l.duid)).map(l=>[l.name==="*"?"-":l.name, mono(l.ip), mono(l.iaid),
       h("span",{class:"mono",title:l.duid}, (l.duid||"").slice(0,23)+((l.duid||"").length>23?"…":"")), remain(l.expires, now)]);

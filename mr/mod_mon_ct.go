@@ -293,7 +293,7 @@ func monLoadNames(c *Config) *monNames {
 		}
 	}
 	if c != nil {
-		for _, h := range c.DHCP.Hosts {
+		for _, h := range c.knownHosts() {
 			mac := strings.ToLower(h.MAC)
 			if h.Name != "" {
 				n.macName[mac] = h.Name

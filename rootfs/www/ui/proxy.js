@@ -491,12 +491,18 @@ registerPage("proxy", "proxy-bypass", "例外设备", 30, async ()=>{
   const known = new Map();
   for (const x of S.cfg.dhcp.hosts||[]) if (x.mac) known.set(x.mac.toLowerCase(), {name:x.name||x.mac, ip:x.ip, tag:"静态"});
   for (const l of leases) if (l.mac && !known.has(l.mac.toLowerCase())) known.set(l.mac.toLowerCase(), {name:l.name&&l.name!=="*"?l.name:l.mac, ip:l.ip, tag:"租约"});
-  const t = etable(p.bypass, [{k:"name",l:"名称"},{k:"mac",l:"MAC",ph:"aa:bb:cc:dd:ee:ff"}], {name:"",mac:""}, {noMove:true});
+  const t = etable(p.bypass, [{k:"name",l:"名称"},{k:"mac",l:"MAC",ph:"aa:bb:cc:dd:ee:ff"},{k:"device",l:"或设备 / 分组",ph:"desktop / group:kids"}], {name:"",mac:""}, {noMove:true});
   const pick = {v:""};
+  // devices / groups of the inventory (网络 › 设备): every MAC of the device is bypassed
+  const inv = [...(S.cfg.devices||[]).map(d=>d.name), ...Object.keys(S.cfg.groups||{}).map(g=>"group:"+g)];
   const picker = ()=>{
-    const have = new Set(p.bypass.map(b=>(b.mac||"").toLowerCase()));
-    const opts = [["","从 DHCP 设备中选择…"], ...[...known].filter(([m])=>!have.has(m)).map(([m,d])=>[m, d.name+" · "+(d.ip||"")+" · "+m+"（"+d.tag+"）"])];
-    return inSel(pick,"v",opts, m=>{ if(!m) return; const d=known.get(m); p.bypass.push({name:d.name, mac:m}); pick.v=""; touch(); t.redraw(); pickBox.replaceChildren(picker()); });
+    const have = new Set(p.bypass.map(b=>(b.mac||"").toLowerCase())), haveDev = new Set(p.bypass.map(b=>b.device).filter(Boolean));
+    const opts = [["","从设备中选择…"], ...inv.filter(n=>!haveDev.has(n)).map(n=>["dev:"+n, (n.startsWith("group:") ? "分组 "+n.slice(6) : n)+"（设备清单）"]),
+      ...[...known].filter(([m])=>!have.has(m)).map(([m,d])=>[m, d.name+" · "+(d.ip||"")+" · "+m+"（"+d.tag+"）"])];
+    return inSel(pick,"v",opts, m=>{ if(!m) return;
+      if (m.startsWith("dev:")){ const n=m.slice(4); p.bypass.push({name:n.replace(/^group:/,""), device:n}); }
+      else { const d=known.get(m); p.bypass.push({name:d.name, mac:m}); }
+      pick.v=""; touch(); t.redraw(); pickBox.replaceChildren(picker()); });
   };
   const pickBox = h("span",{}, picker());
   return h("div",{},

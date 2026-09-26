@@ -517,7 +517,7 @@ func eventScanLeases(c *Config) {
 		}
 	}
 	learning := now.Unix() < learnUntil
-	for _, h := range c.DHCP.Hosts {
+	for _, h := range c.knownHosts() { // dhcp.hosts and the device inventory are never "new"
 		known[strings.ToLower(h.MAC)] = true
 	}
 	var added []string

@@ -71,8 +71,8 @@ func parseLeases(data string) (v4 []lease, v6 []lease6) {
 func readLeases(c *Config) ([]lease, []lease6) {
 	v4, v6 := parseLeases(readFile(LeaseFile))
 	static := map[string]bool{}
-	for _, h := range c.DHCP.Hosts {
-		static[strings.ToLower(h.MAC)] = true
+	for _, h := range c.knownHosts() {
+		static[strings.ToLower(h.MAC)] = h.IP != ""
 	}
 	for i := range v4 {
 		l := &v4[i]

@@ -37,8 +37,8 @@ undone by a rollback. Revoking also drops the hash, so a name used again never b
 
 | Scope | Actions |
 |---|---|
-| `read` | `status`, `config`, `schema`, `history`, `history.diff`, `job`, `net`, `net.ports`, `net.routes`, `net.wan`, `wifi.status`, `wifi.stations`, `wifi.survey`, `wifi.health`, `dns.stats`, `dns.leases`, `fw.stats`, `proxy.status`, `mon.now`, `mon.history`, `mon.devices`, `mon.conns`, `mon.procs`, `mon.dmesg`, `sys.services`, `sys.time`, `sys.doctor` (runs the health checks), `sys.events` (the event log), `sys.edge` |
-| `operate` | + `net.redial`, `wifi.kick`, `wifi.scan`, `dns.release`, `proxy.delay`, `proxy.select`, `service` (start / stop / restart), `diag` |
+| `read` | `status`, `config`, `config.raw`, `schema`, `history`, `history.diff`, `job`, `net`, `net.ports`, `net.routes`, `net.wan`, `wifi.status`, `wifi.stations`, `wifi.survey`, `wifi.health`, `dns.stats`, `dns.leases`, `fw.stats`, `proxy.status`, `proxy.routes`, `mon.now`, `mon.history`, `mon.devices`, `mon.conns`, `mon.procs`, `mon.dmesg`, `sys.services`, `sys.time`, `sys.doctor` (runs the health checks), `sys.events` (the event log), `sys.edge`, `dev.paused` (active pauses) |
+| `operate` | + `net.redial`, `wifi.kick`, `wifi.scan`, `dns.release`, `dns.adblock`, `proxy.delay`, `proxy.select`, `service` (start / stop / restart), `diag`, `dev.pause` (`{target, duration}`: a device, `group:NAME`, dhcp.hosts name or MAC; `30m` … `7d`), `dev.unpause` (`{target}`, `all`) |
 | `apply` | + `plan`, `validate`, `apply`, `confirm`, `revert`, `rollback` |
 
 Never, whatever the scope: login / sessions, the web UI password, logs (`logs`, `sys.logs`: they can
@@ -78,6 +78,7 @@ R=http://192.168.1.1/cgi-bin/api; H="Authorization: Bearer $MR_TOKEN"
 curl -sH "$H" "$R?a=status"
 curl -sH "$H" "$R?a=mon.devices"
 curl -sH "$H" -d '{"mac":"aa:bb:cc:dd:ee:ff"}' "$R?a=wifi.kick"          # operate
+curl -sH "$H" -d '{"target":"group:kids","duration":"1h"}' "$R?a=dev.pause"   # operate: no internet for an hour
 ```
 
 POST bodies are JSON. Errors: `{"error": "..."}` with the HTTP status (400 bad input, 401 no / bad /

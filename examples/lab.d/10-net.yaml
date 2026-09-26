@@ -101,6 +101,13 @@ policy_routes:
     src: 192.168.1.80
     domains: [docs.video.example]
     via: isp3
+  - name: office-wan2-only      # a device of the inventory (35-dev.yaml); never another WAN when wan2 is down
+    device: office-pc
+    via: wan2
+    fallback: drop
+  - name: kids-via-isp3         # a group of devices
+    device: "group:kids"
+    via: isp3
 
 static_routes:
   - {name: lab-v4, target: 10.9.0.0/16, via: 192.168.1.50}

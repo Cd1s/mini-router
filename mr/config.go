@@ -32,6 +32,9 @@ type Config struct {
 	API       APIConf    `yaml:"api,omitempty"`       // api: tokens for scripts and agents (api_token.go)
 	Notify    Notify     `yaml:"notify,omitempty"`    // sys: where events are pushed (mod_sys_notify.go)
 	Bypass    Bypass     `yaml:"bypass,omitempty"`    // mode bypass: which clients use this box (mode.go)
+	// dev: the device inventory and groups that other sections refer to by name (mod_dev.go)
+	Devices []Device            `yaml:"devices,omitempty"`
+	Groups  map[string][]string `yaml:"groups,omitempty"`
 
 	secrets map[string]string
 }

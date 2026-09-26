@@ -30,6 +30,7 @@ func schemaEnums() map[string][]string {
 		"WAN.Proto":           e("pppoe", "dhcp", "static"),
 		"Network.Zone":        e("", "guest", "lan"),
 		"MultiWAN.Mode":       e("", "failover", "balance"),
+		"Policy.Fallback":     e("", "main", "drop"),
 		"Radio.Band":          e("2g", "5g"),
 		"Radio.Profile":       e("", "mt7986", "generic"),
 		"Radio.HTMode":        e("HT20", "HT40", "VHT20", "VHT40", "VHT80", "VHT160", "HE20", "HE40", "HE80", "HE160"),

@@ -7,7 +7,7 @@ package main
 //
 //	guard:
 //	  never_expose: [ssh, panel, dns]   # never reachable from the WAN (firewall.open, forwards to the router, services.edge routes)
-//	  always_bypass: [desktop]          # these devices (dhcp.hosts / proxy.bypass names) never go through the proxy
+//	  always_bypass: [desktop]          # these devices (devices / dhcp.hosts / proxy.bypass names) never go through the proxy
 //	  offload: hardware                 # flow offload may not drop below this (hardware > software > off)
 //	  ssh_lan_only: true                # SSH, when on, listens on the LAN-zone addresses only
 
@@ -61,7 +61,7 @@ func guardValidate(c *Config, v *Validator) {
 			}
 		}
 		for _, f := range c.Firewall.Forwards {
-			if f.Enabled != nil && !*f.Enabled || !c.isRouterAddr(f.To) {
+			if f.Enabled != nil && !*f.Enabled || !c.isRouterAddr(devHostIP(c, f.To)) {
 				continue
 			}
 			to := f.ToPort
@@ -78,18 +78,25 @@ func guardValidate(c *Config, v *Validator) {
 		edgeGuard(c, v, s, ports)
 	}
 	if len(g.AlwaysBypass) > 0 && c.Proxy.Enabled {
-		bypass := map[string]bool{}
+		bypass := map[string]bool{} // entry names and every bypassed MAC
 		for _, d := range c.Proxy.Bypass {
 			bypass[strings.ToLower(d.Name)] = true
-			bypass[strings.ToLower(d.MAC)] = true
+			for _, m := range proxyBypassMACs(c, d) {
+				bypass[m] = true
+			}
 		}
-		hosts := map[string]string{}
-		for _, h := range c.DHCP.Hosts {
-			hosts[strings.ToLower(h.Name)] = strings.ToLower(h.MAC)
+		hosts := map[string][]string{} // a name → its MACs (a device may have several: all must be bypassed)
+		for _, h := range c.knownHosts() {
+			n := strings.ToLower(h.Name)
+			hosts[n] = append(hosts[n], strings.ToLower(h.MAC))
 		}
 		for _, name := range g.AlwaysBypass {
 			n := strings.ToLower(name)
-			if !bypass[n] && (hosts[n] == "" || !bypass[hosts[n]]) {
+			all := len(hosts[n]) > 0
+			for _, m := range hosts[n] {
+				all = all && bypass[m]
+			}
+			if !bypass[n] && !all {
 				v.Add("guard.always_bypass: device %q is not in proxy.bypass", name)
 			}
 		}

@@ -6,7 +6,7 @@ import (
 )
 
 func TestModulesRegistered(t *testing.T) {
-	want := []string{"net", "wifi", "dns", "fw", "mon", "proxy", "sys", "api"}
+	want := []string{"net", "wifi", "dns", "dev", "fw", "mon", "proxy", "sys", "api"}
 	var got []string
 	for _, m := range modules {
 		got = append(got, m.Name)

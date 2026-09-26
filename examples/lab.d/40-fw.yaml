@@ -24,6 +24,7 @@ firewall:
     - {name: guest-cam, proto: [tcp], port: "8554", to: 192.168.20.50, desc: "camera in the guest network"}
     - {name: iot-hub,   proto: [udp], port: "5683", to: 192.168.30.20}
     - {name: old-game,  enabled: false, proto: [udp], port: "27015", to: 192.168.1.166}
+    - {name: office-rdp, proto: [tcp], port: "3390", to: office-pc, to_port: "3389", desc: "to a device of the inventory (its ip)"}
 
   open:
     - {name: lucky-https, proto: [tcp], port: "443"}
@@ -73,3 +74,4 @@ firewall:
     - {name: blocked-tv, macs: ["aa:bb:cc:dd:ee:03"]}
     - {name: school-hours, macs: ["aa:bb:cc:dd:ee:04"], schedule: [{days: [mon, tue, wed, thu, fri]}]}
     - {name: off-entry, enabled: false, macs: ["aa:bb:cc:dd:ee:05"]}
+    - {name: kids-school-night, macs: ["aa:bb:cc:dd:ee:06"], devices: ["group:kids"], schedule: [{days: [sun, mon, tue, wed, thu], time: "22:00-06:30"}]}

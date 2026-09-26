@@ -6,7 +6,7 @@ package main
 // The magic packet (6 × 0xff, then the MAC 16 times: 102 bytes) is a UDP datagram to port 9 of the
 // LAN-side network's directed broadcast (e.g. 192.168.1.255), sent three times from the router's address
 // on that network with the socket pinned to its bridge (SO_BINDTODEVICE): it can only leave there, never
-// through a WAN (255.255.255.255 would follow the default route). HOST is a dhcp.hosts name; the network
+// through a WAN (255.255.255.255 would follow the default route). HOST is a dhcp.hosts name or a device; the network
 // is the one the host's address is in, else the main LAN. No config, nothing resident. Waking a device
 // from outside goes through the web UI (e.g. over Tailscale): there is no WOL listener on the WAN.
 
@@ -41,13 +41,13 @@ func wolTarget(c *Config, target, network string) (net.HardwareAddr, string, LAN
 	switch {
 	case reMAC.MatchString(target):
 		mac, _ = net.ParseMAC(target)
-		for _, h := range c.DHCP.Hosts {
+		for _, h := range c.knownHosts() {
 			if strings.EqualFold(h.MAC, target) {
 				host, hostIP = h.Name, net.ParseIP(h.IP)
 			}
 		}
 	case reHostname.MatchString(target):
-		for _, h := range c.DHCP.Hosts {
+		for _, h := range c.knownHosts() { // a device with several MACs: the first one
 			if h.Name != "" && strings.EqualFold(h.Name, target) {
 				mac, _ = net.ParseMAC(h.MAC)
 				host, hostIP = h.Name, net.ParseIP(h.IP)
@@ -55,10 +55,10 @@ func wolTarget(c *Config, target, network string) (net.HardwareAddr, string, LAN
 			}
 		}
 		if mac == nil {
-			return nil, "", LANNet{}, fmt.Errorf("no dhcp.hosts entry named %q", target)
+			return nil, "", LANNet{}, fmt.Errorf("no dhcp.hosts entry or device named %q", target)
 		}
 	default:
-		return nil, "", LANNet{}, fmt.Errorf("a MAC address (aa:bb:cc:dd:ee:ff) or a dhcp.hosts name, got %q", target)
+		return nil, "", LANNet{}, fmt.Errorf("a MAC address (aa:bb:cc:dd:ee:ff), a dhcp.hosts name or a device, got %q", target)
 	}
 	if len(mac) != 6 || mac[0]&1 != 0 || bytes.Equal(mac, make(net.HardwareAddr, 6)) {
 		return nil, "", LANNet{}, fmt.Errorf("%s is not a unicast MAC address", target)

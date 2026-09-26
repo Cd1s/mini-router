@@ -1,4 +1,8 @@
 {
+ "paused": [
+  {"mac": "02:c8:61:52:f4:45", "name": "kid-tablet", "ref": "group:kids", "by": "web", "left": 2710, "ips": ["192.168.1.170"]},
+  {"mac": "02:d9:44:2f:7a:85", "name": "kid-phone", "ref": "group:kids", "by": "web", "left": 2710}
+ ],
  "changes": [
   "2026-09-24 10:29:01 mr apply: network.sh, hostapd-phy0.conf, hostapd-phy1.conf, services, firewall, +mr-zram",
   "2026-09-24 10:32:15 mr apply: failed and rolled back — not confirmed within 180s",

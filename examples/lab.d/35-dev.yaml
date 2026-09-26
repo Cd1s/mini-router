@@ -1,0 +1,13 @@
+# lab config — dev module fragment (devices, groups): the device inventory other sections refer to by
+# name (firewall.forwards[].to, firewall.access[].devices, policy_routes[].device, proxy.bypass[].device,
+# guard.always_bypass). CI concatenates examples/lab.d/*.yaml into one router.yaml; keep only this
+# module's top-level keys here. tools/ci.d/dev.sh pauses devices (mr pause) in network namespaces.
+
+devices:
+  - {name: office-pc, macs: ["02:00:00:00:10:01"], ip: 192.168.1.70, type: pc, owner: alice, desc: "RDP forward; wan2 only (policy fallback: drop)"}
+  - {name: kid-tablet, macs: ["aa:bb:cc:00:00:21", "aa:bb:cc:00:00:22"], ip: 192.168.1.121, type: tablet, owner: kid}  # cable adapter + WiFi
+  - {name: game-console, macs: ["aa:bb:cc:00:00:23"], type: console, owner: kid}                                    # a name, no fixed address
+  - {name: tv-box, macs: ["02:00:00:00:10:02"], type: tv}
+
+groups:
+  kids: [kid-tablet, game-console]

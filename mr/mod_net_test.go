@@ -187,7 +187,7 @@ func TestNetValidation(t *testing.T) {
 			c.Networks = []Network{{Name: "iot", IPv4: "192.168.30.1/24", VLAN: 10, Trunk: []string{"wan"}}}
 		}, "wan[0].device: wan carries VLAN 10 of network iot"},
 		{"mtu", func(c *Config) { c.WAN[0].MTU = 100 }, "mtu: 576-9000"},
-		{"policy-empty", func(c *Config) { c.Policy[0].MAC = "" }, "need at least one of mac, src, dst"},
+		{"policy-empty", func(c *Config) { c.Policy[0].MAC = "" }, "need at least one of mac, device, src, dst"},
 		{"policy-family", func(c *Config) { c.Policy[0].Src, c.Policy[0].Dst = "192.168.1.5", "2001:db8::/32" }, "same family"},
 		{"policy-src", func(c *Config) { c.Policy[0].Src = "192.168.1.0/33" }, "src: IP or CIDR"},
 		{"policy-dst-inject", func(c *Config) { c.Policy[0].Dst = "1.2.3.4 accept" }, "dst: IP or CIDR"},
