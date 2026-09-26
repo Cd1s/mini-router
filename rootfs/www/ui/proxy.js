@@ -520,7 +520,7 @@ registerPage("proxy", "proxy-status", "代理状态", 40, async ()=>{
   const drawConns = ()=>{
     const all = last.connections||[];
     const conns = all.filter(c=>!q.v || [c.src,c.dst,(c.chains||[]).join(" "),c.rule].join(" ").toLowerCase().includes(q.v));
-    connTitle.textContent = "代理连接（"+conns.length+((last.connections_total||0)>all.length?"，共 "+last.connections_total:"")+"）";
+    connTitle.textContent = tr("代理连接（"+conns.length+((last.connections_total||0)>all.length?"，共 "+last.connections_total:"")+"）");
     connBox.replaceChildren(roTable(["来源","目标","出口","规则","↑","↓","时长"], conns.map(c=>[
       h("span",{class:"mono"},c.src), h("span",{class:"mono"},c.dst), (c.chains||[]).slice().reverse().join(" → "), h("span",{class:"mut"},c.rule||""),
       fmtBytes(c.up), fmtBytes(c.down), fmtDur(c.age)])));

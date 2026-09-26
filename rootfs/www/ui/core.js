@@ -2,6 +2,49 @@
 // apply flow (validate → plan → apply → confirm/revert), login. Module pages live in ui/<module>.js
 // and only use what is defined here. Contract: docs/MODULES.md.
 "use strict";
+// ---------- language (#31) ----------
+// The UI is written in Chinese. English (browser language en*, or the switch in the nav's 账户 group,
+// remembered per browser) fetches ui/lang/en.json {"中文原文": "English"} before the first render. Then
+// h() (text children; placeholder / title / aria-label / alt / label), toast(), modal(), confirm() and
+// tr() translate every string with CJK in it: exact match first, else the known fragments of a
+// concatenation ("已释放 " + ip) are replaced, longest first. A string that still has CJK after that
+// (a Chinese device name, an untranslated message) is shown unchanged. Chinese costs nothing extra.
+// New UI strings go into en.json: `python3 tools/i18n.py missing` (CI runs `tools/i18n.py check`).
+const CJK = /[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/; // = CJK in tools/i18n.py
+let LANG = "zh", DICT = null, FRAG = null;
+const TRC = new Map(), TRA = {placeholder:1, title:1, "aria-label":1, alt:1, label:1};
+function tr(s){
+  if (!DICT || typeof s !== "string" || !CJK.test(s)) return s;
+  let t = DICT[s];
+  if (typeof t === "string") return t;
+  t = TRC.get(s);
+  if (t !== undefined) return t;
+  FRAG ||= new RegExp(Object.keys(DICT).sort((a,b)=>b.length-a.length).map(k=>k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g");
+  t = s.replace(FRAG, m=>DICT[m]);
+  if (CJK.test(t)) t = s;
+  if (TRC.size > 2000) TRC.clear();
+  TRC.set(s, t);
+  return t;
+}
+const LANG_READY = (async ()=>{
+  let l = pref("lang");
+  if (!l) try { l = /^en/i.test(navigator.language||"") ? "en" : "zh"; } catch(e){ l = "zh"; }
+  if (l !== "en") return;
+  try {
+    const r = await fetch("ui/lang/en.json", {credentials:"same-origin"});
+    if (!r.ok) throw new Error("HTTP "+r.status);
+    DICT = await r.json(); LANG = "en";
+    document.documentElement.lang = "en";
+    const c = window.confirm; window.confirm = q=>c.call(window, tr(q));
+    if (!/^en/i.test(navigator.language||"")) for (const f of ["toLocaleString","toLocaleDateString","toLocaleTimeString"]){
+      const o = Date.prototype[f]; Date.prototype[f] = function(l, opt){ return o.call(this, l||"en", opt); }; } // not "下午6:20"
+  } catch(e){ console.warn("ui/lang/en.json:", e); }
+})();
+function setLang(l){ pref("lang", l); location.reload(); }
+// the switch names the other language in that language
+const langLink = ()=>h("a",{href:"#", lang:LANG==="en"?"zh":"en", title:"界面语言",
+  onclick:e=>{ e.preventDefault(); setLang(LANG==="en"?"zh":"en"); }}, document.createTextNode(LANG==="en"?"中文":"English")); // i18n-ignore
+
 // ---------- tiny DOM helper ----------
 function h(tag, attrs, ...kids){
   const e = document.createElement(tag);
@@ -11,11 +54,12 @@ function h(tag, attrs, ...kids){
     else if (k === "class") e.className = v;
     else if (k === "html") e.innerHTML = v;
     else if (k in e && typeof v !== "string") e[k] = v;
-    else e.setAttribute(k, v === true ? "" : v);
+    else e.setAttribute(k, v === true ? "" : DICT && TRA[k] ? tr(v) : v);
   }
+  const raw = !DICT || tag==="textarea" || tag==="style"; // a textarea's text is data (router.yaml)
   for (const k of kids.flat(Infinity)){
     if (k === null || k === undefined || k === false) continue;
-    e.append(k instanceof Node ? k : document.createTextNode(String(k)));
+    e.append(k instanceof Node ? k : document.createTextNode(raw ? String(k) : tr(String(k))));
   }
   return e;
 }
@@ -61,7 +105,7 @@ function drawPending(){
   if (p.state==="reverting") return b.replaceChildren(h("span",{class:"t"}, h("b",{},"正在回滚更改"), "（"+via+"）…"));
   const reload = async ()=>{ if (!dirty()){ await loadConfig(); show(S.page); } };
   b.replaceChildren(
-    h("span",{class:"t"}, h("b",{},"有待确认的更改"), "（"+via+"）", p.state==="pending" ? [h("span",{id:"pleft"}, pendLeft()+" 秒"), "后自动回滚。"] : "。", h("span",{class:"mut"}," 确认前不能应用新的更改。")),
+    h("span",{class:"t"}, h("b",{},"有待确认的更改"), "（"+via+"）", p.state==="pending" ? ["：", h("span",{id:"pleft"}, pendLeft()+" 秒"), "后自动回滚。"] : "。", h("span",{class:"mut"}," 确认前不能应用新的更改。")),
     h("button",{class:"btn sm d",onclick:async()=>{ if(!confirm("回滚这次更改（"+via+"）？")) return;
       try { await api("revert",{}); toast("正在回滚…",4000); setTimeout(()=>api("job").then(reload).catch(()=>{}), 5000); } catch(e){ toast(e.message,4000); } }},"回滚"),
     h("button",{class:"btn sm p",onclick:async()=>{
@@ -69,7 +113,7 @@ function drawPending(){
 }
 setInterval(()=>{
   if (!S.auth) return;
-  const e = $("#pleft"); if (e && S.pend) e.textContent = pendLeft()+" 秒";
+  const e = $("#pleft"); if (e && S.pend) e.textContent = tr(pendLeft()+" 秒");
   if (Date.now()-(S.apiAt||0) > 10000) api("job").catch(()=>{});
 }, 1000);
 
@@ -189,7 +233,7 @@ function applyTheme(t){ const r=document.documentElement; if (!r) return; if (t)
 applyTheme(pref("theme")||"");
 function themeBtn(){
   const b = h("button",{class:"hbtn",type:"button"});
-  const draw = ()=>{ const t=THEMES.find(x=>x[0]===(pref("theme")||""))||THEMES[0]; b.textContent=t[1]; b.title="主题："+t[2]; };
+  const draw = ()=>{ const t=THEMES.find(x=>x[0]===(pref("theme")||""))||THEMES[0]; b.textContent=t[1]; b.title=tr("主题："+t[2]); };
   b.onclick = ()=>{ const i=THEMES.findIndex(x=>x[0]===(pref("theme")||"")); const t=THEMES[(i+1)%THEMES.length]; pref("theme", t[0]||null); applyTheme(t[0]); draw(); toast("主题："+t[2]); };
   draw(); return b;
 }
@@ -225,7 +269,7 @@ function renderShell(){
       const items = NAVREG.filter(p=>p.group===g).sort((a,b)=>a.order-b.order);
       return items.length ? group(g, label, items.map(p=>h("a",{href:"#"+p.id, "data-p":p.id, onclick:()=>setNav(false)},p.title))) : null;
     }),
-    group("account", "账户", h("a",{href:"#", onclick:async e=>{e.preventDefault(); await api("logout",{}).catch(()=>{}); location.reload();}},"退出登录")));
+    group("account", "账户", [langLink(), h("a",{href:"#", onclick:async e=>{e.preventDefault(); await api("logout",{}).catch(()=>{}); location.reload();}},"退出登录")]));
   const pend = h("div",{id:"pending"},
     h("span",{class:"t"}, h("b",{},"有未应用的更改。"), h("span",{class:"mut"}," 应用前会先校验并显示变更计划，应用后需在倒计时内确认，否则自动回滚。")),
     h("button",{class:"btn",onclick:async()=>{ await loadConfig(); show(S.page); toast("已放弃更改"); }},"放弃"),
@@ -250,7 +294,8 @@ async function openSearch(){
   if ($(".modal.search")) return;
   const input = h("input",{type:"text",placeholder:"页面、功能或设备（名称 / IP / MAC）",autocomplete:"off",style:"width:100%"});
   const list = h("div",{class:"slist"});
-  let items = NAVREG.map(p=>({t:p.title, s:(NAV_GROUPS.find(g=>g[0]===p.group)||[,""])[1], k:(p.title+" "+p.id+" "+(SEARCH_WORDS[p.id]||"")).toLowerCase(), go:"#"+p.id}));
+  const words = p=>p.title+" "+p.id+" "+(SEARCH_WORDS[p.id]||"")+(DICT ? " "+tr(p.title)+" "+tr(SEARCH_WORDS[p.id]||"") : ""); // both languages
+  let items = NAVREG.map(p=>({t:p.title, s:(NAV_GROUPS.find(g=>g[0]===p.group)||[,""])[1], k:words(p).toLowerCase(), go:"#"+p.id}));
   let sel = 0, shown = [];
   const draw = ()=>{
     const q = input.value.trim().toLowerCase();
@@ -286,7 +331,7 @@ function show(p){
   const g = (NAVREG.find(x=>x.id===p)||{}).group;
   if (g && shutGroups().includes(g)) setGroup(g, false); // never hide the page you are on
   setNav(false);
-  $("#title").textContent = pageTitle(p);
+  $("#title").textContent = tr(pageTitle(p));
   const pg = $("#page"); pg.replaceChildren(h("div",{class:"mut"},"加载中…"));
   Promise.resolve().then(()=>PAGES[p]()).then(el=>{ if(S.page===p) pg.replaceChildren(el); })
     .catch(e=>pg.replaceChildren(h("div",{class:"err"},"加载失败："+e.message)));
@@ -536,7 +581,7 @@ async function runJob(start, auto){
   let seenOk = 0, fails = 0;
   const poll = async ()=>{
     let j;
-    try { j = await api("job"); fails = 0; } catch(e){ fails++; stateEl.textContent = "暂时连不上路由器（"+fails+"）… 如果是改了 LAN 地址，请到新地址访问；超时未确认会自动回滚。"; return setTimeout(poll, 2000); }
+    try { j = await api("job"); fails = 0; } catch(e){ fails++; stateEl.textContent = tr("暂时连不上路由器（"+fails+"）… 如果是改了 LAN 地址，请到新地址访问；超时未确认会自动回滚。"); return setTimeout(poll, 2000); }
     const job = j.job||{}; log.textContent = job.output||"";
     if (job.state==="running") return setTimeout(poll, 1200);
     if (job.state==="failed"){
@@ -558,7 +603,7 @@ async function runJob(start, auto){
     if (!seenOk){
       seenOk = Date.now();
       const left = h("span",{});
-      const tick = setInterval(()=>{ const s=Math.max(0, (job.confirm||120) - Math.floor((Date.now()-seenOk)/1000)); left.textContent = s+" 秒后自动回滚"; if(!s) clearInterval(tick); }, 500);
+      const tick = setInterval(()=>{ const s=Math.max(0, (job.confirm||120) - Math.floor((Date.now()-seenOk)/1000)); left.textContent = tr(s+" 秒后自动回滚"); if(!s) clearInterval(tick); }, 500);
       stateEl.replaceChildren(h("b",{style:"color:var(--ok)"},"已应用。"), " 网络正常的话请点“保留”，否则 ", left, "。");
       foot.replaceChildren(
         h("button",{class:"btn d",onclick:async()=>{ clearInterval(tick); await api("revert",{}).catch(()=>{}); m.remove(); toast("正在回滚…",4000); setTimeout(async()=>{await loadConfig(); show(S.page);},5000); }},"立即回滚"),
@@ -575,14 +620,16 @@ function renderLogin(setup){
   const p2 = setup ? h("input",{type:"password",autocomplete:"new-password",placeholder:"再次输入"}) : null;
   const err = h("div",{class:"err"});
   const go = async e=>{ e.preventDefault(); err.textContent="";
-    if (setup && p.value!==p2.value) return err.textContent="两次输入不一致";
+    if (setup && p.value!==p2.value) return err.textContent=tr("两次输入不一致");
     try { await api(setup?"setup":"login",{password:p.value}); boot(); } catch(x){ err.textContent=x.message; } };
   $("#root").replaceChildren(h("div",{class:"login"}, h("div",{class:"logo"}, logo(40), "Mini-Router"), h("form",{onsubmit:go}, card(setup?"设置管理员密码":"登录",
-    [setup?h("div",{class:"mut"},"首次使用：请设置管理员密码（至少 8 位，只能在内网设置）。"):null, p, p2, err, h("button",{class:"btn p",type:"submit"}, setup?"设置并登录":"登录")]))));
+    [setup?h("div",{class:"mut"},"首次使用：请设置管理员密码（至少 8 位，只能在内网设置）。"):null, p, p2, err, h("button",{class:"btn p",type:"submit"}, setup?"设置并登录":"登录")])),
+    h("div",{class:"mut",style:"text-align:center;margin-top:14px;font-size:12px"}, langLink())));
   p.focus();
 }
 
 async function boot(){
+  await LANG_READY;
   let s;
   try { s = await api("session"); } catch(e){ $("#root").replaceChildren(h("div",{class:"login"},h("div",{class:"err"},"无法连接路由器："+e.message))); return; }
   if (!s.authenticated) return renderLogin(!s.password_set);

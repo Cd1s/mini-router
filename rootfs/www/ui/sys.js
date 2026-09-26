@@ -300,7 +300,7 @@ registerPage("system", "system", "系统设置", 10, async ()=>{
     base = {delta: t.now - Date.now()/1000, offset: t.offset||0, zone: (t.local||"").split(" ").slice(2).join(" ")};
     sync.replaceChildren(t.synced===true ? h("span",{class:"tag ok"},"NTP 已同步") : t.synced===false ? h("span",{class:"tag warn"},"NTP 未同步") : h("span",{class:"tag"},"同步状态未知"));
     tick(); S.timer = setInterval(tick, 1000);
-  } catch(e){ clock.textContent = "读取失败："+e.message; }
+  } catch(e){ clock.textContent = tr("读取失败："+e.message); }
 
   const sys = Object.entries(s.sysctl).map(([k,v])=>({k,v}));
   const syncSys = ()=>{ s.sysctl = Object.fromEntries(sys.filter(x=>x.k).map(x=>[x.k,String(x.v)])); touch(); };
@@ -333,7 +333,7 @@ registerPage("system", "admin", "管理与 SSH", 15, async ()=>{
   const check = ()=>{
     const lines = ssh.authorized_keys||[];
     const bad = lines.filter(l=>!KEY_RE.test(l));
-    keysInfo.replaceChildren(lines.length+" 个受管公钥", bad.length ? h("span",{class:"err"}, "，"+bad.length+" 行格式不对（保存时会被拒绝）") : "");
+    keysInfo.replaceChildren(tr(lines.length+" 个受管公钥"), bad.length ? h("span",{class:"err"}, "，"+bad.length+" 行格式不对（保存时会被拒绝）") : "");
     const w = [];
     if (ssh.enabled && !ssh.password_login && !lines.length && !(k.other||[]).length)
       w.push("没有任何公钥且禁止密码登录：SSH 将无法登录（Web 管理不受影响）。");
@@ -424,6 +424,7 @@ function tokenCard(c){
 
 // ---------- 计划任务 ----------
 const DAYS = [["1","一"],["2","二"],["3","三"],["4","四"],["5","五"],["6","六"],["0","日"]];
+const WEEK = ["周日","周一","周二","周三","周四","周五","周六"]; // cron day of week → name
 const ACTIONS = {reboot:"重启路由器", restart:"重启服务", reconnect:"重新拨号 / 重连 WAN", wol:"唤醒设备 (WOL)"};
 const pad2 = n=>String(n).padStart(2,"0");
 function cronText(spec){
@@ -433,8 +434,8 @@ function cronText(spec){
   const num = x=>/^\d+$/.test(x);
   const at = num(mi)&&num(hr) ? pad2(hr)+":"+pad2(mi) : null;
   if (at && dom==="*" && mon==="*" && dow==="*") return "每天 "+at;
-  if (at && dom==="*" && mon==="*" && /^[0-6](,[0-6])*$/.test(dow)) return "每周"+dow.split(",").map(d=>"日一二三四五六"[+d]).join("、")+" "+at;
-  if (at && dom==="*" && mon==="*" && /^[0-6]-[0-6]$/.test(dow)) return "每周"+"日一二三四五六"[+dow[0]]+"至周"+"日一二三四五六"[+dow[2]]+" "+at;
+  if (at && dom==="*" && mon==="*" && /^[0-6](,[0-6])*$/.test(dow)) return dow.split(",").map(d=>WEEK[+d]).join("、")+" "+at;
+  if (at && dom==="*" && mon==="*" && /^[0-6]-[0-6]$/.test(dow)) return WEEK[+dow[0]]+"至"+WEEK[+dow[2]]+" "+at;
   if (at && num(dom) && mon==="*" && dow==="*") return "每月 "+dom+" 日 "+at;
   if (num(mi) && /^\*\/\d+$/.test(hr) && dom==="*" && mon==="*" && dow==="*") return "每 "+hr.slice(2)+" 小时（第 "+mi+" 分）";
   if (num(mi) && hr==="*" && dom==="*" && mon==="*" && dow==="*") return "每小时第 "+mi+" 分";
@@ -480,7 +481,7 @@ function editSchedule(orig, svcNames, onSave){
   const verify = async ()=>{
     x.cron = cronBuild(st);
     const my = ++seq;
-    chk.replaceChildren(h("span",{class:"mono"}, x.cron||"（空）"), "  ", cronText(x.cron));
+    chk.replaceChildren(h("span",{class:"mono"}, x.cron||"（空）"), "  ", tr(cronText(x.cron)));
     try {
       const r = await api("sys.schedulecheck",{cron:x.cron, action:x.action});
       if (my!==seq) return;
@@ -507,9 +508,9 @@ function editSchedule(orig, svcNames, onSave){
         h("input",{type:"checkbox", checked:st.days.includes(v), onchange:e=>{ st.days = e.target.checked ? [...st.days, v] : st.days.filter(d=>d!==v); drawDays(); verify(); }}), l)));
       drawDays(); parts.push(box, timeIn());
     }
-    if (st.mode==="monthly") parts.push(h("span",{class:"row"}, "第", h("input",{type:"number",min:1,max:31,value:st.dom,style:"width:70px",oninput:e=>{ st.dom=+e.target.value||1; verify(); }}), "日"), timeIn());
+    if (st.mode==="monthly") parts.push(h("span",{class:"row"}, "第", h("input",{type:"number",min:1,max:31,value:st.dom,style:"width:70px",oninput:e=>{ st.dom=+e.target.value||1; verify(); }}), "号"), timeIn());
     if (st.mode==="hours") parts.push(h("span",{class:"row"}, "每", h("input",{type:"number",min:1,max:23,value:st.every,style:"width:70px",oninput:e=>{ st.every=+e.target.value||1; verify(); }}), "小时，第",
-      h("input",{type:"number",min:0,max:59,value:st.minute,style:"width:70px",oninput:e=>{ st.minute=+e.target.value||0; verify(); }}), "分"));
+      h("input",{type:"number",min:0,max:59,value:st.minute,style:"width:70px",oninput:e=>{ st.minute=+e.target.value||0; verify(); }}), "分钟"));
     if (st.mode==="custom") parts.push(h("input",{type:"text", class:"mono", value:st.raw, placeholder:"分 时 日 月 周，例如 30 4 * * 1",
       oninput:e=>{ st.raw=e.target.value; verify(); }}),
       h("div",{class:"sys-note"},"只能用数字、*、a-b、*/n 和逗号；分钟必须是一个固定数字（每小时最多一次），重启路由器的小时也必须固定（每天最多一次）。周：0=周日 … 6=周六。"));
@@ -612,7 +613,7 @@ function watchApply(title){
   const finish = ()=>{ m.remove(); location.reload(); };
   const poll = async ()=>{
     let j;
-    try { j = await api("job"); fails = 0; } catch(e){ if (!S.auth) { m.remove(); return; } fails++; stateEl.textContent = "暂时连不上路由器（"+fails+"）… 如果备份里的 LAN 地址不同，请到新地址访问；超时未确认会自动回滚。"; return setTimeout(poll, 2000); }
+    try { j = await api("job"); fails = 0; } catch(e){ if (!S.auth) { m.remove(); return; } fails++; stateEl.textContent = tr("暂时连不上路由器（"+fails+"）… 如果备份里的 LAN 地址不同，请到新地址访问；超时未确认会自动回滚。"); return setTimeout(poll, 2000); }
     const job = j.job||{}; log.textContent = job.output||"";
     if (job.state==="running") return setTimeout(poll, 1200);
     if (job.state==="failed"){
@@ -628,7 +629,7 @@ function watchApply(title){
     if (!seenOk){
       seenOk = Date.now();
       const left = h("span");
-      const tick = setInterval(()=>{ const s=Math.max(0,(job.confirm||120)-Math.floor((Date.now()-seenOk)/1000)); left.textContent=s+" 秒后自动回滚"; if(!s) clearInterval(tick); }, 500);
+      const tick = setInterval(()=>{ const s=Math.max(0,(job.confirm||120)-Math.floor((Date.now()-seenOk)/1000)); left.textContent=tr(s+" 秒后自动回滚"); if(!s) clearInterval(tick); }, 500);
       stateEl.replaceChildren(h("b",{style:"color:var(--ok)"},"已应用。"), " 网络正常的话请点“保留”，否则 ", left, "。");
       foot.replaceChildren(
         h("button",{class:"btn d",onclick:async()=>{ clearInterval(tick); await api("revert",{}).catch(()=>{}); m.remove(); toast("正在回滚…",4000); setTimeout(()=>location.reload(), 5000); }},"立即回滚"),
@@ -651,7 +652,7 @@ registerPage("system", "backup", "备份与升级", 35, async ()=>{
       try {
         const r = await api("sys.backup",{secrets:bo.secrets});
         download(r.name, unb64(r.data), "application/gzip");
-        bInfo.replaceChildren("已下载 "+r.name+"（"+fmtBytes(r.size)+"）：", h("span",{class:"mono"}, (r.files||[]).join("  ")),
+        bInfo.replaceChildren(tr("已下载 "+r.name+"（"+fmtBytes(r.size)+"）："), h("span",{class:"mono"}, (r.files||[]).join("  ")),
           r.restorable===false ? h("div",{class:"err"},"文件超过恢复上传上限（"+fmtBytes(r.max_upload)+"），恢复时需要用 SSH：mr sys restore") : null);
       } catch(x){ toast(x.message,4000); }
       e.target.disabled = false; }},"下载备份"), bInfo)),
@@ -696,11 +697,11 @@ registerPage("system", "backup", "备份与升级", 35, async ()=>{
       if (fw.tmp_free && f.size + (8<<20) > fw.tmp_free) return toast("/tmp 空间不足（剩余 "+fmtBytes(fw.tmp_free)+"）", 4000);
       go.disabled = true; fFile.disabled = true; status.replaceChildren();
       try {
-        status.replaceChildren("计算 SHA-256…", bar); bar.set(0);
+        status.replaceChildren(tr("计算 SHA-256…"), bar); bar.set(0);
         const sum = await fileSHA256(f, p=>bar.set(p));
         const chunk = Math.min(fw.max_chunk||(2<<20), 1<<20);
         let off = 0, retry = 0;
-        status.replaceChildren("上传中… ", h("span",{class:"mono"}, "SHA-256 "+sum), bar);
+        status.replaceChildren(tr("上传中… "), h("span",{class:"mono"}, "SHA-256 "+sum), bar);
         while (off < f.size){
           const part = new Uint8Array(await f.slice(off, off+chunk).arrayBuffer());
           try {
@@ -714,7 +715,7 @@ registerPage("system", "backup", "备份与升级", 35, async ()=>{
           bar.set(off/f.size);
         }
         if (!confirm("镜像已上传并校验（"+fmtBytes(f.size)+"，SHA-256 "+sum.slice(0,16)+"…）。\n开始刷写？升级期间请勿断电，完成后路由器自动重启，全家断网几分钟。")){
-          status.replaceChildren("已上传，未刷写。", cancelBtn); go.disabled=false; fFile.disabled=false; return;
+          status.replaceChildren(tr("已上传，未刷写。"), cancelBtn); go.disabled=false; fFile.disabled=false; return;
         }
         await api("sys.fwupgrade",{sha256:sum});
         status.replaceChildren(h("b",{},"正在升级，请勿断电…"), h("div",{class:"sys-note"},"路由器会自行重启；重启完成后本页会回到登录界面。"));
@@ -776,7 +777,7 @@ registerPage("system", "logs", "日志", 40, ()=>{
     let j;
     try { j = await api("sys.logs",{level:+f.level, tag:f.tag, q:f.q, limit:+f.limit}); } catch(e){ out.replaceChildren(h("div",{class:"err"}, e.message)); return; }
     tags = j.tags||{}; drawTags();
-    info.textContent = "显示 "+(j.lines||[]).length+" / 共 "+j.total+" 行（新的在上）";
+    info.textContent = tr("显示 "+(j.lines||[]).length+" / 共 "+j.total+" 行（新的在上）");
     out.replaceChildren(...(j.lines||[]).map(([t,lv,fac,tag,msg])=>h("div",{class:lv>=0?"l"+lv:""},
       t?h("span",{class:"t"}, t+" "):null, lv>=0?h("span",{title:fac}, LVNAME[lv]+" "):null, tag?h("span",{class:"g"}, tag+": "):null, msg)));
     if (!(j.lines||[]).length) out.append(h("div",{class:"t"},"（没有匹配的日志）"));
@@ -800,8 +801,8 @@ registerPage("system", "diag", "网络诊断", 50, ()=>{
   const out = h("pre",{style:"min-height:120px"}, "");
   const cmd = h("div",{class:"sys-note mono"});
   const btn = h("button",{class:"btn p",onclick:async()=>{
-    btn.disabled = true; out.textContent = "运行中…（最长 25 秒）"; cmd.textContent = "";
-    try { const r = await api("diag",o); out.textContent = r.output || "(无输出)"; cmd.textContent = r.command ? "$ "+r.command : ""; } catch(e){ out.textContent = e.message; }
+    btn.disabled = true; out.textContent = tr("运行中…（最长 25 秒）"); cmd.textContent = "";
+    try { const r = await api("diag",o); out.textContent = r.output || tr("(无输出)"); cmd.textContent = r.command ? "$ "+r.command : ""; } catch(e){ out.textContent = e.message; }
     btn.disabled = false; }},"开始");
   const presets = h("div",{class:"row"}, [["1.1.1.1","ping"],["223.5.5.5","ping"],["2606:4700:4700::1111","ping6"],["www.qq.com","nslookup"]].map(([host,tool])=>
     h("button",{class:"btn sm",onclick:()=>{ o.host=host; o.tool=tool; show("diag"); }}, tool+" "+host)));

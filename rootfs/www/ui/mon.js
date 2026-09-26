@@ -295,7 +295,7 @@ registerPage("status", "mon-devices", "流量统计", 22, async ()=>{
       stat("总上传", rated ? bps(sum("up_rate")) : "…", rated ? "统计间隔 "+j.dt.toFixed(1)+" 秒" : "首次采样，3 秒后出速率"),
       stat("活跃设备", String(devs.length), "有连接的内网设备"),
       stat("连接数", String(j.entries||0), (j.acct?"字节计数已开启":"字节计数未开启")));
-    meta.textContent = rated ? "每 3 秒刷新" : "正在建立基准…";
+    meta.textContent = tr(rated ? "每 3 秒刷新" : "正在建立基准…");
     const rate = (d,k) => rated ? [bps(d[k]), k==="down_rate" ? mbar(pct((d.down_rate||0)+(d.up_rate||0), maxR)) : null] : "…";
     const row = d => [
       d.id==="other" ? h("span",{class:"mut"},"路由器自身 / 其他", h("span",{class:"mon-sub"},"Tailscale、NTP、DNS 上游等")) :
@@ -354,7 +354,7 @@ registerPage("status", "mon-conns", "连接", 40, async ()=>{
       fmtBytes(c.ob), fmtBytes(c.rb), secs(c.ttl)]);
     put(list, tbl(["协议","源","目的","NAT","状态","加速",["↑ 发起方发出","n"],["↓ 回复","n"],["剩余","n"]], rows, "没有匹配的连接"),
       j.flowtable && !j.flow_counter ? h("div",{class:"mon-hint"},"流表没有开启 counter：已加速连接的字节数只包含加速之前的部分。") : null);
-    info.textContent = "更新于 "+clock(Date.now()/1000, 0);
+    info.textContent = tr("更新于 "+clock(Date.now()/1000, 0));
   };
   const bar = h("div",{class:"mon-filter",style:"margin-bottom:12px"},
     sel(CF,"proto",[["","全部协议"],["tcp","TCP"],["udp","UDP"],["icmp","ICMP"],["icmpv6","ICMPv6"],["other","其他协议"]]),
@@ -396,8 +396,8 @@ async function pageProcs(){
     const by = {rss:(a,b)=>b.rss-a.rss || a.pid-b.pid, cpu:(a,b)=>(b.pct||0)-(a.pct||0) || b.cpu-a.cpu, pid:(a,b)=>a.pid-b.pid, name:(a,b)=>a.name.localeCompare(b.name)}[PS.sort];
     ps.sort(by);
     const user = (j.procs||[]).filter(p=>!p.kernel), rss = user.reduce((s,p)=>s+p.rss,0);
-    info.textContent = "进程 "+user.length+"（另有内核线程 "+((j.procs||[]).length-user.length)+"）· 用户态常驻内存合计 "+fmtBytes(rss*1024)+
-      " / 总内存 "+fmtBytes((j.mem_total||0)*1024)+" · CPU% 以单核为 100%，每 3 秒刷新";
+    info.textContent = tr("进程 "+user.length+"（另有内核线程 "+((j.procs||[]).length-user.length)+"）· 用户态常驻内存合计 "+fmtBytes(rss*1024)+
+      " / 总内存 "+fmtBytes((j.mem_total||0)*1024)+" · CPU% 以单核为 100%，每 3 秒刷新");
     put(list, tbl([["PID","n"],"名称","用户","状态",["CPU%","n"],["内存 RSS","n"],["线程","n"],["命令","w"]], ps.map(p=>[
       String(p.pid), p.kernel ? h("span",{class:"mut"},"["+p.name+"]") : h("b",{},p.name), p.user, p.state,
       p.pct===undefined ? "…" : p.pct.toFixed(1), p.kernel ? "-" : fmtBytes(p.rss*1024), String(p.threads),
@@ -418,7 +418,7 @@ async function pageDmesg(){
   const draw = ()=>{
     const k = DM.q.toLowerCase(), max = Number(DM.lvl);
     let ls = (j.lines||[]).filter(([l,t])=>l<=max && (!k || t.toLowerCase().includes(k)));
-    cnt.textContent = ls.length+" / "+(j.lines||[]).length+" 行";
+    cnt.textContent = tr(ls.length+" / "+(j.lines||[]).length+" 行");
     if (DM.rev) ls = ls.slice().reverse();
     put(box, ...ls.map(([l,t])=>h("div",{class:"l"+l}, t)));
   };

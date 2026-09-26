@@ -409,6 +409,28 @@ while read -r tag net; do
 	[ "$net" = tcp ] || [ "$udp" = 198.51.100.10 ] || { logs; fail "UDP through node $tag did not work ($udp)"; }
 done < "$T/e2e-nodes"
 
+# Cd1s/mini-router#51 investigation (off unless asked): MR_CI_STRESS_NODE=TAG [MR_CI_STRESS_N=100]
+# [MR_CI_STRESS_SWITCH=0] [MR_CI_STRESS_SLEEP=SECS] opens N connections through that node, switching the selector away and back
+# before each one (or not), and counts the failures of first attempts plus the server's bad requests
+if [ -n "${MR_CI_STRESS_NODE:-}" ]; then
+	other=$(awk -v t="$MR_CI_STRESS_NODE" '$1 != t {print $1; exit}' "$T/e2e-nodes")
+	before=$(cat "$T"/*.log | grep -c 'bad request' || true)
+	fails=0 i=0
+	while [ "$i" -lt "${MR_CI_STRESS_N:-100}" ]; do
+		i=$((i + 1))
+		if [ "${MR_CI_STRESS_SWITCH:-1}" = 1 ]; then
+			# shellcheck disable=SC2086
+			ip netns exec "$R" $MR proxy select pick "$other" > /dev/null
+			# shellcheck disable=SC2086
+			ip netns exec "$R" $MR proxy select pick "$MR_CI_STRESS_NODE" > /dev/null
+			[ -z "${MR_CI_STRESS_SLEEP:-}" ] || sleep "$MR_CI_STRESS_SLEEP"
+		fi
+		[ "$(get "$C" http://198.51.100.10:8080/)" = 198.51.100.10 ] || fails=$((fails + 1))
+	done
+	after=$(cat "$T"/*.log | grep -c 'bad request' || true)
+	echo "stress $MR_CI_STRESS_NODE (switch=${MR_CI_STRESS_SWITCH:-1} sleep=${MR_CI_STRESS_SLEEP:-0}): $fails of $i connections failed; server bad requests: $((after - before))"
+fi
+
 # subscription import with busybox wget (the router's downloader): the saved lab subscription points
 # at the web server above; `mr proxy fetch` must list the usable nodes, report the bad link, show the
 # traffic header and keep credentials hidden unless asked
