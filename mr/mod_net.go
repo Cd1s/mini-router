@@ -255,6 +255,7 @@ func init() {
 		RestartOrder: []string{"mr-pppoe.", "mr-udhcpc.", "mr-dhcpcd", "igmpproxy", "mr-wanmon"},
 		Verify:       netVerify,
 		Status:       netStatus,
+		TokenScope:   map[string]string{"net": "read", "net.ports": "read", "net.routes": "read", "net.wan": "read", "net.redial": "operate"},
 		API: map[string]func(r apiReq) apiResp{
 			"net":        func(apiReq) apiResp { return apiNet() },
 			"net.ports":  func(apiReq) apiResp { return apiNetPorts() },

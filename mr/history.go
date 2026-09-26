@@ -44,6 +44,9 @@ type applyOpts struct {
 	Via     string // mr apply | web UI | restore | rollback
 	From    string // web UI: the client's address
 	Comment string
+	// BaseRev: the router.yaml rev the candidate was built from (web UI / API). The apply refuses when
+	// the live file differs by the time it installs (Cd1s/mini-router#68).
+	BaseRev string
 }
 
 // bookkeeping reports files that record state for mr itself (not shown in plans).

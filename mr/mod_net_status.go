@@ -162,12 +162,35 @@ func apiNet() apiResp {
 
 // apiNetRoutes: just the routing state (routes of every table + rules), for the routing pages.
 func apiNetRoutes() apiResp {
-	return apiResp{body: map[string]any{
+	body := map[string]any{
 		"route4": ipJSON("-4", "route", "show", "table", "all"),
 		"route6": ipJSON("-6", "route", "show", "table", "all"),
 		"rules4": ipJSON("-4", "rule", "show"),
 		"rules6": ipJSON("-6", "rule", "show"),
-	}}
+	}
+	if c, err := loadConfig(ConfigPath, SecretsPath); err == nil {
+		body["learned"] = policyLearned(c)
+	}
+	return apiResp{body: body}
+}
+
+// policyLearned: how many destination addresses each domain policy has learned so far, per family
+// (the sets dnsmasq fills; Cd1s/mini-router#64). A set that cannot be read counts as absent.
+func policyLearned(c *Config) map[string]map[string]int {
+	out := map[string]map[string]int{}
+	for i, p := range c.Policy {
+		if !p.byDomain() {
+			continue
+		}
+		m := map[string]int{}
+		for _, fam := range policyFams(p) {
+			if b, err := run("nft", "-j", "list", "set", "inet", "mr", policySet(i, fam)); err == nil {
+				m[fmt.Sprintf("v%d", fam)] = len(fwSetElems([]byte(b)))
+			}
+		}
+		out[p.Name] = m
+	}
+	return out
 }
 
 // portInfo is one netdev as the port panel / interface table shows it.

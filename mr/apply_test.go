@@ -315,3 +315,27 @@ func TestFailedRollbackKeepsChangePending(t *testing.T) {
 		t.Errorf("rollback during an apply: %v", err)
 	}
 }
+
+// base_rev is checked again when the apply job installs (Cd1s/mini-router#68): a router.yaml changed
+// between the request and the install refuses the apply, leaves no marker and no snapshot, and writes
+// nothing.
+func TestApplyStaleCandidate(t *testing.T) {
+	_, cfg, _ := confirmEnv(t)
+	old := liveConfig
+	liveConfig = cfg
+	t.Cleanup(func() { liveConfig = old })
+	c := testConfig(t)
+	rev := configRev()
+	os.WriteFile(cfg, append([]byte("# edited meanwhile\n"), mustRead(t, cfg)...), 0600)
+	err := applyWith(c, false, 120, func() error { t.Error("installed a stale candidate"); return nil },
+		applyOpts{Via: "web UI", BaseRev: rev}, false)
+	if !errors.Is(err, errStaleCandidate) {
+		t.Fatalf("stale candidate: %v", err)
+	}
+	if _, err := readPending(); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("marker left behind: %v", err)
+	}
+	if ents, _ := os.ReadDir(HistoryDir); len(ents) != 0 {
+		t.Errorf("snapshot left behind: %d files", len(ents))
+	}
+}

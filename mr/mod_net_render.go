@@ -449,6 +449,12 @@ func policyRules(c *Config, i int, p Policy) []string {
 		if src != nil {
 			s += fmt.Sprintf(" %s saddr %s", kw, cidrStr(src))
 		}
+		if fam == 6 {
+			// only a source inside the prefix this WAN delegated can leave through it: an address from
+			// another WAN's prefix would be dropped upstream (Cd1s/mini-router#63). Unmarked, it takes the
+			// default route. The set is filled from the dhcpcd hook's record (pd6Refresh).
+			s += " ip6 saddr @" + pd6Set(c, p.Via)
+		}
 		switch {
 		case dst != nil:
 			s += fmt.Sprintf(" %s daddr %s", kw, cidrStr(dst))
@@ -465,7 +471,8 @@ func policyRules(c *Config, i int, p Policy) []string {
 		} else {
 			s += " ct state new"
 		}
-		s += fmt.Sprintf(" ct mark set %s meta mark set %s comment %q", mark, mark, p.Name)
+		// the first policy that matches decides (config order): return ends this chain for the packet
+		s += fmt.Sprintf(" ct mark set %s meta mark set %s return comment %q", mark, mark, p.Name)
 		out = append(out, s)
 	}
 	return out
@@ -517,6 +524,9 @@ func netNft(c *Config, hook string, n *Nft) {
 	switch hook {
 	case "defs":
 		policyDomainDefs(c, n)
+		for _, name := range pd6WANs(c) {
+			n.W("set %s { type ipv6_addr; flags interval; auto-merge; comment \"prefixes delegated by wan %s\"; }", pd6Set(c, name), name)
+		}
 	case "forward_first":
 		for _, r := range policyFallbackRules(c) {
 			n.W("%s", r)

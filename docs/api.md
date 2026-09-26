@@ -44,8 +44,8 @@ undone by a rollback. Revoking also drops the hash, so a name used again never b
 Never, whatever the scope: login / sessions, the web UI password, logs (`logs`, `sys.logs`: they can
 hold URLs with access tokens), `dns.querylog`, backup / restore, firmware, factory reset, reboot, SSH
 keys, subscription fetches and share-link parsing (`proxy.fetch`, `proxy.parse`), list files
-(`proxy.lists`), token management, test notifications (`sys.notifytest`). A new module action is refused until it is listed in
-`tokenActions` (`api_token.go`).
+(`proxy.lists`), token management, test notifications (`sys.notifytest`). A new module action is refused until its module lists it in
+`TokenScope` (the core actions are in `tokenActions`, `api_token.go`).
 
 Within `apply`, a token's change is refused (403) when it touches the token list (`api`), SSH
 (`services.ssh`: keys and password logins are a root shell), `system.sysctl` (`kernel.core_pattern`

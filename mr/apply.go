@@ -430,6 +430,13 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 		os.Remove(snap)
 		return err
 	}
+	if o.BaseRev != "" && configRev() != o.BaseRev {
+		// router.yaml changed between the request and now (mr set, an editor, another client):
+		// installing the candidate would silently undo that change. Nothing is written yet.
+		clearPending(snap)
+		os.Remove(snap)
+		return errStaleCandidate
+	}
 	newRevision(snap, o, changes)
 	if install != nil {
 		if err := install(); err != nil {
@@ -617,6 +624,8 @@ func (p *pendingApply) left() int64 {
 }
 
 // claimPending creates the marker only if there is none: checking and claiming are one step.
+var errStaleCandidate = errors.New("router.yaml changed since this change was built from it: read the config again and redo the change")
+
 func claimPending(p pendingApply) error {
 	b, err := json.Marshal(p)
 	if err != nil {

@@ -74,8 +74,8 @@ func TestNetHomeConfig(t *testing.T) {
 	}
 	nft := renderNft(c, allExist)
 	wantSubs(t, "nft", nft,
-		`iifname "br-lan" ether saddr 02:c3:06:d6:7f:8a ip daddr != 192.168.1.0/24 ct state new ct mark set 0x102 meta mark set 0x102 comment "desktop-via-wan2"`,
-		`iifname "br-lan" ether saddr 02:c3:06:d6:7f:8a ip6 daddr != @lan6 ct state new ct mark set 0x102 meta mark set 0x102 comment "desktop-via-wan2"`)
+		`iifname "br-lan" ether saddr 02:c3:06:d6:7f:8a ip daddr != 192.168.1.0/24 ct state new ct mark set 0x102 meta mark set 0x102 return comment "desktop-via-wan2"`,
+		`iifname "br-lan" ether saddr 02:c3:06:d6:7f:8a ip6 saddr @pd6_1 ip6 daddr != @lan6 ct state new ct mark set 0x102 meta mark set 0x102 return comment "desktop-via-wan2"`)
 	wantNone(t, "nft", nft, "numgen")
 	// the UI round trip must not add new keys to the home router.yaml
 	m, err := configToJSON(c)
@@ -249,10 +249,12 @@ func TestNetPolicySelectors(t *testing.T) {
 	nft := renderNft(c, allExist)
 	br := `iifname { "br-lan", "br-guest" }`
 	wantSubs(t, "nft", nft,
-		br+` ip saddr 192.168.1.0/28 ip daddr != { 192.168.1.0/24, 192.168.20.0/24 } ct state new ct mark set 0x102 meta mark set 0x102 comment "nas-v4"`,
-		br+` ip6 daddr 2001:db8::/32 ct state new ct mark set 0x200 meta mark set 0x200 comment "v6-dst"`,
-		br+` ether saddr aa:bb:cc:dd:ee:ff ip daddr 1.2.3.4 ct state new ct mark set 0x102 meta mark set 0x102 comment "tv"`,
-		br+` ether saddr 02:c3:06:d6:7f:8a ip6 daddr != @lan6 ct state new`,
+		br+` ip saddr 192.168.1.0/28 ip daddr != { 192.168.1.0/24, 192.168.20.0/24 } ct state new ct mark set 0x102 meta mark set 0x102 return comment "nas-v4"`,
+		br+` ip6 saddr @pd6_0 ip6 daddr 2001:db8::/32 ct state new ct mark set 0x200 meta mark set 0x200 return comment "v6-dst"`,
+		`set pd6_0 { type ipv6_addr; flags interval; auto-merge; comment "prefixes delegated by wan wan"; }`,
+		`set pd6_1 { type ipv6_addr; flags interval; auto-merge; comment "prefixes delegated by wan wan2"; }`,
+		br+` ether saddr aa:bb:cc:dd:ee:ff ip daddr 1.2.3.4 ct state new ct mark set 0x102 meta mark set 0x102 return comment "tv"`,
+		br+` ether saddr 02:c3:06:d6:7f:8a ip6 saddr @pd6_1 ip6 daddr != @lan6 ct state new`,
 		`iifname "br-lan" ct mark != 0x0 meta mark set ct mark return`,
 		`iifname "br-guest" ct mark != 0x0 meta mark set ct mark return`)
 	if n := strings.Count(nft, `comment "nas-v4"`); n != 1 {
@@ -477,5 +479,23 @@ func TestDelegatedPrefixesFromWANEvent(t *testing.T) {
 	}
 	if p := delegatedPrefixes([]string{"new_dhcp6_ia_pd1_prefix1=zz;rm", "new_dhcp6_ia_pd1_prefix1_length=64"}); len(p) != 0 {
 		t.Fatalf("bad prefix accepted: %v", p)
+	}
+}
+
+// IPv6 policy routes follow the source prefix (Cd1s/mini-router#63): the prefix sets are filled from
+// what the dhcpcd hook recorded per WAN; garbage in the record never reaches nft.
+func TestPD6Script(t *testing.T) {
+	c := testConfig(t)
+	old := wanRunDir
+	wanRunDir = t.TempDir()
+	t.Cleanup(func() { wanRunDir = old })
+	os.WriteFile(pd6File("wan2"), []byte("2001:db8:2::/60\n192.0.2.0/24\n2001:db8:2:10::1/64 dev x\n::ffff:1.2.3.4/128\n"), 0644)
+	got := pd6Script(c)
+	if got != "flush set inet mr pd6_1\nadd element inet mr pd6_1 { 2001:db8:2::/60, 2001:db8:2:10::/64 }\n" {
+		t.Errorf("pd6Script:\n%s", got)
+	}
+	os.Remove(pd6File("wan2"))
+	if got := pd6Script(c); got != "flush set inet mr pd6_1\n" {
+		t.Errorf("no record: %q", got)
 	}
 }

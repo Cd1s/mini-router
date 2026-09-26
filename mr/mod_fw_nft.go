@@ -761,6 +761,7 @@ func refreshLan6() error {
 		}
 	}
 	script := fmt.Sprintf("flush set inet mr lan6\nadd element inet mr lan6 { %s }\n", strings.Join(dedup(elems), ", "))
+	script += pd6Script(c)
 	_, err = runStdin(script, "nft", "-f", "-")
 	return err
 }

@@ -137,6 +137,17 @@ func TestTokenValidation(t *testing.T) {
 	}
 }
 
+// A module declares token scopes only for its own actions (Module.TokenScope, #69).
+func TestModuleTokenScope(t *testing.T) {
+	for _, m := range modules {
+		for a := range m.TokenScope {
+			if _, ok := m.API[a]; !ok {
+				t.Errorf("module %s: TokenScope lists %q, which is not one of its API actions", m.Name, a)
+			}
+		}
+	}
+}
+
 // The actions tokens can reach exist; the sensitive ones are not among them.
 func TestTokenActions(t *testing.T) {
 	core := map[string]bool{"status": true, "config": true, "validate": true, "apply": true, "job": true, "confirm": true,

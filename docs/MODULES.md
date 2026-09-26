@@ -53,9 +53,10 @@ Register exactly one `Module` in `init()`:
 - `Verify(c, restarted)` — post-apply checks (failure rolls the apply back).
 - `Status(c, st)` — add keys to status JSON. `API` — web UI actions `"<module>.<verb>"`; mutating
   actions must require `r.method == "POST"`; never return secrets; validate every input. API tokens
-  reach an action only when it is listed in `tokenActions` (`api_token.go`) with the scope it needs —
+  reach an action only when the module lists it in `TokenScope` (next to `API`) with the scope it needs —
   `read` (no side effects, nothing sensitive), `operate` (runtime actions, no config change), `apply`;
   list a new action there deliberately, or not at all (logs, secrets, firmware stay session-only).
+  `register` merges the declarations into `tokenActions` (`api_token.go`, which holds only the core actions).
 - `Commands` — `mr <name> ...` subcommands (for hooks/daemons).
 - `Secrets(c)` — names of every secret this module's config references (so the UI can show 已设置).
 - `OnWAN(c, wan, event)` — called by the net hooks (`hooks.go`) when a WAN's addresses may have changed: `up`
@@ -95,7 +96,7 @@ client carries `X-MR-Pending: {"state","via","left"}`, and the web UI shows a ba
 
 API clients (`docs/api.md`): `Authorization: Bearer mrt_…` tokens from `api.tokens` (hash in secrets.yaml,
 scopes read / operate / apply, `allow`, `from`, `expires`; bad tokens count in the login throttle) reach the
-actions of `apiAction` that `tokenActions` lists; their changes are recorded as `via: api:<name>` and may not
+core actions of `apiAction` and those modules list in `TokenScope`; their changes are recorded as `via: api:<name>` and may not
 touch `api`, `services.ssh`, `system.sysctl`, `guard`, `notify` or new `*_file` paths. `GET config` returns `rev` (hash of
 router.yaml); `plan` / `validate` / `apply` take a whole `config` or a `patch` (`[{op: set|add|del, path, value}]`,
 paths as `mr get/set` take them: `firewall.forwards[nas].enabled`) and answer 409 when `base_rev` is stale — the
