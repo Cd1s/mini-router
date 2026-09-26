@@ -229,14 +229,54 @@ function renderShell(){
   const pend = h("div",{id:"pending"},
     h("span",{class:"t"}, h("b",{},"有未应用的更改。"), h("span",{class:"mut"}," 应用前会先校验并显示变更计划，应用后需在倒计时内确认，否则自动回滚。")),
     h("button",{class:"btn",onclick:async()=>{ await loadConfig(); show(S.page); toast("已放弃更改"); }},"放弃"),
-    h("button",{class:"btn p",onclick:startApply},"保存并应用"));
+    h("button",{class:"btn p",onclick:()=>startApply()},"保存并应用"));
   $("#root").replaceChildren(h("div",{id:"app"}, nav, h("div",{id:"scrim",onclick:()=>setNav(false)}),
     h("main",{}, h("div",{class:"top"}, h("header",{}, h("button",{id:"menu",type:"button","aria-label":"菜单",onclick:()=>setNav(!$("#nav").classList.contains("open"))},"☰"),
-        h("h1",{id:"title"},""), h("span",{class:"meta",id:"hmeta"},""), themeBtn()), h("div",{id:"pbanner",role:"status"})),
+        h("h1",{id:"title"},""), h("span",{class:"meta",id:"hmeta"},""),
+        h("button",{class:"hbtn",type:"button",title:"搜索（Ctrl-K 或 /）","aria-label":"搜索",style:"font-size:19px;line-height:1",onclick:()=>openSearch()},"⌕"), themeBtn()), h("div",{id:"pbanner",role:"status"})),
       h("div",{class:"content",id:"page"}))), pend);
   touch(); drawPending();
 }
 window.addEventListener("hashchange", ()=>show(location.hash.slice(1)||"overview"));
+
+// ---------- 全局搜索（#19）：页面、常用叫法、终端设备；Ctrl-K 或 / 打开 ----------
+const SEARCH_WORDS = {wan:"拨号 PPPoE 宽带 上网 光猫", lan:"网段 局域网 旁路由 AP 模式 网关", dhcp:"静态 IP 固定 IP 地址池 租约 DHCP",
+  dns:"域名 解析 去广告 广告 分流 DoT DoH", wifi:"WiFi 无线 密码 SSID 信道 国家", forward:"端口转发 映射 NAT 端口", firewall:"开放端口 防火墙 ping",
+  access:"家长 管控 定时 断网", clients:"设备 终端 在线 MAC 唤醒 WOL", services:"DDNS 动态域名 反向代理 证书 HTTPS Tailscale",
+  admin:"密码 SSH 管理 token", backup:"备份 恢复 升级 固件 刷机", schedules:"定时 重启 计划", "proxy-nodes":"代理 节点 订阅 机场",
+  "proxy-rules":"分流 规则 代理 域名", doctor:"体检 问题 事件 通知 告警", yaml:"原文 配置文件 router.yaml 高级", multiwan:"多拨 负载均衡 主备 故障切换",
+  policy:"策略路由 按域名 选线路", mon:"监控 流量 CPU 内存 温度"};
+async function openSearch(){
+  if ($(".modal.search")) return;
+  const input = h("input",{type:"text",placeholder:"页面、功能或设备（名称 / IP / MAC）",autocomplete:"off",style:"width:100%"});
+  const list = h("div",{class:"slist"});
+  let items = NAVREG.map(p=>({t:p.title, s:(NAV_GROUPS.find(g=>g[0]===p.group)||[,""])[1], k:(p.title+" "+p.id+" "+(SEARCH_WORDS[p.id]||"")).toLowerCase(), go:"#"+p.id}));
+  let sel = 0, shown = [];
+  const draw = ()=>{
+    const q = input.value.trim().toLowerCase();
+    shown = (q ? items.filter(x=>q.split(/\s+/).every(w=>x.k.includes(w))) : items.slice(0,0)).slice(0,12);
+    sel = Math.min(sel, Math.max(0, shown.length-1));
+    list.replaceChildren(...shown.map((x,i)=>h("a",{href:x.go,class:i===sel?"act":"",onclick:()=>m.remove()}, h("b",{},x.t), h("span",{class:"mut"}," "+x.s))),
+      ...(q && !shown.length ? [h("div",{class:"mut"},"没有匹配")] : []));
+  };
+  input.addEventListener("input", ()=>{ sel = 0; draw(); });
+  input.addEventListener("keydown", e=>{
+    if (e.key==="ArrowDown"||e.key==="ArrowUp"){ e.preventDefault(); sel = (sel + (e.key==="ArrowDown"?1:shown.length-1)) % Math.max(1,shown.length); draw(); }
+    else if (e.key==="Enter" && shown[sel]){ location.hash = shown[sel].go; m.remove(); }
+    else if (e.key==="Escape") m.remove();
+  });
+  const m = modal("搜索", [input, list], [h("button",{class:"btn",onclick:()=>m.remove()},"关闭")]);
+  m.classList.add("search"); m.addEventListener("click", e=>{ if (e.target===m) m.remove(); });
+  input.focus();
+  // devices: DHCP leases (name, IP, MAC) jump to 终端设备
+  api("dns.leases").then(j=>{ items = items.concat((j.leases||[]).map(l=>({t:(l.name&&l.name!=="*"?l.name:l.mac), s:"设备 · "+l.ip+" · "+l.mac,
+    k:(l.name+" "+l.ip+" "+l.mac).toLowerCase(), go:"#clients"}))); draw(); }).catch(()=>{});
+}
+window.addEventListener("keydown", e=>{
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target||{}).tagName||"") || (e.target||{}).isContentEditable;
+  if ((e.key==="k"||e.key==="K") && (e.ctrlKey||e.metaKey)){ e.preventDefault(); if (S.auth) openSearch(); }
+  else if (e.key==="/" && !typing && S.auth && !$(".modal")){ e.preventDefault(); openSearch(); }
+});
 
 function show(p){
   if (!PAGES[p]) p="overview";
@@ -390,6 +430,20 @@ function resultTag(r){
   return h("span",{class:"tag "+m[1], title:r}, m[0]);
 }
 function changeList(lines){ return h("pre",{class:"chg"}, lines.length ? lines.join("\n") : "（配置内容没有变化）"); }
+// ---------- router.yaml 原文（#19）：原样保存，注释和排版都保留；走同样的校验 / 风险 / 确认 / 回滚 ----------
+registerPage("system", "yaml", "router.yaml 原文", 32, async ()=>{
+  const j = await api("config.raw");
+  const ta = h("textarea",{class:"mono",rows:32,spellcheck:false,style:"width:100%;font-size:13px;line-height:1.45;tab-size:2;white-space:pre"}, j.yaml);
+  ta.addEventListener("keydown", e=>{ if (e.key==="Tab"){ e.preventDefault(); ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end"); } });
+  return h("div",{}, card("router.yaml", [
+    h("div",{class:"mut",style:"margin-bottom:8px"},"整份配置的原文（密码等只写名字，值在 secrets.yaml，不在这里）。保存时原样写入，注释保留；和表单一样先校验、显示变更与风险，应用后按风险自动保留或等你确认。"),
+    ta,
+    h("div",{class:"row",style:"margin-top:10px"},
+      h("button",{class:"btn p",onclick:()=>startApply({yaml:ta.value, base_rev:j.rev})},"检查并应用"),
+      h("button",{class:"btn",onclick:()=>{ ta.value=j.yaml; }},"撤销修改"),
+      h("span",{class:"mut"},"别处（表单、命令行、API）改过配置时会提示先刷新"))]));
+});
+
 registerPage("system", "history", "变更历史", 30, async ()=>{
   const j = await api("history");
   const rows = (j.revisions||[]).map(r=>{
@@ -417,9 +471,10 @@ function modal(title, body, buttons){
   const m = h("div",{class:"modal"}, h("div",{class:"box"}, h("h3",{},title), h("div",{class:"b"}, body), h("div",{class:"f"}, buttons)));
   document.body.append(m); return m;
 }
-async function startApply(){
+// payload: the form's config (default) or {yaml, base_rev} from the router.yaml editor
+async function startApply(payload){
   if (S.pend) return toast("有待确认的更改：请先在页面顶部点“保留”或“回滚”，再应用新的更改。", 5000);
-  const payload = {config:S.cfg, secrets:S.secrets, base_rev:S.rev}; // 409 if router.yaml changed meanwhile
+  payload = payload || {config:S.cfg, secrets:S.secrets, base_rev:S.rev}; // 409 if router.yaml changed meanwhile
   let v;
   try { v = await api("validate", payload); } catch(e){
     return toast(e.data&&e.data.rev ? "配置已被其它来源修改（另一个浏览器、命令行或 API）：请刷新页面后重做这次修改。" : "校验请求失败："+e.message, 6000); }

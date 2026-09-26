@@ -138,6 +138,8 @@ func apiAction(r apiReq, secrets map[string]string) apiResp {
 		return apiStatus()
 	case "config":
 		return apiGetConfig(secrets)
+	case "config.raw": // router.yaml as it is on flash (names of secrets only, never their values)
+		return apiResp{body: map[string]any{"yaml": readFile(ConfigPath), "rev": configRev()}}
 	case "validate":
 		return apiValidate(r)
 	case "apply":
@@ -433,6 +435,7 @@ type configSubmit struct {
 	Confirm int               `json:"confirm"`
 	Comment string            `json:"comment"`  // for the history
 	Patch   []patchOp         `json:"patch"`    // instead of config: edits to the live router.yaml (api_plan.go)
+	YAML    string            `json:"yaml"`     // instead of config: the whole router.yaml text, kept as typed (comments too)
 	BaseRev string            `json:"base_rev"` // the rev the client read: 409 if router.yaml changed since
 }
 
@@ -445,9 +448,19 @@ func candidate(r apiReq) (*Config, []byte, map[string]string, int, error) {
 	var c *Config
 	var y []byte
 	var err error
-	if len(in.Patch) > 0 {
+	switch {
+	case len(in.Patch) > 0:
 		y, c, err = patchedConfig(in.Patch) // y: the live text, only the patched values edited
-	} else {
+	case in.YAML != "":
+		if len(in.YAML) > 1<<20 {
+			return nil, nil, nil, 0, fmt.Errorf("router.yaml: larger than 1 MiB")
+		}
+		y = []byte(in.YAML)
+		c, err = decodeConfig(y)
+		if err != nil {
+			err = fmt.Errorf("router.yaml: %w", err)
+		}
+	default:
 		c, y, err = configFromJSON(in.Config)
 	}
 	if err != nil {
@@ -545,8 +558,8 @@ func apiApply(r apiReq) apiResp {
 		return errResp(400, "comment: one line, at most 200 characters")
 	}
 	os.MkdirAll(RunDir, 0700)
-	if len(in.Patch) == 0 {
-		y = uiConfigYAML(y, c) // a patch's text is already the live file with only its edits
+	if len(in.Patch) == 0 && in.YAML == "" {
+		y = uiConfigYAML(y, c) // a patch's text is already the live file with only its edits; raw text stays as typed
 	}
 	via := r.via
 	if via == "" {
