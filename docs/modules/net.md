@@ -192,18 +192,21 @@ multiwan:
 策略路由、端口转发 / 入站连接的回包优先于均衡。
 
 **PPPoE 拨号顺序**（与 `mode` 无关，`mode` 为空也能用；Cd1s/mini-router#109）：同一个账号多拨时，运营商那边有些东西
-（例如它自带的 DDNS）只认最后建立的会话。
+（例如它自带的 DDNS）只认最近的一次计费事件：会话建立算一次，几秒到十几秒后 IPv6 前缀下发又算一次（实测）。
 
 ```yaml
 multiwan:
   dial_order: [wan2, wan]     # 这些 PPPoE WAN 按顺序拨号（至少两条，不重复）；不在列表里的照常拨
-  dial_wait: 20               # 秒（1–120，默认 20）：每条最多等排在前面的线路这么久，拨不上也不再等
+  dial_wait: 30               # 秒（1–120，默认 30）：每条最多等排在前面的线路这么久，拨不上也不再等
   dial_restore: "04:30"       # off（默认）| now | HH:MM（system.timezone）
 ```
 
-- 等待：`mr-pppoe.<wan>` 的命令是 `/usr/libexec/mr/pppoe-dial`，它先跑 `mr wan dial-wait <wan>`（等到前面每条线路都有会话、
-  即 `/run/mini-router/wan/<名字>.json` 存在，或等满 `dial_wait`），再 exec pppd。等待不在 `start_pre` 里，OpenRC 不会被卡住
-  （串行启动时所有线路同时开始等）；只等排在前面的，不会死锁。pppd 退出后 supervise-daemon 重新拉起时也会同样等一次。
+- 等待：`mr-pppoe.<wan>` 的命令是 `/usr/libexec/mr/pppoe-dial`，它先跑 `mr wan dial-wait <wan>`（先停 2 秒，让一起断开的
+  会话的断线事件先落地；再等到前面每条线路都有会话，即 `/run/mini-router/wan/<名字>.json` 存在，开了 `ipv6_pd` 的还要有这次
+  会话下发的前缀记录 `<名字>.pd6`；或等满 `dial_wait`），再 exec pppd。等待不在 `start_pre` 里，OpenRC 不会被卡住
+  （串行启动时所有线路同时开始等）；只等排在前面的，不会死锁。
+- 排在别的线路后面的 WAN，pppd 不带 `persist`：断线时 pppd 退出，supervise-daemon 5 秒后重新运行 `pppoe-dial`，所以每次重拨
+  都会先等前面的线路。有的运营商在一条会话结束（PADT）时会把同一 MAC 的其它会话一起断掉，这样两条线回来时仍按顺序。
 - 顺序被打乱：某条在线的线路的会话（`mr wan status` 的 `since`）比排在它前面的某条在线线路的会话旧，即前面的线路后来单独重拨过。
   `now`：ppp-up 钩子脱离进程（setsid）运行 `mr wan dial-restore`，按顺序重拨后面的线路（`rc-service mr-pppoe.<wan> restart`，
   每条等新会话建立后再拨下一条）；`HH:MM`：crond 每天这个时间运行 `mr wan dial-restore`（`M H * * * /usr/sbin/mr wan dial-restore`），

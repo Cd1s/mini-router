@@ -65,7 +65,10 @@ func TestNetHomeConfig(t *testing.T) {
 	}
 	wantSubs(t, "mr-pppoe.wan", f["/etc/init.d/mr-pppoe.wan"], "#!/sbin/openrc-run\n", ". /etc/init.d/mr-pppoe\n")
 	wantNone(t, "mr-pppoe.wan", f["/etc/init.d/mr-pppoe.wan"], "MR_WAN_DEV")
-	wantSubs(t, "peers/wan2", f["/etc/ppp/peers/wan2"], "nic-wan\n", "ifname pppoe-wan2\n", "ipparam wan2\n", "mtu 1492\n")
+	wantSubs(t, "peers/wan2", f["/etc/ppp/peers/wan2"], "nic-wan\n", "ifname pppoe-wan2\n", "ipparam wan2\n", "mtu 1492\n", "persist\n")
+	// wan dials after wan2 (multiwan.dial_order): no persist, every redial goes through pppoe-dial
+	wantSubs(t, "peers/wan", f["/etc/ppp/peers/wan"], "nodetach\n", "lcp-echo-interval 5\n")
+	wantNone(t, "peers/wan", f["/etc/ppp/peers/wan"], "persist\n", "holdoff")
 	wantSubs(t, "dnsmasq.conf", f["/etc/dnsmasq.conf"], "resolv-file=/run/ppp/resolv.conf\n", "resolv-file=/run/mini-router/resolv.conf\n")
 	wantSubs(t, "services", f[GenDir+"/services"], "mr-pppoe.wan\n", "mr-pppoe.wan2\n", "dhcpcd\n")
 	wantNone(t, "services", f[GenDir+"/services"], "mr-wanmon", "mr-udhcpc")

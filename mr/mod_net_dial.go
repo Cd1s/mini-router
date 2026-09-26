@@ -5,8 +5,12 @@ package main
 // follow the session that connected last, so the WANs dial in a fixed order.
 //
 //   - mr-pppoe.<wan> runs /usr/libexec/mr/pppoe-dial, which calls `mr wan dial-wait <wan>` (waits until
-//     every WAN before it in dial_order has a session, at most dial_wait seconds) and then execs pppd.
-//     OpenRC never waits for it; a WAN never waits for itself or a later one.
+//     every WAN before it in dial_order has a session and, with ipv6_pd, its delegated prefix — the ISP
+//     acts on the prefix delegation too, seconds after the session starts — at most dial_wait seconds)
+//     and then execs pppd. OpenRC never waits for it; a WAN never waits for itself or a later one. A WAN
+//     after another one has no pppd `persist` (renderPeer): pppd exits when the link drops and
+//     supervise-daemon runs pppoe-dial again, so every redial waits (an ISP may end all sessions of one
+//     MAC when one of them ends: both then come back in order).
 //   - The order is broken when an up WAN has an older session (lease `since`, written by the ppp-up hook)
 //     than an up WAN before it. dial_restore now: the ppp-up hook starts a detached `mr wan dial-restore`;
 //     HH:MM: crond runs it at that time. It redials the late WANs in order (rc-service mr-pppoe.<wan>
@@ -15,6 +19,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -22,7 +27,10 @@ import (
 	"time"
 )
 
-const dialRestoreGap = 600 // s between two restore redials of one WAN
+const (
+	dialRestoreGap = 600             // s between two restore redials of one WAN
+	dialSettle     = 2 * time.Second // before a WAN checks the earlier ones: their down events land first
+)
 
 var (
 	dialStateFile = RunDir + "/dial-restore.json" // WAN -> unix time of its last restore redial
@@ -100,13 +108,27 @@ func dialEarlier(m MultiWAN, name string) []string {
 	return nil
 }
 
-// dialWaitUp waits until every WAN in names has a session that started at or after since, or until
-// deadline; reports whether they all have one.
-func dialWaitUp(names []string, since int64, deadline time.Time) bool {
+// dialReady: WAN name has a session that started at or after since and, with ipv6_pd, the prefix
+// delegated in that session (the dhcpcd hook's record is removed when the link goes, rewritten on
+// delegation).
+func dialReady(c *Config, name string, since int64) bool {
+	l, up := readLease(name)
+	if !up || l.Since < since {
+		return false
+	}
+	if w := c.WANByName(name); w == nil || !w.IPv6 || !w.IPv6PD {
+		return true
+	}
+	fi, err := os.Stat(pd6File(name))
+	return err == nil && fi.Size() > 0 && fi.ModTime().Unix() >= l.Since
+}
+
+// dialWaitUp waits until every WAN in names is dialReady, or until deadline; reports whether they are.
+func dialWaitUp(c *Config, names []string, since int64, deadline time.Time) bool {
 	for {
 		ok := true
 		for _, n := range names {
-			if l, up := readLease(n); !up || l.Since < since {
+			if !dialReady(c, n, since) {
 				ok = false
 			}
 		}
@@ -126,7 +148,9 @@ func dialWait(c *Config, name string) {
 	if len(earlier) == 0 {
 		return
 	}
-	if !dialWaitUp(earlier, 0, eventNow().Add(c.MultiWAN.dialWait())) {
+	deadline := eventNow().Add(c.MultiWAN.dialWait())
+	dialSleep(dialSettle)
+	if !dialWaitUp(c, earlier, 0, deadline) {
 		logf("wan %s: dialling after %s without %s (multiwan.dial_order)", name, c.MultiWAN.dialWait(), strings.Join(earlier, ", "))
 	}
 }
@@ -237,7 +261,7 @@ func dialRestore(c *Config) error {
 		eventAdd(c, "dial", "info", n, fmt.Sprintf("%s redialled to restore the dial order %s", n, strings.Join(m.DialOrder, " → ")), true)
 		t0 := eventNow().Unix()
 		if dialRestart(svc) == nil {
-			dialWaitUp([]string{n}, t0, eventNow().Add(m.dialWait()))
+			dialWaitUp(c, []string{n}, t0, eventNow().Add(m.dialWait()))
 		}
 	}
 	return nil

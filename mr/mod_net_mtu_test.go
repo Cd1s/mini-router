@@ -53,7 +53,7 @@ func TestWANLinkMTUHome(t *testing.T) {
 		t.Error("home config raises the link above 1500")
 	}
 	for _, w := range c.WAN {
-		if w.Proto == "pppoe" && !strings.Contains(renderPeer(w, "x"), "mtu 1492\nmru 1492\n") {
+		if w.Proto == "pppoe" && !strings.Contains(renderPeer(w, "x", true), "mtu 1492\nmru 1492\n") {
 			t.Errorf("%s: peer file lost mtu/mru 1492", w.Name)
 		}
 	}
