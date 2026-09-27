@@ -65,7 +65,7 @@ func TestNetHomeConfig(t *testing.T) {
 	}
 	wantSubs(t, "mr-pppoe.wan", f["/etc/init.d/mr-pppoe.wan"], "#!/sbin/openrc-run\n", ". /etc/init.d/mr-pppoe\n")
 	wantNone(t, "mr-pppoe.wan", f["/etc/init.d/mr-pppoe.wan"], "MR_WAN_DEV")
-	wantSubs(t, "peers/wan2", f["/etc/ppp/peers/wan2"], "nic-wan\n", "ifname pppoe-wan2\n", "ipparam wan2\n", "mtu 1492\n", "persist\n")
+	wantSubs(t, "peers/wan2", f["/etc/ppp/peers/wan2"], "nic-mv-wan2\n", "ifname pppoe-wan2\n", "ipparam wan2\n", "mtu 1492\n", "persist\n")
 	// wan dials after wan2 (multiwan.dial_order): no persist, every redial goes through pppoe-dial
 	wantSubs(t, "peers/wan", f["/etc/ppp/peers/wan"], "nodetach\n", "lcp-echo-interval 5\n")
 	wantNone(t, "peers/wan", f["/etc/ppp/peers/wan"], "persist\n", "holdoff")
@@ -191,7 +191,16 @@ func TestNetValidation(t *testing.T) {
 			c.Networks = []Network{{Name: "iot", IPv4: "192.168.30.1/24", Ports: []string{"wan.20"}}}
 			c.WAN[1] = WAN{Name: "wan2", Device: "wan", VLAN: 20, Proto: "dhcp", Metric: 40}
 		}, "wan[1].device: wan.20 is an untagged port of iot"},
-		{"mac-conflict", func(c *Config) { c.WAN[1].MAC = "02:00:00:00:00:01" }, "wan[1].mac: wan already gets MAC a4:a9:30:6e:2b:89 from wan wan"},
+		{"mac-conflict", func(c *Config) {
+			c.WAN[1] = WAN{Name: "wan2", Device: "wan", VLAN: 20, MAC: "02:00:00:00:00:01", Proto: "dhcp", Metric: 40}
+		}, "wan[1].mac: wan already gets MAC a4:a9:30:6e:2b:89 from wan wan"},
+		{"mac-multicast", func(c *Config) { c.WAN[1].MAC = "01:00:5e:00:00:01" }, "wan[1].mac: 01:00:5e:00:00:01 is not a unicast address"},
+		{"mac-zero", func(c *Config) { c.WAN[1].MAC = "00:00:00:00:00:00" }, "is not a unicast address"},
+		{"mac-dup-macvlan", func(c *Config) {
+			w := c.WAN[1]
+			w.Name, w.Metric = "wan3", 50
+			c.WAN = append(c.WAN, w)
+		}, "wan[2].mac: 02:55:b8:c9:87:3a already used by wan wan2 on wan"},
 		{"trunk-on-wan-wire", func(c *Config) {
 			c.Networks = []Network{{Name: "iot", IPv4: "192.168.30.1/24", VLAN: 10, Trunk: []string{"wan"}}}
 		}, "wan[0].device: wan carries VLAN 10 of network iot"},

@@ -6,7 +6,9 @@
 #     against a dnsmasq DHCP server, a static WAN via `mr routes`, and the busybox sh health checker
 #     taking a WAN down and up again (routes, rules, balance map in the loaded nft ruleset, DNS).
 #  4. PPPoE mtu 1500 (RFC 4638): the rendered link commands give the PPPoE port 1508 and a DHCP VLAN on it
-#     1500 in the real kernel; IPv6 renumbering (RFC 9096): after dhcpcd's shutdown events and a
+#     1500 in the real kernel; multi-dial (#114): the rendered macvlan lines create mv-<wan> with its MAC, keep it
+#     when unchanged, recreate it for a new MAC and remove a stale one; IPv6 renumbering (RFC 9096): after
+#     dhcpcd's shutdown events and a
 #     "reboot" with a new prefix the real `mr hook dhcpcd` puts a prefix that did not come back on the bridge, and a real
 #     dnsmasq advertises it to a client with preferred lifetime 0 while the current one stays preferred.
 #  3. policy route by domain, end to end in three network namespaces (IPv6 too: a source from one WAN's
@@ -53,11 +55,11 @@ rm -rf "$T" && mkdir -p "$T/bin"
 mkdir -p /run/mini-router && mount -t tmpfs tmpfs /run/mini-router
 S=mrnet$$s C=mrnet$$c
 DS=mrdom$$s DC=mrdom$$c DL=mrdom$$l # policy route by domain (3.)
-RR=mrra$$r RC=mrra$$c                # PPPoE MTU / RFC 9096 (4.)
+RR=mrra$$r RC=mrra$$c MVN=mrmv$$    # PPPoE MTU / RFC 9096 / macvlan (4.)
 cleanup() {
 	[ -f "$T/dnsmasq.pid" ] && kill "$(cat "$T/dnsmasq.pid")" 2> /dev/null
 	[ -f "$T/ra-dnsmasq.pid" ] && kill "$(cat "$T/ra-dnsmasq.pid")" 2> /dev/null
-	for n in "$S" "$C" "$DS" "$DC" "$DL" "$RR" "$RC"; do
+	for n in "$S" "$C" "$DS" "$DC" "$DL" "$RR" "$RC" "$MVN"; do
 		for p in $(ip netns pids "$n" 2> /dev/null); do kill "$p" 2> /dev/null; done
 		ip netns del "$n" 2> /dev/null
 	done
@@ -477,6 +479,40 @@ ip netns exec "$RR" sh -e "$M4/links.sh"
 [ "$(ip netns exec "$RR" cat /sys/class/net/wan/mtu)" = 1508 ] || fail "wan MTU $(ip netns exec "$RR" cat /sys/class/net/wan/mtu), want 1508"
 [ "$(ip netns exec "$RR" cat /sys/class/net/wan.20/mtu)" = 1500 ] || fail "wan.20 MTU $(ip netns exec "$RR" cat /sys/class/net/wan.20/mtu), want 1500"
 echo "net: PPPoE port 1508, DHCP VLAN 1500"
+
+step "multi-dial on one port (#114): the rendered macvlan lines in the real kernel"
+MV=$T/mv
+mkdir -p "$MV"
+cat > "$MV/router.yaml" << 'EOF'
+system: {hostname: mvtest}
+lan: {bridge: br-lan, ports: [lan2], ipv4: 192.168.1.6/24}
+wan:
+  - {name: wan, device: wan, mac: "02:00:00:00:00:01", proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, metric: 10}
+  - {name: wan2, device: wan, mac: "02:94:9a:e3:fb:78", proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, metric: 20}
+firewall: {offload: software}
+dhcp: {start: 100, end: 200, lease: 12h, domain: lan}
+EOF
+[ "$("$MRH" -c "$MV/router.yaml" -s "$M4/secrets.yaml" wan mac wan2)" = 02:94:9a:e3:fb:78 ] || fail "mr wan mac wan2"
+"$MRH" -c "$MV/router.yaml" -s "$M4/secrets.yaml" render "$MV/r" > /dev/null
+grep -qx 'nic-mv-wan2' "$MV/r/etc/ppp/peers/wan2" || fail "wan2 does not dial on mv-wan2"
+grep -E 'mv-|macvlan' "$MV/r/etc/mini-router/gen/network.sh" > "$MV/links.sh"
+ip netns add "$MVN"
+ip -n "$MVN" link add wan type dummy
+ip -n "$MVN" link set wan up
+ip -n "$MVN" link add link wan name mv-old type macvlan mode private # a WAN removed from the config
+inM() { ip netns exec "$MVN" "$@"; }
+inM sh "$MV/links.sh"
+has "mv-wan2" "$(inM ip -d link show mv-wan2)" "link/ether 02:94:9a:e3:fb:78 "
+has "mv-wan2" "$(inM ip -d link show mv-wan2)" "macvlan mode private"
+[ "$(inM cat /proc/sys/net/ipv6/conf/mv-wan2/disable_ipv6)" = 1 ] || fail "mv-wan2 has IPv6"
+if inM ip link show mv-old > /dev/null 2>&1; then fail "stale mv-old kept"; fi
+idx=$(inM cat /sys/class/net/mv-wan2/ifindex)
+inM sh "$MV/links.sh"
+[ "$(inM cat /sys/class/net/mv-wan2/ifindex)" = "$idx" ] || fail "an unchanged macvlan was recreated"
+sed 's/02:94:9a:e3:fb:78/02:00:00:00:00:99/g' "$MV/links.sh" > "$MV/links2.sh"
+inM sh "$MV/links2.sh"
+has "mv-wan2 new MAC" "$(inM ip link show mv-wan2)" "link/ether 02:00:00:00:00:99 "
+echo "net: macvlan created, kept when unchanged, recreated for a new MAC, stale one removed"
 
 step "IPv6 renumbering after a reboot (RFC 9096): real mr hook + real dnsmasq + a client's RA"
 ip netns add "$RC"

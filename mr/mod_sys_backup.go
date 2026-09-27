@@ -259,7 +259,10 @@ func parseBackup(data []byte) (*restoreSet, error) {
 }
 
 // writeSnapshot saves paths in the core snapshot format (restore() and `mr rollback` read it).
-func writeSnapshot(name string, paths []string) error {
+func writeSnapshot(name string, paths []string) error { return writeSnapshotFrom(name, paths, nil) }
+
+// writeSnapshotFrom is writeSnapshot with some paths' contents read from other files (path -> source).
+func writeSnapshotFrom(name string, paths []string, src map[string]string) error {
 	if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
 		return err
 	}
@@ -267,15 +270,23 @@ func writeSnapshot(name string, paths []string) error {
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
 	for _, p := range paths {
-		st, err := os.Stat(p)
+		from := p
+		if s, ok := src[p]; ok {
+			from = s
+		}
+		st, err := os.Stat(from)
 		if err != nil {
 			continue // did not exist: restore removes it
 		}
-		data, err := os.ReadFile(p)
+		data, err := os.ReadFile(from)
 		if err != nil {
 			return err
 		}
-		tw.WriteHeader(&tar.Header{Name: strings.TrimPrefix(p, "/"), Mode: int64(st.Mode().Perm()), Size: int64(len(data)), ModTime: st.ModTime()})
+		mode := st.Mode().Perm()
+		if lst, err := os.Stat(p); err == nil && from != p {
+			mode = lst.Mode().Perm() // the live file's mode (secrets.yaml stays 0600)
+		}
+		tw.WriteHeader(&tar.Header{Name: strings.TrimPrefix(p, "/"), Mode: int64(mode), Size: int64(len(data)), ModTime: st.ModTime()})
 		tw.Write(data)
 	}
 	list := []byte(strings.Join(paths, "\n") + "\n")

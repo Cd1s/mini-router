@@ -7,7 +7,7 @@ package main
 // findings become events.
 //
 // Checks: config (validates, guard, edits not applied), pending (a change waiting for confirmation, a
-// failed boot rollback), wan (address, health, CGNAT behind port forwards, overlap with a LAN subnet), routes (main default route,
+// failed boot rollback), wan (address, health, CGNAT behind port forwards, overlap with a LAN subnet, PPPoE sessions sharing a MAC), routes (main default route,
 // per-WAN tables), dns (a lookup through dnsmasq on 127.0.0.1), ipv6 (WAN IPv6 default route, delegated prefix
 // on the LAN), offload (flowtable, hardware flag, PPE entries), dnsguard (DoT / DoH refused by
 // dns.sovereignty), upgrade (what a new firmware's first-boot plan found), services (wanted vs running), wifi (radios / BSSes up; radio
@@ -349,7 +349,7 @@ func docWAN(c *Config, e *docEnv) []docFinding {
 			}
 		}
 	}
-	return out
+	return append(out, docWANMACs(c, e)...)
 }
 
 // docLANOverlap: the LAN-side network whose subnet contains the WAN address ip ("" = none).

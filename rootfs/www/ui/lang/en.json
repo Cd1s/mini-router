@@ -888,7 +888,7 @@
 "最多 3 个，交给 dnsmasq 作为上游": "Up to 3, used by dnsmasq as upstreams",
 "克隆 MAC": "Clone MAC",
 "留空使用默认": "Empty = default",
-"作用于物理接口": "Applies to the physical interface",
+"作用于物理接口；同一口上后面的 PPPoE 用它自己的 MAC（macvlan）": "Applies to the physical interface; a later PPPoE WAN on the same port uses it as its own MAC (macvlan)",
 "PPPoE 一般 1492": "PPPoE: usually 1492",
 "0 = 不修改": "0 = unchanged",
 "路由跃点 (metric)": "Route metric",

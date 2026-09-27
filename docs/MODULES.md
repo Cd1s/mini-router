@@ -79,7 +79,11 @@ changes by itself once applied, verified and still reachable; high ones wait for
 asks on the terminal and rolls back at once on Ctrl-C / SIGHUP.
 
 Rollback (failed/unconfirmed apply, `mr rollback`) restores files, restarts their services and
-reconciles the default runlevel with the restored config (`reconcileRunlevel`). Every apply records a revision
+reconciles the default runlevel with the restored config (`reconcileRunlevel`). router.yaml / secrets.yaml in the
+snapshot are the last *accepted* ones (`history/accepted-*.yaml`, written when a change is applied without a window
+or confirmed; staged at apply time): `mr apply` after editing router.yaml in place rolls back to them and keeps the
+edit as `router.yaml.rejected` (Cd1s/mini-router#115). `mr -c NEW.yaml apply` installs NEW after the snapshot, like
+the web UI. Every apply records a revision
 (`history.go`): `<snapshot>.json` next to its snapshot with rev, time, origin, comment, the config-level diff
 (from `gen/applied.yaml` + `gen/applied-secrets`, bookkeeping files the plan writes and a rollback restores; secrets
 only as "(changed)") and the result (applying → applied | pending → confirmed | rolled back: why); `mr rollback N`

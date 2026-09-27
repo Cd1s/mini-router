@@ -113,7 +113,7 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
       ...field("网关", inText(w,"gateway",{placeholder:"203.0.113.1"})),
       ...field("DNS 服务器", inList(w,"dns",{placeholder:"1.1.1.1, 8.8.8.8"}), "最多 3 个，交给 dnsmasq 作为上游"));
     rows.push(
-      ...field("克隆 MAC", inText(w,"mac",{placeholder:"留空使用默认"}), "作用于物理接口"),
+      ...field("克隆 MAC", inText(w,"mac",{placeholder:"留空使用默认"}), "作用于物理接口；同一口上后面的 PPPoE 用它自己的 MAC（macvlan）"),
       ...field("MTU", inNum(w,"mtu"), p==="pppoe" ? "PPPoE 一般 1492" : "0 = 不修改"),
       ...field("路由跃点 (metric)", inNum(w,"metric",{min:0,max:9999}), "越小越优先，每条 WAN 各不相同；主线路 0，备用线路更大（多线路按它主备切换）"));
     if (p!=="static") rows.push(...field("使用运营商 DNS", inBool(w,"peerdns")));

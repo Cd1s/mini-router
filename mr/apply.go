@@ -39,7 +39,75 @@ var (
 	clockRef    = "/etc/mini-router/state/clock" // mr-clock / clock-save: mtime = last known time
 	initDir     = "/etc/init.d"
 	runlevelDir = "/etc/runlevels/default"
+	// the live config files as the apply / rollback bookkeeping sees them
+	cfgFile = ConfigPath
+	secFile = SecretsPath
 )
+
+// Accepted config (Cd1s/mini-router#115): router.yaml and secrets.yaml exactly as they were when the
+// last change was accepted (applied without a confirm window, or confirmed). An apply of files edited
+// in place (`mr apply` after an editor or `cp`) snapshots these instead of the edited files, so a
+// rollback puts the accepted config back — and the next boot starts from it — instead of keeping the
+// rejected edit live. The rejected files are kept next to the live ones as *.rejected.
+func acceptedConfig() string  { return HistoryDir + "/accepted-router.yaml" }
+func acceptedSecrets() string { return HistoryDir + "/accepted-secrets.yaml" }
+
+// acceptedSources: for a snapshot of files edited in place, where the accepted versions of the live
+// config files are; without a record yet (the first apply), router.yaml falls back to the canonical
+// copy of the config last applied, secrets.yaml to the file as it is.
+func acceptedSources() map[string]string {
+	src := map[string]string{}
+	for live, acc := range map[string]string{cfgFile: acceptedConfig(), secFile: acceptedSecrets()} {
+		if _, err := os.Stat(acc); err == nil {
+			src[live] = acc
+		}
+	}
+	if _, ok := src[cfgFile]; !ok {
+		if _, err := os.Stat(appliedYAML); err == nil {
+			src[cfgFile] = appliedYAML
+		}
+	}
+	return src
+}
+
+// stageAccepted records the live config files of the change being applied; acceptStaged makes them
+// the accepted ones when the change is accepted, dropStaged forgets them when it is rolled back.
+func stageAccepted() {
+	for live, acc := range map[string]string{cfgFile: acceptedConfig(), secFile: acceptedSecrets()} {
+		if b, err := os.ReadFile(live); err == nil {
+			writeAtomic(acc+".staged", b, 0600)
+		} else {
+			os.Remove(acc + ".staged")
+		}
+	}
+}
+
+func acceptStaged() {
+	for _, acc := range []string{acceptedConfig(), acceptedSecrets()} {
+		if _, err := os.Stat(acc + ".staged"); err == nil {
+			os.Rename(acc+".staged", acc)
+		}
+	}
+	syncDir(HistoryDir)
+}
+
+func dropStaged() {
+	os.Remove(acceptedConfig() + ".staged")
+	os.Remove(acceptedSecrets() + ".staged")
+}
+
+// keepRejected: before a rollback restores snap, the live config files that differ from the
+// snapshot's are kept as *.rejected (the edit is not lost; `mr plan -c router.yaml.rejected` shows it).
+func keepRejected(snap string) {
+	for _, live := range []string{cfgFile, secFile} {
+		old, ok, err := snapshotFile(snap, live)
+		cur, cerr := os.ReadFile(live)
+		if err != nil || !ok || cerr != nil || string(old) == string(cur) {
+			continue
+		}
+		writeAtomic(live+".rejected", cur, 0600)
+	}
+}
 
 // serviceFor maps a generated path to the OpenRC service that must be restarted when it changes.
 func serviceFor(path string) string {
@@ -223,7 +291,10 @@ func printPlan(c *Config, p *Plan, verbose bool) {
 
 // snapshot saves every file the plan will touch (plus router.yaml) so a failed apply can be undone.
 // It is on disk (fsync) before the pending marker: a power cut after the marker must find it whole.
-func snapshot(paths []string, keep int) (string, error) {
+func snapshot(paths []string, keep int) (string, error) { return snapshotFrom(paths, keep, nil) }
+
+// snapshotFrom is snapshot with some paths' contents read from other files (src: path -> source).
+func snapshotFrom(paths []string, keep int, src map[string]string) (string, error) {
 	// a second snapshot in the same second gets a letter (sorting after the first), never its name
 	base := filepath.Join(HistoryDir, time.Now().Format("20060102-150405"))
 	name := base + ".tar.gz"
@@ -233,7 +304,7 @@ func snapshot(paths []string, keep int) (string, error) {
 		}
 		name = base + string(c) + ".tar.gz"
 	}
-	if err := writeSnapshot(name, paths); err != nil {
+	if err := writeSnapshotFrom(name, paths, src); err != nil {
 		return "", err
 	}
 	pruneHistory(keep, filepath.Base(name))
@@ -447,9 +518,14 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 	for _, f := range p.Changed {
 		paths = append(paths, f.Path)
 	}
-	paths = append(paths, ConfigPath, SecretsPath, GenDir+"/nftables.nft")
+	paths = append(paths, cfgFile, secFile, GenDir+"/nftables.nft")
 	defer shieldSignals()()
-	snap, err := snapshot(paths, historyKeep(c))
+	var src map[string]string
+	if install == nil {
+		// the live files may already be the edited ones: the snapshot holds the accepted config (#115)
+		src = acceptedSources()
+	}
+	snap, err := snapshotFrom(paths, historyKeep(c), src)
 	if err != nil {
 		return fmt.Errorf("snapshot: %w", err)
 	}
@@ -473,6 +549,7 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 			return rollback(snap, fmt.Errorf("install candidate: %w", err))
 		}
 	}
+	stageAccepted()
 	for _, f := range p.Changed {
 		if err := writeAtomic(f.Path, []byte(f.Data), os.FileMode(f.Mode)); err != nil {
 			return rollback(snap, fmt.Errorf("write %s: %w", f.Path, err))
@@ -507,6 +584,7 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 		fmt.Printf("run `mr confirm` within %ds or this change is rolled back\n", confirmSecs)
 	} else {
 		clearPending(snap)
+		acceptStaged()
 		setResult(snap, "applied")
 	}
 	return nil
@@ -516,12 +594,14 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 // old files are back, so a crash in the middle of it rolls back again at boot.
 func rollback(snap string, cause error) error {
 	logf("apply failed, rolling back to %s: %v", filepath.Base(snap), cause)
+	keepRejected(snap)
 	svcs, err := restore(snap)
 	if err != nil {
 		return fmt.Errorf("%v\nROLLBACK FAILED: %v", cause, err)
 	}
+	dropStaged()
 	restartAll(svcs)
-	if c, err := loadConfig(ConfigPath, SecretsPath); err == nil {
+	if c, err := loadConfig(cfgFile, secFile); err == nil {
 		reconcileRunlevel(c)
 		refreshRoutes(c)
 		fwLoad(c)
@@ -801,6 +881,7 @@ func confirm() (bool, error) {
 		return false, errors.New("the change is being rolled back")
 	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
+	acceptStaged()
 	unlock()
 	if err == nil {
 		setResult(p.Snapshot, "confirmed")
@@ -897,11 +978,13 @@ func rollbackAtBoot(cfgPath, secPath string) error {
 	if p.State == stateApplying {
 		what = "interrupted apply"
 	}
+	keepRejected(snap)
 	if _, err := restore(snap); err != nil {
 		os.Rename(ConfirmFile, ConfirmFile+".failed") // do not retry at every boot
 		appendChangeLogAt(at, fmt.Sprintf("boot: rolling back the %s (%s) to %s FAILED: %v", what, p.Via, filepath.Base(snap), err))
 		return fmt.Errorf("rolling back the %s to %s: %w", what, filepath.Base(snap), err)
 	}
+	dropStaged()
 	if c, err := loadConfig(cfgPath, secPath); err == nil {
 		linkRunlevel(c)
 	}

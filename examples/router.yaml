@@ -32,6 +32,7 @@ wan:
     ipv6_pd: true
   - name: wan2                  # backup; also carries desktop (policy below)
     device: wan
+    mac: 02:55:b8:c9:87:3a      # its own MAC for its PPPoE session (macvlan mv-wan2; mr wan mac wan2)
     proto: pppoe
     username: "user@example-isp"
     password_secret: pppoe_password
