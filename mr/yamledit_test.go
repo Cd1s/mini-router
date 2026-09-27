@@ -149,7 +149,12 @@ func TestUISaveKeepsLayout(t *testing.T) {
 			func() []string { return []string{"    metric: 5\n"} }},
 		{"quoted string keeps its quotes", func(m map[string]any) { sec(m, "wan", 1).(map[string]any)["username"] = "0123" },
 			func() []string {
-				return []string{strings.Split(src[strings.Index(src, "  - name: wan2"):], "\n")[3] + "\n"}
+				for _, l := range strings.Split(src[strings.Index(src, "  - name: wan2"):], "\n") {
+					if strings.HasPrefix(l, "    username:") {
+						return []string{l + "\n"}
+					}
+				}
+				return nil
 			},
 			func() []string { return []string{"    username: \"0123\"\n"} }},
 		{"map value (sysctl)", func(m map[string]any) {

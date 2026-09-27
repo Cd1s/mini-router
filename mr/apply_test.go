@@ -373,3 +373,77 @@ func TestWriteAtomicConcurrent(t *testing.T) {
 		t.Errorf("temp files left: %v", m)
 	}
 }
+
+// router.yaml edited in place, applied with a confirm window, not confirmed (Cd1s/mini-router#115):
+// the snapshot holds the accepted router.yaml, so the rollback puts it back (the edit is kept as
+// router.yaml.rejected) instead of keeping the rejected config live and for the next boot.
+func TestRollbackRestoresAcceptedConfig(t *testing.T) {
+	d, cfg, sec := confirmEnv(t)
+	oc, osf, oa := cfgFile, secFile, appliedYAML
+	cfgFile, secFile, appliedYAML = cfg, sec, filepath.Join(d, "gen", "applied.yaml")
+	t.Cleanup(func() { cfgFile, secFile, appliedYAML = oc, osf, oa })
+	os.MkdirAll(filepath.Join(d, "gen"), 0755)
+	os.MkdirAll(HistoryDir, 0700)
+
+	accepted := mustRead(t, cfg)
+	stageAccepted()
+	acceptStaged() // the running config was accepted by an earlier change
+	edited := strings.Replace(accepted, "192.168.1.6/24", "192.168.77.1/24", 1)
+	os.WriteFile(cfg, []byte(edited), 0600) // cp new.yaml /etc/mini-router/router.yaml
+	gen := filepath.Join(d, "gen", "x.conf")
+	os.WriteFile(gen, []byte("old\n"), 0644)
+
+	// what applyWith does for a CLI apply: snapshot (accepted config), stage the live files, write
+	snap, err := snapshotFrom([]string{gen, cfg, sec}, 20, acceptedSources())
+	if err != nil {
+		t.Fatal(err)
+	}
+	stageAccepted()
+	os.WriteFile(gen, []byte("new\n"), 0644)
+	if b, ok, err := snapshotFile(snap, cfg); err != nil || !ok || string(b) != accepted {
+		t.Fatalf("snapshot holds the edited router.yaml: %v %v", ok, err)
+	}
+	if st, _ := os.Stat(sec); st.Mode().Perm() != 0600 {
+		t.Errorf("secrets mode %v", st.Mode().Perm())
+	}
+
+	// what rollback / rollbackAtBoot do
+	keepRejected(snap)
+	if _, err := restore(snap); err != nil {
+		t.Fatal(err)
+	}
+	dropStaged()
+	if mustRead(t, cfg) != accepted || mustRead(t, gen) != "old\n" {
+		t.Error("the accepted config is not back")
+	}
+	if mustRead(t, cfg+".rejected") != edited {
+		t.Error("the rejected edit was not kept")
+	}
+	if _, err := os.Stat(sec + ".rejected"); err == nil {
+		t.Error("secrets.yaml did not change but was kept as rejected")
+	}
+	if mustRead(t, acceptedConfig()) != accepted {
+		t.Error("the rolled back change became the accepted config")
+	}
+	if _, err := os.Stat(acceptedConfig() + ".staged"); !errors.Is(err, fs.ErrNotExist) {
+		t.Error("staged copy left behind")
+	}
+
+	// the same change confirmed: it is the accepted config from then on
+	os.WriteFile(cfg, []byte(edited), 0600)
+	stageAccepted()
+	setPending(pendingApply{Snapshot: snap, State: statePending, Deadline: time.Now().Unix() + 60, Via: "mr apply"})
+	if ok, err := confirm(); !ok || err != nil {
+		t.Fatalf("confirm: %v %v", ok, err)
+	}
+	if mustRead(t, acceptedConfig()) != edited {
+		t.Error("the confirmed change is not the accepted config")
+	}
+
+	// no record yet (the first apply after an upgrade): the canonical copy of the applied config
+	os.Remove(acceptedConfig())
+	os.WriteFile(appliedYAML, []byte("# canonical\n"), 0644)
+	if src := acceptedSources(); src[cfg] != appliedYAML || src[sec] != acceptedSecrets() {
+		t.Errorf("fallback sources: %v", src)
+	}
+}

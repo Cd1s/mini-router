@@ -675,7 +675,7 @@ func hookHealth(c *Config) error {
 // wanCommand: `mr wan dhcp EVENT` (udhcpc script), `mr wan health` (net-wanmon), `mr wan status`.
 func wanCommand(c *Config, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: mr wan dhcp EVENT | health | status | dial-wait WAN | dial-restore")
+		return fmt.Errorf("usage: mr wan dhcp EVENT | health | status | dial-wait WAN | dial-restore | mac WAN")
 	}
 	switch args[0] {
 	case "dial-wait":
@@ -685,6 +685,13 @@ func wanCommand(c *Config, args []string) error {
 		return nil
 	case "dial-restore":
 		return dialRestore(c)
+	case "mac": // a stable MAC for a PPPoE WAN on a shared port (Cd1s/mini-router#114)
+		if len(args) != 2 || c.WANByName(args[1]) == nil {
+			return fmt.Errorf("mr wan mac WAN (a configured WAN)")
+		}
+		w := *c.WANByName(args[1])
+		fmt.Println(wanMACSuggest(wanPortMAC(c, w, readFile), w.Name))
+		return nil
 	case "dhcp":
 		if len(args) < 2 {
 			return fmt.Errorf("mr wan dhcp EVENT")

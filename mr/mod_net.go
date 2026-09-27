@@ -231,6 +231,9 @@ func init() {
 			}
 			for _, w := range c.WAN {
 				devs = append(devs, w.Device, w.Ifname())
+				if mv := wanMacvlan(c, w); mv != "" { // software fast path when the PPE does not take the flow
+					devs = append(devs, mv)
+				}
 			}
 			return devs
 		},
@@ -493,6 +496,7 @@ func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
 	ifnames := map[string]string{}
 	metrics := map[int]string{}
 	macs := map[string][2]string{} // device -> {mac, wan}
+	mvMACs := map[string]string{}  // "<link device> <mac>" -> wan (macvlans)
 	for i, w := range c.WAN {
 		p := fmt.Sprintf("wan[%d]", i)
 		if !reName.MatchString(w.Name) {
@@ -542,10 +546,19 @@ func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
 		ifnames[w.Ifname()] = w.Name
 		if w.MAC != "" && !reMAC.MatchString(w.MAC) {
 			v.Add("%s.mac: invalid %q", p, w.MAC)
+		} else if w.MAC != "" && !unicastMAC(w.MAC) {
+			v.Add("%s.mac: %s is not a unicast address (first byte even, not all zeros; mr wan mac %s suggests one)", p, w.MAC, w.Name)
 		}
-		// the MAC is set on the device: two different ones would make network.sh flip it (and drop
+		// a later PPPoE WAN on the same link device with its own MAC dials on a macvlan (mod_net_macvlan.go);
+		// otherwise the MAC is set on the device: two different ones would make network.sh flip it (and drop
 		// every session on that port) on each run
-		if w.MAC != "" {
+		if mv := wanMacvlan(c, w); mv != "" {
+			k := w.LinkDev() + " " + strings.ToLower(w.MAC)
+			if o, ok := mvMACs[k]; ok {
+				v.Add("%s.mac: %s already used by wan %s on %s (every PPPoE session on a port needs its own MAC)", p, w.MAC, o, w.LinkDev())
+			}
+			mvMACs[k] = w.Name
+		} else if w.MAC != "" {
 			if o, ok := macs[w.Device]; ok && !strings.EqualFold(o[0], w.MAC) {
 				v.Add("%s.mac: %s already gets MAC %s from wan %s (the MAC belongs to the device)", p, w.Device, o[0], o[1])
 			} else if !ok {

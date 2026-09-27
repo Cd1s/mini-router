@@ -1,0 +1,49 @@
+From: mini-router
+Subject: net: macvlan: add ndo_fill_forward_path
+
+Not upstream (Linux 6.18 .. 7.3-rc: macvlan has no ndo_fill_forward_path) nor in OpenWrt's patches.
+Without it the flowtable's path lookup stops at a macvlan: for a PPPoE session on a macvlan (one MAC
+address per session on one port, "multi-dial", Cd1s/mini-router#114) the output device is the macvlan
+and mtk_ppe_offload refuses it (-EOPNOTSUPP), so such flows are never offloaded to the PPE.
+
+With it the path is PPPOE (ppp) -> ETHERNET (macvlan: its address is the source MAC) -> DSA (the
+lower port), which the PPE accepts in both directions. A sibling macvlan destination (bridge mode,
+delivered inside the host) and source mode keep having no path.
+
+--- a/drivers/net/macvlan.c
++++ b/drivers/net/macvlan.c
+@@ -1172,6 +1172,26 @@
+ 	return READ_ONCE(vlan->lowerdev->ifindex);
+ }
+ 
++/* Flowtable offload through a macvlan (e.g. a PPPoE session on its own MAC address, "multi-dial"):
++ * frames leave the lower device with this macvlan's address as source and no extra encapsulation.
++ * A destination that is a sibling macvlan (bridge mode) is delivered inside the host, and source
++ * mode has no address of its own: no path for those.
++ */
++static int macvlan_fill_forward_path(struct net_device_path_ctx *ctx,
++				     struct net_device_path *path)
++{
++	const struct macvlan_dev *vlan = netdev_priv(ctx->dev);
++
++	if (vlan->mode == MACVLAN_MODE_SOURCE ||
++	    macvlan_hash_lookup(vlan->port, ctx->daddr))
++		return -EOPNOTSUPP;
++
++	path->type = DEV_PATH_ETHERNET;
++	path->dev = ctx->dev;
++	ctx->dev = vlan->lowerdev;
++	return 0;
++}
++
+ static const struct ethtool_ops macvlan_ethtool_ops = {
+ 	.get_link		= ethtool_op_get_link,
+ 	.get_link_ksettings	= macvlan_ethtool_get_link_ksettings,
+@@ -1203,6 +1223,7 @@
+ 	.ndo_netpoll_cleanup	= macvlan_dev_netpoll_cleanup,
+ #endif
+ 	.ndo_get_iflink		= macvlan_dev_get_iflink,
++	.ndo_fill_forward_path	= macvlan_fill_forward_path,
+ 	.ndo_features_check	= passthru_features_check,
+ 	.ndo_hwtstamp_get	= macvlan_hwtstamp_get,
+ 	.ndo_hwtstamp_set	= macvlan_hwtstamp_set,

@@ -1,6 +1,6 @@
 #!/bin/sh
-# M3 kernel: the OpenWrt main 6.18 build of the flashed system plus the netfilter modules mini-router
-# needs (kmod-nft-tproxy, kmod-nft-socket). Runs on the build host as root:
+# M3 kernel: the OpenWrt main 6.18 build of the flashed system plus the modules mini-router
+# needs (kmod-nft-tproxy, kmod-nft-socket, kmod-macvlan for multi-dial). Runs on the build host as root:
 #
 #   ./build/m3/kernel.sh
 #
@@ -20,7 +20,7 @@ KDIR=build_dir/target-aarch64_cortex-a53_musl/linux-mediatek_filogic
 KVER=6.18.52
 DTB=image-mt7986a-xiaomi-redmi-router-ax6000-hanwckf.dtb
 FIT=xiaomi_redmi-router-ax6000-hanwckf-kernel.bin
-PKGS="kmod-nft-tproxy kmod-nft-socket"
+PKGS="kmod-nft-tproxy kmod-nft-socket kmod-macvlan"
 
 mkdir -p "$W/owrt-upper" "$W/owrt-work" "$T" "$O" "$W/logs"
 chown 1000:1000 "$W/owrt-upper" # the container user b owns the merged top directory

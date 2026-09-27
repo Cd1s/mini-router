@@ -133,7 +133,7 @@ wan:
   - name: wan                 # PPPoE 时接口名 pppoe-<name>，所以最多 9 个字符
     device: wan               # 物理口
     vlan: 0                   # 可选：运营商要求的 VLAN（PPPoE / DHCP / 静态都可用），接口 wan.<vlan>
-    mac: a4:a9:30:6e:2b:89    # 可选：克隆 MAC（作用于物理口，所以同一个口上的几条 WAN 只能用同一个 MAC）
+    mac: a4:a9:30:6e:2b:89    # 可选：克隆 MAC（作用于物理口）；同一口上后面的 PPPoE 设了自己的 mac 就走 macvlan（见“多拨”）
     proto: pppoe              # pppoe | dhcp | static
     username: "user@example-isp"
     password_secret: pppoe_password   # secrets.yaml 里的键名
@@ -162,6 +162,22 @@ wan:
 既不能同时是 LAN 口，也不能做任何网络的带标签端口（trunk），否则 LAN 侧网络会被桥到运营商那一侧。
 DHCP / 静态 WAN 被删除、改名或换了接口（VLAN / 口）时，应用会删掉它留在旧接口上的地址和默认路由
 （按 `/run/mini-router/wan/<wan>.json` 里记录的接口）；改地址时新地址和旧地址在同一网段也不会一起丢（`promote_secondaries`）。
+
+**多拨（单口 / 多口，Cd1s/mini-router#114）**：运营商的 BRAS 按 MAC 记会话，同一个 MAC 上的第二条会话在另一条拨号
+（PADI）或挂断（PADT）时常被一起踢掉。
+
+- 单口多拨：同一个链路设备（`device` + `vlan`）上第一条 WAN 用网口本身；后面的 PPPoE WAN 设了自己的 `mac`（与第一条不同）
+  就跑在 macvlan `mv-<名字>` 上（mode private，关 IPv6、不配地址，只跑 PPPoE；pppd 用 `nic-mv-<名字>`）。`mr wan mac <名字>`
+  生成一个固定的本地管理单播地址（`02:` + sha256(“网口 MAC 名字”) 的第 1–5 字节；网口 MAC = 第一条 WAN 的 `mac`，没有就是网口
+  自己的），写进 router.yaml，重启 / 刷机都不变。不设 `mac`（或与第一条相同）照旧共用网口 MAC，`mr doctor` 提示并给出建议值。
+- 校验：`mac` 必须是单播（首字节最低位 0）、非全 0；同一链路设备上的 macvlan 不能重复 MAC。
+- network.sh 幂等：`mv-<名字>` 的下层口 / MAC / mode 都对就不动，否则删掉重建（MAC 写在 peers 文件里，所以同一次 apply 会重启
+  `mr-pppoe.<名字>`）；配置里不再要的 `mv-*` macvlan 被删除。PPPoE `mtu` 大于 1492 时 macvlan 与下层口同样设 `mtu + 8`。
+  dhcpcd 不管 `mv-*`；flowtable 包含 `mv-<名字>`（软件 fastpath）。下层 DSA 口会变成混杂模式（mt7530 没有单播过滤），正常。
+- 多口多拨：WAN 在不同的口上本来就可以；DSA 用户口默认继承 conduit 的 MAC，同一账号的几条线给各自的 `mac`（`mr doctor` 会提示
+  同账号同 MAC）。
+- 拨号顺序照旧用 `multiwan.dial_order`（见下）。硬件卸载：内核补丁 `build/m3/patches/992-net-macvlan-add-ndo_fill_forward_path.patch`
+  让 flowtable 穿过 macvlan，macvlan 上的 PPPoE 两个方向都进 PPE。
 
 **PPPoE 1500 MTU（RFC 4638）**：`mtu` 大于 1492 时，network.sh 把 PPPoE 所在的物理口设成 `mtu + 8`（1500 → 1508，
 VLAN 的父口先设，子接口不能超过它；DSA 端口的 conduit 由内核自动加标签开销），pppd 2.5 的 pppoe 插件就会在发现阶段带上
@@ -318,6 +334,7 @@ multicast: {igmp_snooping: false, igmp_proxy: false, upstream: wan2}
 | `mr wan status` | 每条 WAN 的运行状态 JSON（地址、网关、DNS、表 / 标记、当前 metric、健康、延迟） |
 | `mr wan health` | 按健康状态重装路由和防火墙（net-wanmon 在状态变化时调用） |
 | `mr wan dhcp <event>` | udhcpc 事件钩子 |
+| `mr wan mac <wan>` | 这条 WAN 在共用网口上的固定 MAC 建议值（单口多拨，见“多拨”） |
 | `mr routes` | 重装所有在线 WAN 的路由 / 规则，重载防火墙 |
 | API `net` | 原始 `ip -j` 视图（链路、地址、路由、规则、邻居） |
 | API `net.ports` | 网口 / 接口状态（`/sys`） |
@@ -335,6 +352,7 @@ multicast: {igmp_snooping: false, igmp_proxy: false, upstream: wan2}
    和 `/run/ppp/resolv.conf` 一起被 dnsmasq 轮询（用最新的那个）；掉线的线路 DNS 会被移除。
    没有任何线路记录了 DNS 时（例如刚升级、PPPoE 还没重拨）这个文件不存在，也绝不会写空文件，dnsmasq 继续用原来的上游。
 4. nft、pppd peers、dhcpcd.conf、服务列表与之前相同；多线路默认关闭（家里配置没有 `multiwan`）。
+5. wan2 有了自己的 `mac`（#114）：network.sh 建 `mv-wan2`，peers/wan2 用 `nic-mv-wan2`，flowtable 多 `mv-wan2`；wan 不变。
 
 ## 怎么用
 

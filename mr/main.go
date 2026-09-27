@@ -205,6 +205,14 @@ func dispatch(args []string, cfgPath, secPath string) error {
 		if len(*comment) > 200 || strings.ContainsAny(*comment, "\n\r") {
 			return fmt.Errorf("-m: one line, at most 200 characters")
 		}
+		if (cfgPath != ConfigPath || secPath != SecretsPath) && !*dry {
+			// `mr -c NEW.yaml apply`: like the web UI, the live files are snapshotted before NEW is
+			// installed as router.yaml, so a rollback restores them (Cd1s/mini-router#115)
+			if err := ApplyCandidate(cfgPath, secPath, *secs, applyOpts{Via: "mr apply", Comment: *comment}); err != nil || !*wait || *secs <= 0 {
+				return err
+			}
+			return waitConfirm(*secs)
+		}
 		if err := Apply(c, *dry, *secs, *comment, *verbose); err != nil || !*wait || *secs <= 0 || *dry {
 			return err
 		}

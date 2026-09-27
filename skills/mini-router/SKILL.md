@@ -31,7 +31,10 @@ No python/jq there: edit YAML with care, or edit a copy on your side and send it
    mr plan                                                            # changes + files + services
    ```
    For a large rework, edit a copy instead: `cp /etc/mini-router/router.yaml /tmp/new.yaml`, edit,
-   `mr -c /tmp/new.yaml validate && mr -c /tmp/new.yaml plan`, then copy it back.
+   `mr -c /tmp/new.yaml validate && mr -c /tmp/new.yaml plan`, then apply the copy itself:
+   `mr -c /tmp/new.yaml apply --confirm 120` (the live files are snapshotted before the copy is installed).
+   Editing router.yaml in place and running `mr apply` is safe too: a rollback restores the last accepted
+   router.yaml and keeps the edit as `router.yaml.rejected`.
 3. **Apply with a safety net**: `mr apply --confirm 120`. It prints the plan, applies, verifies services; failures
    roll back at once. Then verify (step 4) and run **`mr confirm` within 120 s** — without it the change is rolled
    back automatically (that is the net when you cut your own connection; never forget it when all is fine).
@@ -127,6 +130,8 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
 - **WAN**: `mr wan status`; redial one line at a time: `rc-service mr-pppoe.<name> restart`. With `multiwan.dial_order`
   (several PPPoE sessions on one account, the ISP follows the newest), redial in that order; `dial_order_ok` in
   `mr wan status` says whether it holds, `dial_restore` (off | now | HH:MM) repairs it (docs/modules/net.md).
+  Several PPPoE WANs on one port: give each later one its own `mac` (`mr wan mac <name>` prints a stable one); it
+  dials on macvlan `mv-<name>` (the ISP keys sessions by MAC). `mr doctor` warns about WANs sharing a MAC.
 - **A website via another WAN**: `policy_routes: [{name: …, domains: [site.example], via: wan2}]` (or `domains_file:`).
   Connections stay hardware-offloaded. Check: `mr dns query site.example`, then `nft list set inet mr pr_<index>_4`
   lists the learned addresses. Devices using DoH / their own DNS are not covered (`dns.redirect` catches plain DNS).
