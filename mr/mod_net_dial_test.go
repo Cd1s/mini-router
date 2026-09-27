@@ -121,24 +121,39 @@ func TestDialWait(t *testing.T) {
 
 func TestDialLate(t *testing.T) {
 	c, _, _, _ := dialEnv(t)
-	m := c.MultiWAN
 	writeLease("wan", wanLease{IP: "192.0.2.1", Since: 100})
-	if l := dialLate(m); len(l) != 0 {
+	if l := dialLate(c); len(l) != 0 {
 		t.Errorf("only wan up: %v", l)
 	}
 	writeLease("wan2", wanLease{IP: "192.0.2.2", Since: 50})
-	if l := dialLate(m); len(l) != 0 {
+	if l := dialLate(c); len(l) != 0 {
 		t.Errorf("wan2 then wan: %v", l)
 	}
 	writeLease("wan2", wanLease{IP: "192.0.2.2", Since: 200}) // wan2 redialled on its own
-	if l := dialLate(m); strings.Join(l, ",") != "wan" {
+	if l := dialLate(c); strings.Join(l, ",") != "wan" {
 		t.Errorf("wan2 redialled: late %v", l)
 	}
-	m.DialOrder = []string{"a", "b", "c"}
+	// the prefixes count too: wan2's session first, but its prefix came after wan's session and prefix
+	writeLease("wan2", wanLease{IP: "192.0.2.2", Since: 50})
+	pd6Record(t, "wan", 110)
+	pd6Record(t, "wan2", 130)
+	if l := dialLate(c); strings.Join(l, ",") != "wan" {
+		t.Errorf("wan2's prefix last: late %v", l)
+	}
+	pd6Record(t, "wan", 140)
+	if l := dialLate(c); len(l) != 0 {
+		t.Errorf("wan's prefix last: late %v", l)
+	}
+	c.WAN[1].IPv6PD = false // without ipv6_pd a leftover record does not count
+	pd6Record(t, "wan2", 150)
+	if l := dialLate(c); len(l) != 0 {
+		t.Errorf("wan2 without ipv6_pd: late %v", l)
+	}
+	c.MultiWAN.DialOrder = []string{"a", "b", "c"}
 	writeLease("a", wanLease{Since: 300})
 	writeLease("b", wanLease{Since: 200})
 	writeLease("c", wanLease{Since: 250})
-	if l := dialLate(m); strings.Join(l, ",") != "b,c" {
+	if l := dialLate(c); strings.Join(l, ",") != "b,c" {
 		t.Errorf("a redialled: late %v", l)
 	}
 }
@@ -184,8 +199,8 @@ func TestDialRestore(t *testing.T) {
 	if strings.Join(spawned, ";") != "wan dial-restore" || len(dialCronLine(c)) != 0 {
 		t.Errorf("now: spawned %v", spawned)
 	}
-	if err := dialRestore(c); err != nil || strings.Join(restarted, ",") != "mr-pppoe.wan" || len(dialLate(c.MultiWAN)) != 0 {
-		t.Errorf("restore: %v restarted %v late %v", err, restarted, dialLate(c.MultiWAN))
+	if err := dialRestore(c); err != nil || strings.Join(restarted, ",") != "mr-pppoe.wan" || len(dialLate(c)) != 0 {
+		t.Errorf("restore: %v restarted %v late %v", err, restarted, dialLate(c))
 	}
 	if ev := eventsRead(0, 0); len(ev) != 1 || ev[0].Type != "dial" || ev[0].Key != "wan" {
 		t.Errorf("events: %+v", ev)

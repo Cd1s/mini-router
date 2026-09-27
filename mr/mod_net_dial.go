@@ -11,8 +11,9 @@ package main
 //     after another one has no pppd `persist` (renderPeer): pppd exits when the link drops and
 //     supervise-daemon runs pppoe-dial again, so every redial waits (an ISP may end all sessions of one
 //     MAC when one of them ends: both then come back in order).
-//   - The order is broken when an up WAN has an older session (lease `since`, written by the ppp-up hook)
-//     than an up WAN before it. dial_restore now: the ppp-up hook starts a detached `mr wan dial-restore`;
+//   - The order is broken when an up WAN's last event (its session start, lease `since` from the ppp-up
+//     hook, or with ipv6_pd the prefix delegated in that session: the dhcpcd hook's record, written when
+//     it appears or changes) is older than that of an up WAN before it. dial_restore now: the ppp-up hook starts a detached `mr wan dial-restore`;
 //     HH:MM: crond runs it at that time. It redials the late WANs in order (rc-service mr-pppoe.<wan>
 //     restart, each waiting for its new session), at most once per 10 minutes per WAN, with an event.
 
@@ -155,19 +156,36 @@ func dialWait(c *Config, name string) {
 	}
 }
 
-// dialLate: the up WANs of dial_order whose session is older than that of an up WAN before them.
-func dialLate(m MultiWAN) []string {
+// dialLast: when WAN name last did something the ISP acts on: its session start or, with ipv6_pd, the
+// delegation of the prefix in that session (seconds later, sometimes minutes: a failed rebind of the old
+// prefix). false while it is down.
+func dialLast(c *Config, name string) (int64, bool) {
+	l, up := readLease(name)
+	if !up {
+		return 0, false
+	}
+	t := l.Since
+	if w := c.WANByName(name); w != nil && w.IPv6 && w.IPv6PD {
+		if fi, err := os.Stat(pd6File(name)); err == nil && fi.Size() > 0 {
+			t = max(t, fi.ModTime().Unix())
+		}
+	}
+	return t, true
+}
+
+// dialLate: the up WANs of dial_order whose last event is older than that of an up WAN before them.
+func dialLate(c *Config) []string {
 	var late []string
 	var newest int64
-	for _, n := range m.DialOrder {
-		l, up := readLease(n)
+	for _, n := range c.MultiWAN.DialOrder {
+		t, up := dialLast(c, n)
 		if !up {
 			continue
 		}
-		if l.Since < newest {
+		if t < newest {
 			late = append(late, n)
 		}
-		newest = max(newest, l.Since)
+		newest = max(newest, t)
 	}
 	return late
 }
@@ -175,7 +193,7 @@ func dialLate(m MultiWAN) []string {
 // dialRestoreAt: with dial_restore HH:MM and a broken order, when crond redials next (unix; 0 = nothing pending).
 func dialRestoreAt(c *Config) int64 {
 	h, mi, ok := dialRestoreTime(c.MultiWAN.DialRestore)
-	if !ok || len(dialLate(c.MultiWAN)) == 0 {
+	if !ok || len(dialLate(c)) == 0 {
 		return 0
 	}
 	now := eventNow()
@@ -203,7 +221,7 @@ func dialOnUp(c *Config, name string) {
 	if !dialRestoreOn(m) || !slices.Contains(m.DialOrder, name) {
 		return
 	}
-	late := dialLate(m)
+	late := dialLate(c)
 	if len(late) == 0 {
 		return
 	}
@@ -240,7 +258,7 @@ func dialRestore(c *Config) error {
 		return nil // a restore is running
 	}
 	defer lk.Close()
-	late := dialLate(m)
+	late := dialLate(c)
 	if len(late) == 0 {
 		return nil
 	}

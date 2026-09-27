@@ -424,7 +424,7 @@ func wanRuntime(c *Config) wanRuntimeView {
 		v.WANs = append(v.WANs, r)
 	}
 	if m := c.MultiWAN; len(m.DialOrder) > 0 {
-		v.DialLate = dialLate(m)
+		v.DialLate = dialLate(c)
 		ok := len(v.DialLate) == 0
 		v.DialOrder, v.DialOrderOK, v.DialRestore, v.DialRestoreAt = m.DialOrder, &ok, m.DialRestore, dialRestoreAt(c)
 	}

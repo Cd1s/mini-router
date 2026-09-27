@@ -441,7 +441,12 @@ func hookDhcpcd(c *Config) error {
 		return refreshLan6()
 	}
 	if pds := delegatedPrefixes(os.Environ()); len(pds) > 0 {
-		writeAtomic(pd6File(w.Name), []byte(strings.Join(pds, "\n")+"\n"), 0644)
+		// written only when it changes: its mtime is when this session got the prefix (dial order,
+		// mod_net_dial.go); a renewal or router advertisement does not touch it
+		if rec := strings.Join(pds, "\n") + "\n"; readFile(pd6File(w.Name)) != rec {
+			writeAtomic(pd6File(w.Name), []byte(rec), 0644)
+			defer dialOnUp(c, w.Name) // a late prefix can break the dial order too
+		}
 	}
 	// ethernet WANs: routes need the upstream router's link-local gateway (learned from RA); without
 	// one a default route means "on link" and every destination would be neighbour-solicited on the WAN.

@@ -207,7 +207,9 @@ multiwan:
   （串行启动时所有线路同时开始等）；只等排在前面的，不会死锁。
 - 排在别的线路后面的 WAN，pppd 不带 `persist`：断线时 pppd 退出，supervise-daemon 5 秒后重新运行 `pppoe-dial`，所以每次重拨
   都会先等前面的线路。有的运营商在一条会话结束（PADT）时会把同一 MAC 的其它会话一起断掉，这样两条线回来时仍按顺序。
-- 顺序被打乱：某条在线的线路的会话（`mr wan status` 的 `since`）比排在它前面的某条在线线路的会话旧，即前面的线路后来单独重拨过。
+- 顺序被打乱：某条在线线路的最后一次事件比排在它前面的某条在线线路的旧。事件指会话建立（`mr wan status` 的 `since`），
+  开了 `ipv6_pd` 的还包括这次会话下发前缀的时间（`<名字>.pd6` 的修改时间；前缀记录只在出现或变化时写，续约 / RA 不动它）。
+  即前面的线路后来单独重拨过，或它的前缀来得比后面线路的晚（旧前缀续约失败时可能要一两分钟）。dhcpcd 钩子写入新前缀时也检查一次。
   `now`：ppp-up 钩子脱离进程（setsid）运行 `mr wan dial-restore`，按顺序重拨后面的线路（`rc-service mr-pppoe.<wan> restart`，
   每条等新会话建立后再拨下一条）；`HH:MM`：crond 每天这个时间运行 `mr wan dial-restore`（`M H * * * /usr/sbin/mr wan dial-restore`），
   仍然乱序才重拨。每条线路 10 分钟内最多恢复一次（`/run/mini-router/dial-restore.json`）；每次恢复写事件（类型 `dial`）
