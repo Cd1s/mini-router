@@ -14,6 +14,7 @@ import (
 func domainTestConfig(t *testing.T) *Config {
 	t.Helper()
 	c := testConfig(t)
+	c.Policy = c.Policy[:1] // the home config's first policy only: the cases number theirs from 1
 	f := filepath.Join(t.TempDir(), "video.domains")
 	os.WriteFile(f, []byte("# comment\nvideo.example.org\n\nstatic.example.com   # below example.com\n+.Img.Example.NET.\n"), 0644)
 	c.Policy = append(c.Policy,
@@ -188,7 +189,7 @@ func TestNetPolicyDomainsLongList(t *testing.T) {
 // The proxy's dnsmasq fills the same sets, except for names it answers with fake IPs.
 func TestNetPolicyDomainsProxyDNS(t *testing.T) {
 	c := proxyTestConfig(t)
-	c.Policy = append(c.Policy, Policy{Name: "video", Domains: []string{"video.example.org", "claude.ai", "openai.com"}, Via: "wan2"})
+	c.Policy = append(c.Policy[:1], Policy{Name: "video", Domains: []string{"video.example.org", "claude.ai", "openai.com"}, Via: "wan2"})
 	c.defaults()
 	mustValid(t, c)
 	f := renderMap(t, c)

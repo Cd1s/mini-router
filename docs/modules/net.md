@@ -273,6 +273,10 @@ dhcpcd 钩子把每条 WAN 的前缀记在 `/run/mini-router/wan/<名>.pd6`，�
 flowtable（PPE 不做 IPv6 NAT）；源地址本就在 `via` 前缀里的照常硬件加速。DDNS `ipv6: mac:` 对被策略固定到某条 WAN 的设备
 优先发布该 WAN 前缀里的地址。
 
+让一条 WAN 只给一台设备用（IPv4 和 IPv6）：局域网里每台设备都会拿到两条线的前缀、自己挑源地址，所以在固定那台设备的策略
+后面再加一条 `{name: others-v6-via-wan, src: "::/0", via: wan, nat6: true}`——其余设备的 IPv6 都走 wan，用了另一条线前缀的
+被转换成 wan 的前缀（IPv4 本来就走默认 WAN）。策略按配置顺序匹配，排在前面的设备不受影响。
+
 #### 断线兜底（fallback）
 
 `via` 的 WAN 断线（PPPoE 掉线）或健康检测失败时，它的路由表里没有默认路由，打了标记的流量会落到 main 表，

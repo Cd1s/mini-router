@@ -504,6 +504,7 @@ func TestDelegatedPrefixesFromWANEvent(t *testing.T) {
 // what the dhcpcd hook recorded per WAN; garbage in the record never reaches nft.
 func TestPD6Script(t *testing.T) {
 	c := testConfig(t)
+	c.Policy = c.Policy[:1] // the home config's wan2 policy only (its others-v6-via-wan adds pd6_0 / npt6*_1)
 	old := wanRunDir
 	wanRunDir = t.TempDir()
 	t.Cleanup(func() { wanRunDir = old })
@@ -528,7 +529,7 @@ func TestPD6Script(t *testing.T) {
 // nat6 (#108): validation, no chains without it, fallback: drop covers every source.
 func TestNetPolicyNAT6(t *testing.T) {
 	c := testConfig(t)
-	c.Policy = append(c.Policy,
+	c.Policy = append(c.Policy[:1],
 		Policy{Name: "v4only", Src: "192.168.1.9", Via: "wan2", NAT6: true},
 		Policy{Name: "wan-no-pd", MAC: "aa:bb:cc:dd:ee:ff", Via: "wan", NAT6: true})
 	c.WAN[0].IPv6PD = false
@@ -540,6 +541,7 @@ func TestNetPolicyNAT6(t *testing.T) {
 		}
 	}
 	c = testConfig(t)
+	c.Policy = c.Policy[:1] // without the home config's others-v6-via-wan (nat6 too)
 	c.Policy[0].Fallback = "drop"
 	nft := renderNft(c, allExist)
 	wantSubs(t, "nft", nft, `iifname "br-lan" ether saddr 02:c3:06:d6:7f:8a meta nfproto ipv6 oifname "pppoe-wan" counter drop comment "fallback:desktop-via-wan2"`)

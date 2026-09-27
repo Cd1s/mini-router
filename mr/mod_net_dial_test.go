@@ -33,7 +33,7 @@ func dialEnv(t *testing.T) (c *Config, now *time.Time, sleeps *int, onSleep *fun
 
 func TestDialValidate(t *testing.T) {
 	c := testConfig(t)
-	if m := c.MultiWAN; strings.Join(m.DialOrder, ",") != "wan2,wan" || m.DialWait != 0 || m.dialWait() != 30*time.Second || m.DialRestore != "04:30" || m.Enabled() {
+	if m := c.MultiWAN; strings.Join(m.DialOrder, ",") != "wan2,wan" || m.DialWait != 0 || m.dialWait() != 30*time.Second || m.DialRestore != "now" || m.Enabled() {
 		t.Fatalf("home config: %+v", m)
 	}
 	for _, tc := range []struct {
@@ -176,7 +176,7 @@ func TestDialRestore(t *testing.T) {
 
 	// HH:MM: nothing now; crond at 04:30 router time (+03, not the example's: sync-public rewrites that;
 	// now is 11:00 there)
-	c.System.Timezone = "<+03>-3"
+	c.System.Timezone, c.MultiWAN.DialRestore = "<+03>-3", "04:30"
 	dialOnUp(c, "wan2")
 	if len(spawned) != 0 {
 		t.Errorf("HH:MM spawned %v", spawned)

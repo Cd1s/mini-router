@@ -13,6 +13,7 @@ import (
 func devConfig(t *testing.T) *Config {
 	t.Helper()
 	c := testConfig(t)
+	c.Policy = c.Policy[:1] // the home config's first policy only: the cases number theirs from 1
 	c.Devices = []Device{
 		{Name: "office-pc", MACs: []string{"02:00:00:00:10:01"}, IP: "192.168.1.70", Type: "pc", Owner: "Alice"},
 		{Name: "kid-tablet", MACs: []string{"AA:BB:CC:00:00:21", "aa:bb:cc:00:00:22"}, IP: "192.168.1.121"},
