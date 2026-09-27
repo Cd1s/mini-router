@@ -34,7 +34,7 @@
 ## 亮点 / Highlights
 
 - 🛡️ **改不坏**：每次改动先预览、分级；倒计时内不确认就自动回滚，断电也会回滚；完整历史，随时退回。
-- ⚡ **快**：普通流量始终走硬件加速（MT7986 PPE + WED），分流、按域名选线路都不影响卸载。
+- ⚡ **快**：普通流量始终走硬件加速（MT7986 PPE + WED），分流、按域名选线路、单口多拨都不影响卸载。
 - 🪶 **小**：没有空转的守护进程；DDNS、证书、体检都是按需运行的短命令。
 - 🧩 **全**：多线、IPv6、选择性代理、反向代理、去广告、设备管理，一个网页里全部可配。
 - 🤖 **为 agent 设计**：配置即代码，命令输出 JSON，作用域 API token，自带 agent skill。
@@ -51,7 +51,7 @@
 
 | 模块 | 功能 |
 |---|---|
-| **网络** | PPPoE（1500 MTU）/ DHCP / 静态，多线故障切换与负载均衡；策略路由（按设备 / 网段 / **域名**）；双线 IPv6，运营商换前缀自动恢复；访客 / IoT 网络、VLAN；**主路由 / 旁路由 / 纯 AP** 三种模式 |
+| **网络** | PPPoE（1500 MTU）/ DHCP / 静态；**多拨**（单口多拨每条会话独立 MAC、多口多拨、拨号顺序），多线故障切换与负载均衡；策略路由（按设备 / 网段 / **域名**，设备的 IPv4 + IPv6 都能固定到一条线）；双线 IPv6，运营商换前缀自动恢复；访客 / IoT 网络、VLAN；**主路由 / 旁路由 / 纯 AP** 三种模式 |
 | **WiFi** | 多 SSID、WPA2/3、访客隔离；组播转单播、802.11v 频段引导、射频健康与自愈；定时开关 |
 | **DNS / DHCP** | 静态分配、本地记录、DNS 分流、DoT；**去广告**；DNS 主导权（拦截设备私自 DoH / DoT） |
 | **防火墙** | 端口转发、IPv6 入站、通信规则（含时间段）、硬件 / 软件卸载；默认拒绝公网入站 |
@@ -84,6 +84,8 @@ wget -O install.sh https://github.com/Cd1s/mini-router/releases/latest/download/
 mr plan                    # 看会改什么（也可以直接在网页里改）
 mr apply --confirm 120     # 应用；120 秒内不 mr confirm 就自动回滚
 mr confirm
+mr -c new.yaml apply --confirm 120    # 改一份副本再应用：先快照在用的配置，回滚完整
+mr wan mac wan2            # 多拨：给同一网口上的第二条 PPPoE 生成固定 MAC（写进 wan[].mac）
 mr set 'wifi.steering.enabled=true'   # 按路径改配置，保留注释
 mr doctor                  # 体检；--heal 一键修复
 mr status · mr history · mr rollback N · mr ddns status · mr edge status     # JSON 输出
@@ -105,7 +107,7 @@ mkdir -p ~/.claude/skills && cp -r skills/mini-router ~/.claude/skills/
 - `sudo ./tools/ci.sh`（Linux）：单元测试，用真实的 `nft` / `dnsmasq` / `hostapd` / `sing-box` 校验生成的配置，
   并在网络命名空间里跑防火墙、多线、代理、反向代理的端到端测试。
 - 网页本地调试：`python3 tools/mock/mockapi.py 8088`
-- 从源码构建：`./tools/release.sh v0.3.0 out/release`；AX6000 固件：`build/m3/`。
+- 从源码构建：`./tools/release.sh v0.3.1 out/release`；AX6000 固件：`build/m3/`。
 
 ## License
 

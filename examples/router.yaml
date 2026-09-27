@@ -45,7 +45,7 @@ wan:
 
 multiwan:                       # no health check / balancing (mode off); only the PPPoE dial order
   dial_order: [wan2, wan]       # the ISP's DDNS follows the session that connected last: wan
-  dial_restore: "04:30"         # wan2 redialled on its own: redial wan at 04:30 to restore the order
+  dial_restore: now             # wan2 redialled on its own: redial wan at once (the ISP DDNS must stay on wan)
 
 policy_routes:
   - name: desktop-via-wan2
@@ -54,6 +54,10 @@ policy_routes:
     table: 102
     mark: "0x102"
     nat6: true                  # its IPv6 from wan's prefix too leaves wan2 (NPTv6 to wan2's prefix)
+  - name: others-v6-via-wan     # wan2 is desktop's alone, IPv6 too: every other device's IPv6 leaves wan,
+    src: "::/0"                 # a source in wan2's prefix translated into wan's (IPv4 already takes wan)
+    via: wan
+    nat6: true
 
 firewall:
   offload: hardware
