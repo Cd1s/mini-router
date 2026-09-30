@@ -255,6 +255,19 @@ func init() {
 			if hook == "input" && c.Services.Tailscale.Enabled {
 				n.W("iifname { %s } udp dport %d accept comment \"tailscale\"", quoteList(c.WANIfnames()), c.Services.Tailscale.Port)
 			}
+			if hook == "srcnat" && c.Services.Tailscale.Enabled {
+				// LAN devices reaching tailnet addresses through the router leave with the router's tailnet
+				// address: peers do not route the LAN subnet back (Linux peers ignore subnet routes by default)
+				var br []string
+				for _, ln := range c.LANNets() {
+					if ln.Zone == "lan" { // not the guest zone
+						br = append(br, ln.Bridge)
+					}
+				}
+				if len(br) > 0 {
+					n.W("iifname { %s } oifname \"tailscale0\" masquerade comment \"tailnet-from-lan\"", quoteList(br))
+				}
+			}
 			edgeNft(c, hook, n)
 			tsExitNft(c, hook, n)
 		},
