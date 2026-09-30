@@ -19,6 +19,23 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 OUT=$ROOT/out/ci
 rm -rf "$OUT" && mkdir -p "$OUT"
+# The router has no br_netfilter; a build host running docker usually does, and then every new netns starts
+# with bridge-nf-call-* = 1: bridged (and same-bridge DNAT) packets go through nftables with bridge ports as
+# interfaces, which breaks e.g. NAT loopback in the e2e tests (#119). An `ip` wrapper turns it off in each
+# namespace the checks create; the host itself is not touched.
+REAL_IP=$(command -v ip)
+mkdir -p "$OUT/bin"
+cat > "$OUT/bin/ip" << EOF
+#!/bin/sh
+if [ "\$1" = netns ] && [ "\$2" = add ] && [ -n "\$3" ]; then
+	"$REAL_IP" "\$@" || exit \$?
+	exec "$REAL_IP" netns exec "\$3" sh -c 'for k in iptables ip6tables arptables; do f=/proc/sys/net/bridge/bridge-nf-call-\$k; [ ! -w "\$f" ] || echo 0 > "\$f"; done'
+fi
+exec "$REAL_IP" "\$@" # exec: callers use \$! of \`ip netns exec … &\` as the command's pid
+EOF
+chmod 0755 "$OUT/bin/ip"
+PATH="$OUT/bin:$PATH"
+export PATH
 step() { printf '\n== %s\n' "$*"; }
 
 for tool in shellcheck nft dnsmasq; do
