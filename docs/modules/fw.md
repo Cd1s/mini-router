@@ -66,6 +66,7 @@ state a reload carries over (learned sets, pauses) is never replaced by a stale 
   of a connection (until it is offloaded) and new connections.
 - The only exception: devices listed in `access` are never offloaded (so a schedule can cut their
   running connections). With no `access` entries the ruleset has no extra rule at all.
+- With a `policy_routes` entry using `nat6`, IPv6 connections that were source-translated (NPTv6) are accepted before `flow add`, so they stay on the CPU path (their packets stopped reaching the far end once offloaded, Cd1s/mini-router#124); without nat6 the ruleset has no such rule.
 - All matching uses anonymous sets and a few dynamic sets; nothing runs in user space.
 
 ## Config reference (`router.yaml` → `firewall`)

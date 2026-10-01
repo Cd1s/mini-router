@@ -432,3 +432,24 @@ func TestFwHooksWithEverything(t *testing.T) {
 		}
 	}
 }
+
+// nat6 (#124): NPT6 connections are accepted before flow add, after access control; absent without nat6
+func TestFwNat6NoFlowtable(t *testing.T) {
+	fixedClock(t, 0)
+	c := fwLabConfig(t) // has access control; add the home config's nat6 policy
+	c.Policy = append(c.Policy[:0:0], testConfig(t).Policy[0])
+	rule := `meta nfproto ipv6 ct status snat ct state established accept comment "nat6-no-flowtable"`
+	fwd := func() string {
+		out := renderNft(c, func(string) bool { return true })
+		return out[strings.Index(out, "chain forward {"):]
+	}
+	f := fwd()
+	i, ft, ac := strings.Index(f, rule), strings.Index(f, "flow add"), strings.Index(f, `comment "access:`)
+	if i < 0 || ft < 0 || i > ft || ac < 0 || ac > i {
+		t.Fatalf("order: access %d, nat6 rule %d, flow add %d", ac, i, ft)
+	}
+	for k := range c.Policy {
+		c.Policy[k].NAT6 = false
+	}
+	mustNotContain(t, "nft without nat6", fwd(), "nat6-no-flowtable")
+}

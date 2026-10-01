@@ -146,6 +146,11 @@ func renderNft(c *Config, exists func(string) bool) string {
 		r("%s", l)
 	}
 	if haveFT {
+		// nat6 (NPTv6) connections stay on the CPU path: once in the flowtable their packets stop
+		// reaching the far end (Cd1s/mini-router#124); they are a small share of the traffic
+		if len(nat6Policies(c)) > 0 {
+			r("meta nfproto ipv6 ct status snat ct state established accept comment %q", "nat6-no-flowtable")
+		}
 		if len(acc) > 0 || len(devLimited(c)) > 0 {
 			// controlled devices are never offloaded, so a schedule also cuts their existing connections
 			// (and a rate-limited device's packets all pass its policer: devices[].limit, mod_dev_limit.go)
