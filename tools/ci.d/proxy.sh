@@ -45,6 +45,7 @@ types = {o["type"] for o in c["outbounds"]} | {e["type"] for e in c.get("endpoin
 want = {"shadowsocks", "vless", "vmess", "trojan", "hysteria2", "tuic", "anytls", "socks", "http", "wireguard", "selector", "urltest"}
 assert want <= types, sorted(want - types)
 assert all(e["type"] == "wireguard" for e in c.get("endpoints", [])), c["endpoints"]
+assert c["route"]["rules"][0]["inbound"] == ["ss-in"] and c["inbounds"][-1]["tag"] == "ss-in", "proxy.extra_config not merged (rules first, inbounds last)"
 print("ok:", len(c["outbounds"]), "outbounds,", len(c.get("endpoints", [])), "endpoint(s)")
 EOF
 echo "lab: sing-box check"

@@ -280,7 +280,7 @@ func printPlan(c *Config, p *Plan, verbose bool) {
 				continue
 			}
 			cur, _ := os.ReadFile(f.Path)
-			fmt.Print(fileDiff(f.Path, string(cur), f.Data, c.secrets))
+			fmt.Print(fileDiff(f.Path, string(cur), f.Data, c.planMasks()))
 		}
 		if p.Firewall {
 			cur, _ := os.ReadFile(GenDir + "/nftables.nft")
