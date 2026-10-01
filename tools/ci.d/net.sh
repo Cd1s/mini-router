@@ -402,6 +402,7 @@ sed 's/via: wan2}/via: wan2, nat6: true}/; s/metric: 20}/metric: 20, ipv6: true,
 cp "$D/router-n.yaml" /etc/mini-router/router.yaml
 ip -n "$DL" addr add 2001:db8:1::51/64 dev eth0 nodad
 inD "$MRH" -c "$D/router-n.yaml" -s "$T/secrets.yaml" fw
+has "nat6 keeps NPT6 flows out of the flowtable (#124)" "$(inD nft list chain inet mr forward)" 'ct status snat ct state established accept comment "nat6-no-flowtable"'
 has "nat6 chain filled" "$(inD nft list chain inet mr npt6n_0)" "snat ip6 prefix to 2001:db8:2::/64"
 r=$(seen6x 2001:db8:2::51 2001:db8:1::51 2001:db8:80::1)
 [ "$r" = 2001:db8:2::51 ] || fail "nat6: wan's-prefix source did not leave wan2 as 2001:db8:2::51: $r ($(inD nft list table inet mr | grep -A3 npt6))"
