@@ -281,6 +281,9 @@ func proxyStatus(c *Config) map[string]any {
 		}
 	}
 	out := map[string]any{"enabled": p.Enabled, "running": false, "secrets_set": secrets}
+	if p.ExtraConfig != "" { // only that a fragment is merged and its digest (to see it changed), never its content
+		out["extra_config"] = map[string]any{"set": true, "sha256": proxyExtraHash(p.ExtraConfig)}
+	}
 	if !p.Enabled {
 		return out
 	}

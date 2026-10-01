@@ -46,6 +46,8 @@ type Proxy struct {
 	Global []ProxyGlobal `yaml:"global,omitempty"`
 	// share-link subscriptions for the web UI's node import (URL in secrets.yaml)
 	Subscriptions []ProxySub `yaml:"subscriptions,omitempty"`
+	// raw sing-box fragment merged into the rendered config (may hold credentials; docs/modules/proxy.md)
+	ExtraConfig string `yaml:"extra_config,omitempty"`
 }
 
 // ProxyNode is one proxy server (one sing-box outbound). Types and their keys: mod_proxy_node.go,
@@ -504,8 +506,22 @@ func proxyValidate(c *Config, v *Validator) {
 			continue
 		}
 	}
-	if p.Enabled && len(p.Nodes) == 0 {
+	if p.Enabled && len(p.Nodes) == 0 && p.ExtraConfig == "" {
 		v.Add("proxy: enabled but no nodes configured")
+	}
+	if p.ExtraConfig != "" {
+		if !rePath.MatchString(p.ExtraConfig) {
+			v.Add("proxy.extra_config: absolute path required, got %q", p.ExtraConfig)
+		} else if p.Enabled {
+			m, err := proxyExtraRead(p.ExtraConfig)
+			if err != nil {
+				v.Add("proxy.extra_config: %v", err)
+			} else {
+				for _, e := range proxyExtraProblems(c, m) {
+					v.Add("proxy.extra_config: %s", e)
+				}
+			}
+		}
 	}
 	if p.Enabled {
 		// a policy mark with the proxy bit would hit `ip rule fwmark 0x1000000/0x1000000 lookup 300` (local

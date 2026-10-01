@@ -334,8 +334,16 @@ func proxySingBox(c *Config, sets []proxyRuleSet) (string, error) {
 	if len(endpoints) > 0 {
 		cfg["endpoints"] = endpoints
 	}
+	if p.ExtraConfig != "" {
+		if err := proxyApplyExtra(c, cfg); err != nil {
+			return "", err
+		}
+	}
 	b, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
+		return "", err
+	}
+	if err := proxyCheckMerged(c, string(b)+"\n"); err != nil {
 		return "", err
 	}
 	return string(b) + "\n", nil

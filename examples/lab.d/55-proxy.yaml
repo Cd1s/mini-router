@@ -59,3 +59,4 @@ proxy:
     - {name: vps, mac: "02:bb:dd:96:49:e2", outbound: jp1}   # by MAC, no fixed address needed
   subscriptions:
     - {name: airport, url_secret: proxy_sub_airport}
+  extra_config: @REPO@/mr/testdata/proxy-extra.json   # raw sing-box fragment: a Shadowsocks server inbound with a direct outbound

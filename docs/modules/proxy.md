@@ -345,3 +345,42 @@ mr proxy fetch airport                   # 下载已保存的订阅（或直接�
   订阅（节点、坏链接报错、流量头、默认隐藏凭据）；sing-box 停掉后代理目标被丢弃而不是直连。
   默认用 `/opt/sing-box/1.14.1/sing-box`（官方完整版）；`SING_BOX=/路径/sing-box tools/ci.sh` 可换成路由器同款构建
   （缺协议标签时对应节点的检查会失败）。
+
+### 自定义 sing-box 配置片段（proxy.extra_config）
+
+mr 渲染的配置覆盖不到的需求（例如让这台 sing-box 同时当 Shadowsocks 服务端，或加自己的出口 / DNS 规则），
+用一个**自己写的 sing-box JSON 片段**并入 mr 渲染的配置，仍然是同一个 mr-proxy 进程：
+
+```yaml
+proxy:
+  extra_config: /etc/mini-router/proxy-extra.json   # 绝对路径；片段里可以放密码，权限设 0600
+```
+
+```json
+{
+  "inbounds":  [{"type": "shadowsocks", "tag": "ss-in", "listen": "192.168.50.1", "listen_port": 8388,
+                 "method": "aes-256-gcm", "password": "..."}],
+  "outbounds": [{"type": "direct", "tag": "ss-out"}],
+  "route": {"rules": [{"inbound": ["ss-in"], "action": "route", "outbound": "ss-out"}]}
+}
+```
+
+合并由 mr 在渲染时完成（不依赖 sing-box 多个 `-c` 的顺序），结果写进 0600 的 `gen/sing-box.json`：
+
+| 片段里的键 | 合并方式 |
+|---|---|
+| `inbounds`、`outbounds`、`endpoints`、`dns.servers` | 追加在 mr 生成的后面 |
+| `route.rules`、`dns.rules` | **插到最前面**：按入站（`inbound`）匹配的规则先于 mr 的透明代理规则（包括 hijack-dns） |
+| `route.final`、`route.default_domain_resolver` | 仅当 mr 没设置时采用；mr 现在总会设置，所以实际不生效（节点自己的 `domain_resolver` 照常） |
+| 其它键（`log`、`experimental`、`ntp`、`route.rule_set` …） | 不允许，`mr validate` 报错——它们归 mr |
+
+- **校验**：`proxy.enabled` 时片段必须存在、是 JSON 对象、键在上表范围内；`inbounds` / `outbounds` / `endpoints` / `dns.servers`
+  的每一项必须有 `tag`，不能与 mr 生成的 tag（`dns-in`、`tproxy4/6[-gN]`、`notify-in`、`direct`、节点名、组名、`local`、`fakeip`）或片段里
+  的其它 tag 重复（outbounds 与 endpoints 共用一套 tag）。节点 / 组的名字不要和片段里的 tag 撞。
+- **`sing-box check`**：路由器上装有 sing-box 时，渲染（`mr plan` / `mr apply`）会对**合并后的整份配置**跑一次 `sing-box check`，
+  失败就拒绝应用（不改动线上，和其它校验一样）；通过的结果按哈希在 `/run` 里缓存。
+- **不泄露**：报错只给字节偏移和 tag，从不回显片段内容；`mr plan -v` 的 `sing-box.json` 差异里，片段中名字像密码 / uuid / key / secret /
+  token / psk / auth / obfs / user 的值被遮盖；`proxy.status` 只返回片段的 SHA-256 前 12 位（看是否变化），不返回内容；Web UI 不读写它。
+- 片段变化 → `sing-box.json` 变化 → apply 重启 mr-proxy（走代理的连接会断开重连）。
+- 片段**不在** `mr backup` 里（备份只含 router.yaml、secrets.yaml 和列表文件）：自己保管；固件升级保留 `/etc/mini-router`。
+- 监听 LAN 地址的入站（如上例）已被防火墙 input 链对 LAN 放行；监听 WAN / 0.0.0.0 要自己负责防火墙。
