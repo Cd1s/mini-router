@@ -266,6 +266,7 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 				fmt.Fprintf(b, "for a in $(ip -4 -o addr show dev %s | awk '{print $4}'); do [ \"$a\" = %s ] || ip addr del \"$a\" dev %s; done\n", w.LinkDev(), w.IPv4, w.LinkDev())
 			}
 		}
+		wanIPv6OffSh(c, b)
 		macvlanSh(c, b, need)
 		snoop := 0
 		if c.Mcast.Snooping {
@@ -336,6 +337,28 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 		b.WriteString(perfScript)
 	}
 	modeNetSh(c, phase, b)
+}
+
+// wanIPv6OffSh: a WAN link device that no IPv6-enabled DHCP / static WAN uses as its interface takes no
+// router advertisements and keeps no global IPv6 state. The WAN-up hook sets accept_ra=2 while ipv6 is on,
+// and dhcpcd (persistent) leaves its SLAAC address behind when it stops managing the device, so turning
+// ipv6 off, or switching the device to PPPoE, used to leave an address and an RA default route on it.
+func wanIPv6OffSh(c *Config, b *strings.Builder) {
+	on, seen := map[string]bool{}, map[string]bool{}
+	for _, w := range c.WAN {
+		if w.IPv6 && w.Ifname() == w.LinkDev() {
+			on[w.LinkDev()] = true
+		}
+	}
+	for _, w := range c.WAN {
+		dev := w.LinkDev()
+		if on[dev] || seen[dev] {
+			continue
+		}
+		seen[dev] = true
+		fmt.Fprintf(b, "echo 0 2>/dev/null > /proc/sys/net/ipv6/conf/%s/accept_ra\n", dev)
+		fmt.Fprintf(b, "ip -6 route flush dev %s proto ra 2>/dev/null; ip -6 addr flush dev %s scope global 2>/dev/null\n", dev, dev)
+	}
 }
 
 func vlanLink(b *strings.Builder, dev string, vid int) {
