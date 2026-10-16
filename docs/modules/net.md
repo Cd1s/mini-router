@@ -332,6 +332,10 @@ static_routes:
 multicast: {igmp_snooping: false, igmp_proxy: false, upstream: wan2}
 ```
 
+`via` 在某个 LAN 侧网络里的 IPv4 静态路由（主表；例如下级路由器后面的网段）：从这个网络发往 `target` 的流量做
+masquerade（`route-via-lan:<target>`）。否则回包由那台网关直接回给设备、不经过路由器，路由器只看到单向流量，
+conntrack 会把后续包当作 invalid 丢掉。
+
 ## 运行时：服务、命令、API
 
 | 名称 | 说明 |
