@@ -591,6 +591,28 @@ func balanceRule(c *Config, members []lbMember) string {
 		nftIfnames(c.LANBridges()), lanNets4(c), total, strings.Join(elems, ", "))
 }
 
+// lanGatewayRouteNAT: a static IPv4 route (main table) whose gateway is another router on a LAN-side network
+// (e.g. a downstream router's subnet). Devices on that network reach the target through us, but the reply
+// comes straight back from the gateway, so we only see one direction and conntrack drops the rest as invalid.
+// Masquerading that traffic to our address makes the replies come back through us.
+func lanGatewayRouteNAT(c *Config) []string {
+	var out []string
+	for _, r := range c.Routes {
+		g := net.ParseIP(r.Via)
+		_, tn, err := net.ParseCIDR(r.Target)
+		if r.Table != 0 || g == nil || g.To4() == nil || err != nil || tn.IP.To4() == nil {
+			continue
+		}
+		for _, ln := range c.LANNets() {
+			if _, lnet, err := net.ParseCIDR(ln.IPv4); err == nil && lnet.Contains(g) {
+				out = append(out, fmt.Sprintf("iifname %q oifname %q ip saddr %s ip daddr %s masquerade comment \"route-via-lan:%s\"",
+					ln.Bridge, ln.Bridge, lnet, tn, tn))
+			}
+		}
+	}
+	return out
+}
+
 func netNft(c *Config, hook string, n *Nft) {
 	switch hook {
 	case "defs":
@@ -605,6 +627,9 @@ func netNft(c *Config, hook string, n *Nft) {
 		}
 	case "srcnat":
 		for _, r := range nat6Rules(c) {
+			n.W("%s", r)
+		}
+		for _, r := range lanGatewayRouteNAT(c) {
 			n.W("%s", r)
 		}
 	case "forward_first":
