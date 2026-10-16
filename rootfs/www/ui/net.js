@@ -21,6 +21,45 @@ const natSort = a => a.slice().sort((x,y)=>x.localeCompare(y, undefined, {numeri
 const mono = x => h("span",{class:"mono"}, x);
 const healthTag = w => !w || !w.health ? null : h("span",{class:"tag "+(w.health==="up"?"ok":"bad")}, w.health==="up"?"健康":"故障");
 const svcOf = w => w.proto==="pppoe" ? "mr-pppoe."+w.name : w.proto==="dhcp" ? "mr-udhcpc."+w.name : "";
+// wanRefs: the settings that name WAN `name` and would fail validation without it, as [{what, drop}];
+// drop() removes the reference. v6: only those that need its IPv6 + prefix (nat6 policies), for turning
+// ipv6 / ipv6_pd off. A firewall rule limited to this WAN alone is removed, not widened to every WAN.
+function wanRefs(c, name, v6){
+  const out = [], ref = (what, drop)=>out.push({what, drop});
+  const dropFrom = (list, x)=>{ const i = list.indexOf(x); if (i>=0) list.splice(i,1); };
+  for (const p of c.policy_routes||[]) if (p.via===name && (!v6 || p.nat6))
+    ref("策略路由 "+p.name, ()=>dropFrom(c.policy_routes, p));
+  if (v6) return out;
+  const m = c.multiwan||{};
+  if (m.weights && name in m.weights) ref("多线路权重", ()=>{ delete m.weights[name]; });
+  if ((m.dial_order||[]).includes(name)) ref("拨号顺序", ()=>{
+    m.dial_order = m.dial_order.filter(x=>x!==name);
+    if (m.dial_order.length<2){ m.dial_order = []; delete m.dial_wait; delete m.dial_restore; }
+  });
+  const mc = c.multicast||{};
+  if (mc.igmp_proxy && mc.upstream===name) ref("组播代理（上游）", ()=>{ mc.igmp_proxy = false; mc.upstream = ""; });
+  const f = c.firewall||{};
+  for (const [k, label] of [["forwards","端口转发"],["open","开放端口"],["ipv6_allow","IPv6 入站"]])
+    for (const r of f[k]||[]) if ((r.wan||[]).includes(name)) ref(label+" "+r.name, ()=>{
+      r.wan = r.wan.filter(x=>x!==name);
+      if (!r.wan.length) dropFrom(f[k], r);
+    });
+  const recs = ((c.services||{}).ddns||{}).records||[];
+  for (const r of recs.slice()) if (r.ipv4===name || r.ipv6===name) ref("DDNS "+r.name, ()=>{
+    if (r.ipv4===name) r.ipv4 = "off";
+    if (r.ipv6===name) r.ipv6 = "off";
+    if ((r.ipv4||"off")==="off" && (r.ipv6||"off")==="off") dropFrom(recs, r);
+  });
+  for (const s of c.schedules||[]) if (s.action==="reconnect" && s.target===name)
+    ref("定时任务 "+s.name, ()=>dropFrom(c.schedules, s));
+  return out;
+}
+// confirmRefs: asks before `msg`, listing what goes with it; false = cancelled.
+function confirmRefs(msg, refs){
+  if (!confirm(msg + (refs.length ? "\n\n引用它的这些设置会一起删除：\n· "+refs.map(r=>r.what).join("\n· ") : ""))) return false;
+  refs.forEach(r=>r.drop());
+  return true;
+}
 async function portNames(){
   let ports = [];
   try { ports = ((await api("net.ports")).ports||[]).filter(p=>p.kind==="port").map(p=>p.name); } catch(e){}
@@ -118,12 +157,19 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
       ...field("路由跃点 (metric)", inNum(w,"metric",{min:0,max:9999}), "越小越优先，每条 WAN 各不相同；主线路 0，备用线路更大（多线路按它主备切换）"));
     if (p!=="static") rows.push(...field("使用运营商 DNS", inBool(w,"peerdns")));
     rows.push(
-      ...field("IPv6", inBool(w,"ipv6"), "dhcpcd 获取 IPv6（RA / DHCPv6）"),
-      ...field("请求 IPv6 前缀 (PD)", inBool(w,"ipv6_pd"), "获取的前缀分配到 LAN"),
+      ...field("IPv6", inBool(w,"ipv6",v6off(w,"ipv6")), "dhcpcd 获取 IPv6（RA / DHCPv6）"),
+      ...field("请求 IPv6 前缀 (PD)", inBool(w,"ipv6_pd",v6off(w,"ipv6_pd")), "获取的前缀分配到 LAN"),
       ...field("IPv6 源地址路由", inBool(w,"ipv6_srcroute"), "来自本线路前缀的 IPv6 流量从本线路出去（多线必开）"));
     return card(h("span",{}, "WAN · "+(w.name||"(未命名)")+" ", h("span",{class:"tag"}, (PROTOS.find(x=>x[0]===p)||[0,p])[1])),
       [status(w), form(...rows)],
-      h("span",{class:"row"}, redial(w), h("button",{class:"btn sm d",onclick:()=>{ if(confirm("删除 WAN "+w.name+"？")){ c.wan.splice(i,1); touch(); draw(); }}},"删除")));
+      h("span",{class:"row"}, redial(w), h("button",{class:"btn sm d",onclick:()=>{ if(confirmRefs("删除 WAN "+w.name+"？", wanRefs(c, w.name))){ c.wan.splice(i,1); touch(); draw(); }}},"删除")));
+  };
+  // turning ipv6 / ipv6_pd off: the nat6 policies through this WAN need both
+  const v6off = (w, key)=>on=>{
+    if (on) return;
+    const refs = wanRefs(c, w.name, true);
+    if (refs.length && !confirmRefs("关闭 "+(key==="ipv6"?"IPv6":"IPv6 前缀")+" ("+w.name+")?", refs)) w[key] = true;
+    touch(); draw();
   };
   const add = proto=>{
     // every WAN needs its own metric: take the next free one after the largest

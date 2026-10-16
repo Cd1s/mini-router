@@ -162,6 +162,10 @@ wan:
 既不能同时是 LAN 口，也不能做任何网络的带标签端口（trunk），否则 LAN 侧网络会被桥到运营商那一侧。
 DHCP / 静态 WAN 被删除、改名或换了接口（VLAN / 口）时，应用会删掉它留在旧接口上的地址和默认路由
 （按 `/run/mini-router/wan/<wan>.json` 里记录的接口）；改地址时新地址和旧地址在同一网段也不会一起丢（`promote_secondaries`）。
+没有任何开了 `ipv6` 的 DHCP / 静态 WAN 落在其上的 WAN 接口（`ipv6: false`，或只跑 PPPoE）不收 RA：`network.sh` 把它的
+`accept_ra` 设为 0，并清掉留在上面的全局 IPv6 地址和 RA 默认路由（dhcpcd 停止管理接口时不删自己的地址）。
+网页上删除 WAN、关闭它的 `ipv6` / `ipv6_pd` 时，会列出引用它、否则无法保存的设置（策略路由、多线路权重与拨号顺序、
+组播上游、只限这条 WAN 的防火墙规则、DDNS 来源、重拨定时任务；关 IPv6 时只有 `nat6` 策略），确认后一起删除。
 
 **多拨（单口 / 多口，Cd1s/mini-router#114）**：运营商的 BRAS 按 MAC 记会话，同一个 MAC 上的第二条会话在另一条拨号
 （PADI）或挂断（PADT）时常被一起踢掉。
