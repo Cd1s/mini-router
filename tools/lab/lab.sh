@@ -180,6 +180,7 @@ install_cmd(){
     curl -fL --retry 2 -o "$assets/mini-router-rootfs.tar.gz" "https://github.com/Cd1s/mini-router/releases/download/$release/mini-router-rootfs.tar.gz"
   else (cd "$ROOT" && tools/release.sh lab-lab "$assets") >/dev/null; fi
   mkdir -p "$payload"; cp "$assets/install.sh" "$assets/mr-linux-amd64" "$assets/mini-router-rootfs.tar.gz" "$payload/"
+  [ -s "$IMGDIR/alpine-router-packages.tar.gz" ] && cp "$IMGDIR/alpine-router-packages.tar.gz" "$payload/"
   cat > "$out/user-data" <<EOF
 #cloud-config
 hostname: mrlab$id
@@ -207,6 +208,7 @@ write_files:
       printf 'nameserver %s\n' '$wan_dns' > /etc/resolv.conf
       mkdir -p /root/mr-lab-release
       mount -L cidata /mnt 2>/dev/null || mount /dev/sr0 /mnt 2>/dev/null || true
+      [ -s /mnt/release/alpine-router-packages.tar.gz ] && tar -xzf /mnt/release/alpine-router-packages.tar.gz -C / || true
       cp -a /mnt/release/. /root/mr-lab-release/
       timeout 60 sh -c 'MR_YES=1 MR_LOCAL=/root/mr-lab-release MR_WAN=eth0 MR_LAN_PORTS=eth1 MR_ADMIN_PASS=labpass MR_WAN_PROTO=\$1 MR_LAN_IP=\$2 MR_PPPOE_USER=lab MR_PPPOE_PASS=labpass MR_APPLY=\$3 sh /root/mr-lab-release/install.sh' sh '$proto' '$lanip' '$apply' > /root/mr-lab-install.log 2>&1 || true
       ip link set eth1 up 2>/dev/null || true
