@@ -126,7 +126,7 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
     if (!r) return h("div",{class:"net-rt"}, "（尚未应用）");
     const now = Date.now()/1000;
     return h("div",{class:"net-rt row"}, h("span",{class:"dot "+(r.up?"ok":"bad")}),
-      r.up ? ["已连接 ", mono(r.ip), r.gateway?[" · 网关 ", mono(r.gateway)]:null, r.since?" · "+fmtDur(now-r.since):null, (r.dns||[]).length?" · DNS "+r.dns.join(", "):null] : "未连接",
+      r.up ? ["已连接 ", mono(r.ip), r.gateway?[" · 网关 ", mono(r.gateway)]:null, r.overlap?[" · 上游/LAN 同网段 ", mono(r.overlap)]:null, r.since?" · "+fmtDur(now-r.since):null, (r.dns||[]).length?" · DNS "+r.dns.join(", "):null] : "未连接",
       " · 接口 ", mono(r.dev), healthTag(r));
   };
   const redial = w=>{
@@ -137,6 +137,13 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
   };
   const wanCard = (w, i)=>{
     const p = w.proto;
+    const detect = h("button",{class:"btn sm",onclick:async()=>{
+      try {
+        const d = await api("net.wan_detect",{port:w.device,timeout:8});
+        const apply = ()=>{ if(!d.recommendation||d.recommendation==="unknown") return toast("未得到可靠的上网方式建议",4000); w.proto=d.recommendation||w.proto; if(w.proto==="pppoe"){w.password_secret||="pppoe_password";w.mtu=1492;} if(w.proto==="static"&&d.dhcp&&d.dhcp.offer){const bits=(d.dhcp.mask||"255.255.255.0").split(".").reduce((n,x)=>{let v=+x;while(v){n+=v&1;v>>=1;}return n;},0);w.ipv4=d.dhcp.address+"/"+bits;w.gateway=d.dhcp.gateway;w.dns=d.dhcp.dns||[];} touch(); m.remove(); draw(); };
+        const m = modal("检测上网方式", [h("p",{},d.recommendation==="pppoe"?"检测到 PPPoE PADO":d.recommendation==="dhcp"?"检测到 DHCP OFFER":"未发现 DHCP / PPPoE，建议静态地址"), d.dhcp&&d.dhcp.offer?h("pre",{},JSON.stringify(d.dhcp,null,2)):null, d.lan_conflict?h("div",{class:"tag warn"},"与当前 LAN 冲突，建议 "+d.suggested_lan):null], [h("button",{class:"btn",onclick:()=>m.remove()},"关闭"),h("button",{class:"btn p",onclick:apply},"套用建议")]);
+      } catch(e) { toast("检测失败："+e.message,4000); }
+    }},"检测上网方式");
     const rows = [
       ...field("名称", inText(w,"name"), p==="pppoe" ? "PPPoE 接口为 pppoe-<名称>，最多 9 个字符" : "小写字母开头"),
       ...field("协议", inSel(w,"proto",PROTOS, v=>setProto(w,v))),
@@ -162,7 +169,7 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
       ...field("IPv6 源地址路由", inBool(w,"ipv6_srcroute"), "来自本线路前缀的 IPv6 流量从本线路出去（多线必开）"));
     return card(h("span",{}, "WAN · "+(w.name||"(未命名)")+" ", h("span",{class:"tag"}, (PROTOS.find(x=>x[0]===p)||[0,p])[1])),
       [status(w), form(...rows)],
-      h("span",{class:"row"}, redial(w), h("button",{class:"btn sm d",onclick:()=>{ if(confirmRefs("删除 WAN "+w.name+"？", wanRefs(c, w.name))){ c.wan.splice(i,1); touch(); draw(); }}},"删除")));
+      h("span",{class:"row"}, detect, redial(w), h("button",{class:"btn sm d",onclick:()=>{ if(confirmRefs("删除 WAN "+w.name+"？", wanRefs(c, w.name))){ c.wan.splice(i,1); touch(); draw(); }}},"删除")));
   };
   // turning ipv6 / ipv6_pd off: the nat6 policies through this WAN need both
   const v6off = (w, key)=>on=>{

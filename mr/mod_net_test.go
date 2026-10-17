@@ -106,6 +106,21 @@ func TestNetHomeConfig(t *testing.T) {
 	}
 }
 
+func TestNetGeneratedLinkCleanupOnce(t *testing.T) {
+	c := testConfig(t)
+	for i := range c.WAN {
+		c.WAN[i].MAC = ""
+	}
+	f := renderMap(t, c)
+	sh := f[GenDir+"/network.sh"]
+	if n := strings.Count(sh, "ethtool -P wan"); n != 1 {
+		t.Fatalf("WAN MAC restore rendered %d times, want once", n)
+	}
+	if n := strings.Count(sh, "alias mini-router"); n != 4 {
+		t.Fatalf("VLAN cleanup rendered %d parent scans, want 4", n)
+	}
+}
+
 func TestNetWANProtos(t *testing.T) {
 	c := testConfig(t)
 	c.LAN.Ports = []string{"lan2", "lan3"}
@@ -120,8 +135,8 @@ func TestNetWANProtos(t *testing.T) {
 		t.Errorf("udhcpc instance:\n%s", got)
 	}
 	wantSubs(t, "network.sh", f[GenDir+"/network.sh"],
-		"ip link show wan.35 >/dev/null 2>&1 || ip link add link wan name wan.35 type vlan id 35\n",
-		"ip link add link wan name wan.500 type vlan id 500\n",
+		"if ! ip link show wan.35 >/dev/null 2>&1; then ip link add link wan name wan.35 type vlan id 35 && ip link set dev wan.35 alias mini-router; fi\n",
+		"if ! ip link show wan.500 >/dev/null 2>&1; then ip link add link wan name wan.500 type vlan id 500 && ip link set dev wan.500 alias mini-router; fi\n",
 		"ip link set dev wan.35 mtu 1500\n",
 		"echo 1 2>/dev/null > /proc/sys/net/ipv4/conf/wan.35/promote_secondaries\nip addr replace 203.0.113.10/29 dev wan.35\n",
 		`[ "$a" = 203.0.113.10/29 ] || ip addr del "$a" dev wan.35`,
@@ -328,7 +343,7 @@ func TestNetTrunkVLAN(t *testing.T) {
 	sh := renderMap(t, c)[GenDir+"/network.sh"]
 	wantSubs(t, "network.sh", sh,
 		"ip link set lan4 master br-lan", // untagged role unchanged
-		"ip link show lan4.10 >/dev/null 2>&1 || ip link add link lan4 name lan4.10 type vlan id 10\n",
+		"if ! ip link show lan4.10 >/dev/null 2>&1; then ip link add link lan4 name lan4.10 type vlan id 10 && ip link set dev lan4.10 alias mini-router; fi\n",
 		"ip link set lan4.10 master br-iot 2>/dev/null; ip link set lan4.10 up\n")
 	if strings.Index(sh, "ip link add br-iot type bridge") > strings.Index(sh, "lan4.10 master br-iot") {
 		t.Error("bridge must exist before the VLAN joins it")

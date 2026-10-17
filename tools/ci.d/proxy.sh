@@ -25,7 +25,9 @@ fail() { echo "FAIL: $*"; exit 1; }
 
 echo "home: no proxy artefacts"
 if [ -e "$H/sing-box.json" ] || [ -e "$H/proxy-dns.conf" ]; then fail "home config rendered proxy files"; fi
-if grep -q proxy "$OUT/home-nft.nft" "$H/network.sh" "$H/services"; then fail "home config has proxy rules"; fi
+# network.sh may contain the net module's independent modem proxy-ARP commands. Filter only
+# those lines, then retain the original check for transparent-proxy rules and comments.
+if grep -q proxy "$OUT/home-nft.nft" "$H/services" || grep -v 'ip neigh' "$H/network.sh" | grep -q proxy; then fail "home config has proxy rules"; fi
 
 echo "lab: proxy-dns.conf"
 dnsmasq --test --conf-file="$L/proxy-dns.conf"

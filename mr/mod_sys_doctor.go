@@ -321,6 +321,10 @@ func docWAN(c *Config, e *docEnv) []docFinding {
 		}
 		ip, isUp := up[w.Name]
 		switch {
+		case !isUp && w.Proto == "pppoe" && !e.exists("/proc/net/pppoe"):
+			k := strings.TrimSpace(e.read("/proc/sys/kernel/osrelease"))
+			f.Sev, f.Detail = "warn", fmt.Sprintf("no IPv4 address on %s: the kernel %s has no PPPoE (the pppoe module is not loaded)", w.Ifname(), k)
+			f.Fix = "modprobe pppoe; a kernel without it (Alpine's linux-virt): apk add linux-lts, reboot"
 		case !isUp:
 			f.Sev, f.Detail = "warn", fmt.Sprintf("no IPv4 address on %s (%s)", w.Ifname(), w.Proto)
 			f.Fix = restart + "; grep -E 'pppd|udhcpc' /var/log/messages | tail (cable, account, ISP)"
@@ -332,8 +336,8 @@ func docWAN(c *Config, e *docEnv) []docFinding {
 			f.Sev, f.Detail = "ok", fmt.Sprintf("up on %s, %s", w.Ifname(), ip)
 			if n, pfx := docLANOverlap(c, ip); n != "" { // a hotel / upstream router using the LAN's range
 				f.Sev = "risk"
-				f.Detail += fmt.Sprintf(" is inside %s's subnet %s: LAN and WAN overlap, some destinations are unreachable", n, pfx)
-				f.Fix = "move the LAN to another range (lan.ipv4, e.g. 192.168.77.1/24; DHCP clients follow) — or the upstream network"
+				f.Detail += fmt.Sprintf(" is inside %s's subnet %s: upstream and LAN share a subnet, some destinations are unreachable", n, pfx)
+				f.Fix = "upstream and LAN share a subnet; change LAN to another range (lan.ipv4, e.g. 192.168.77.1/24; DHCP clients follow) — or change the upstream network"
 			} else if cls := addrClass(ip); cls != "" && len(fwEnabledForwards(c)) > 0 {
 				f.Sev = "warn"
 				f.Detail += fmt.Sprintf(" is a %s address: the port forwards cannot be reached from the internet", cls)
@@ -401,8 +405,13 @@ func docProbeName(c *Config) string {
 }
 
 func docDNS(c *Config, e *docEnv) []docFinding {
-	if len(docWANsUp(c, e)) == 0 {
+	up := docWANsUp(c, e)
+	if len(up) == 0 {
 		return []docFinding{{Sev: "skip", Title: "DNS", Detail: "no WAN is up"}}
+	}
+	if c.DNS.Upstream == "isp" && len(c.DNS.Fallback) == 0 && !wanDNSFromPeers(c) {
+		return []docFinding{{Sev: "warn", Title: "DNS", Detail: "WAN is online but dns.upstream isp has no configured DNS source",
+			Fix: "enable WAN peerdns, configure static WAN DNS, or set dns.fallback"}}
 	}
 	name := docProbeName(c)
 	if err := e.resolve(name); err != nil {

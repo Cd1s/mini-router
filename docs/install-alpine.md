@@ -44,7 +44,9 @@ wan:
   - {name: wan, device: eth0, vlan: 10, proto: pppoe, username: "…", password_secret: pppoe_password, metric: 10}
 ```
 
-先用 `MR_APPLY=0` 安装（只写配置不应用），按上面改好 `/etc/mini-router/router.yaml`，再 `mr plan` / `mr apply --confirm 120`。
+先用 `MR_APPLY=0` 安装会只写配置和首次设置标记，不停用 Alpine 网络、不重配网卡；
+在控制台编辑 `/etc/mini-router/router.yaml` 后，运行 `mr plan` / `mr apply --confirm 120`
+完成接管。这样可以先审核配置，再在正常确认/回滚窗口内切换网络。
 
 ## 4. 安装
 
@@ -59,6 +61,9 @@ sh install.sh
 失败时撤销 mr 自己的更改，但不会重新启用那两个服务 —— 需要回到原来的网络设置时按下面的卸载步骤做。
 无人值守和离线安装的变量见 `install.sh` 开头。
 
+PPPoE 需要内核的 `pppoe` 模块。Alpine 云镜像和不少虚拟机用的 `linux-virt` 内核没有它：选 PPPoE 时 `install.sh` 会先检查，
+不行就停下并提示 `apk add linux-lts && reboot`（`mr doctor` 和 `mr-pppoe` 的日志也会写明原因）。
+
 ## 5. 验证
 
 ```sh
@@ -67,6 +72,17 @@ mr doctor                 # 体检：每项 ok / warn / risk，附修复方法
 ```
 
 浏览器打开 `http://<LAN 地址>/`，用安装时设的密码登录。“状态 → 体检与事件”里没有红色项就可以了。
+
+### 首次设置向导
+
+只有 `MR_APPLY=0` 的安装会在 `/etc/mini-router/state/first-run` 写入一次性标记；
+已经询问 WAN、密码并完成 apply 的 `MR_APPLY=1` 安装不会写入标记，首次登录直接进入总览。
+AX6000 出厂镜像和
+新建、擦除后的 `rootfs_data` 由 `mr-preinit` 创建同一标记。没有管理员密码的出厂机
+先从当前 LAN 进入现有的首次设密页，设置成功后直接进入向导。向导包含时区、WAN
+自动探测、LAN 冲突建议、WiFi 和变更预览，都走普通的 validate → plan → apply →
+confirm 流程。应用失败会自动回滚；向导只提示 LAN 冲突，不会自动改 LAN 地址。
+向导确认后标记被删除；没有标记的旧 overlay 不会被升级过程重新弹出向导。
 
 ## 6. 出问题怎么办
 

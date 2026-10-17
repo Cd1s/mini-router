@@ -95,7 +95,7 @@ def base_config():
     return cfg
 
 
-STATE = {"cfg": base_config(), "job": None, "pending": False, "deadline": 0}
+STATE = {"cfg": base_config(), "job": None, "pending": False, "deadline": 0, "wizard": True}
 STATE["dns_files"] = copy.deepcopy(load("dns.files.json", {"dir": "/etc/mini-router/dns", "files": []}))
 
 
@@ -141,7 +141,10 @@ class H(http.server.SimpleHTTPRequestHandler):
             except ValueError:
                 return self.send_json({"error": "bad json"}, 400)
         if a == "session":
-            return self.send_json({"authenticated": True, "password_set": True})
+            return self.send_json({"authenticated": True, "password_set": True, "wizard": STATE["wizard"]})
+        if a == "setup.complete":
+            STATE["wizard"] = False
+            return self.send_json({"ok": True})
         if a == "config":
             return self.send_json(STATE["cfg"])
         if a == "mon.now":

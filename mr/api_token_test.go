@@ -72,7 +72,7 @@ func TestTokenScopes(t *testing.T) {
 		}
 	}
 	// sources
-	for remote, want := range map[string]int{"192.0.2.99": 200, "::ffff:192.0.2.99": 200, "2001:db8::5": 200, "198.51.100.1": 403, "2001:db8:1::5": 403, "": 403} {
+	for remote, want := range map[string]int{"192.0.2.99": 200, "::ffff:192.0.2.99": 200, "[::ffff:192.0.2.99]": 200, "[2001:db8::5]": 200, "198.51.100.1": 403, "[2001:db8:1::5]": 403, "": 403} {
 		if got := authStatus(c, "status", remote, "Bearer "+tok["agent"]); got != want {
 			t.Errorf("agent from %q: %d, want %d", remote, got, want)
 		}

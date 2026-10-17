@@ -82,7 +82,7 @@ sing-box **1.14.1**，tag `v1.14.1` = `1ac1a339cb12…`（与官方二进制内�
 
 Alpine 3.24 aarch64（docker arm64 + binfmt）：
 
-- 软件包（`out/m3/packages.txt`）：M2 的集合（busybox + OpenRC、dropbear、iproute2（minimal + ss，不带 tc）、iw、
+- 软件包（`out/m3/packages.txt`）：M2 的集合（busybox + OpenRC、dropbear、iproute2（minimal + ss，不带 tc）、ethtool、iw、
   nftables、ppp-pppoe、dhcpcd、dnsmasq、hostapd、wireless-regdb、stubby、curl、jq、busybox-extras）
   + `mtd-utils-ubi`、`kexec-tools`、`ssl_client`（busybox wget 的 https）、`igmpproxy`。不装 `alpine-base`
   里的 alpine-conf（setup 脚本）和 busybox-suid。dnsmasq 用 `dnsmasq-dnssec-nftset` 这个构建（按域名选 WAN 的
@@ -136,8 +136,10 @@ U-Boot 的 bootargs 里没有 `init=`，内核运行 `/sbin/init` → 就是 `mr
    卷里如果还留着 OpenWrt 的 `upper/`、`work/`，不会被使用（只用 `mr/`）。
 3. **initramfs（RAM）**：有 `/mr-install` → sysupgrade 安装程序；否则是 kexec 测试系统：10 分钟内没有
    `/tmp/keep` 就重启回闪存（内核命令行带 `mr.keep` 则不启用）。
-4. 两种情况下，如果有 `/etc/mini-router/.firstboot`（下发的配置），先 `mr validate` + `mr render /`，再让 default
-   运行级正好等于 `gen/services`，然后删除标记；配置无效则保留出厂文件和标记，并写内核日志。
+4. 两种情况下，如果有 `/etc/mini-router/.firstboot`（下发的配置），先在临时目录完成 `mr validate` + `mr render`，
+   成功后再安装生成文件并让 default 运行级正好等于 `gen/services`，然后删除标记。配置无效时，闪存启动会把
+   `router.yaml` 和损坏的 `secrets.yaml` 保存为 `.rejected`，恢复并渲染 `/rom` 的出厂配置；没有 `/rom` 的
+   initramfs 只记录错误并保留原文件。任何失败都保留原来的 `gen/`，并写内核日志。
    闪存启动时在这之前还检查 `/etc/mini-router/confirm-pending`：有它说明上次在 apply 过程中或确认窗口内断电 / 重启，
    这份没被确认的改动由 `mr rollback --boot` 回滚（还原快照里的文件、修正 default 运行级的链接，不重启任何服务），
    写入 `/etc/router-changes.log` 和内核日志。Alpine 安装没有 preinit，由 boot 运行级的 `mr-unconfirmed` 做同样的事。
@@ -210,8 +212,8 @@ sysupgrade 从闪存运行时峰值约 3 × 镜像大小（/tmp 里的镜像、�
 - `build/m3/selftest.sh`（手动，nandsim 模拟 880 × 128 KiB NAND）：安装 A–E（首次刷机覆盖 OpenWrt 布局 + 扩卷 + 下发、
   原地升级保留数据、扩卷时备份还原数据、-n 清空、错误板子 / 损坏镜像被拒且闪存不变）、R（`ubi-restore.sh` 用整卷 dump
   恢复 OpenWrt，包括 UBIFS 数据卷）；preinit P1–P6 用**真实 arm64 squashfs**（qemu-user，pid namespace 里的 PID 1）：
-  空卷格式化、忽略 OpenWrt 的 upper、首次启动渲染下发配置 + 运行级、factory-reset 后回到出厂、无效配置保留出厂、没有
-  rootfs_data 用 tmpfs。qemu 不支持 UBI ioctl，所以 preinit 里 `ubiupdatevol -t` 走的是删除 `mr/` 的后备路径；真正的
+  空卷格式化、忽略 OpenWrt 的 upper、首次启动渲染下发配置 + 运行级、factory-reset 后回到出厂、无效配置拒绝并回到出厂、没有
+  rootfs_data 用 tmpfs；P5b 还覆盖没有 `/rom` 的 initramfs-like 首次启动。qemu 不支持 UBI ioctl，所以 preinit 里 `ubiupdatevol -t` 走的是删除 `mr/` 的后备路径；真正的
   `ubiupdatevol -t` 在 D 场景用 x86 工具测过。
 
 ## 怎么用

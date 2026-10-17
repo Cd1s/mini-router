@@ -64,6 +64,19 @@ ask_secret() {
 	done
 	eval "$1=\$a"
 }
+# kernel-mode PPPoE needs the pppoe module (it brings ppp_generic). Alpine's linux-virt kernel (cloud
+# images, many VMs) is built without it: without this check the apply would roll back after 90 s.
+pppoe_kernel() {
+	modprobe -q pppoe 2> /dev/null || :
+	[ -e /proc/net/pppoe ] && return 0
+	k=$(uname -r)
+	case $k in
+	*-virt) hint="apk add linux-lts && reboot（linux-virt 内核没有 PPPoE / the linux-virt kernel has no PPPoE）" ;;
+	*) hint="apk add linux-lts && reboot；刚升级过内核则先重启 / or reboot after a kernel upgrade" ;;
+	esac
+	die "内核 $k 不能加载 pppoe 模块，PPPoE 无法工作 / kernel $k cannot load the pppoe module, PPPoE cannot work.
+  解决 / fix: $hint, then run install.sh again"
+}
 yaml_str() { # single-quoted YAML scalar
 	printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
 }
@@ -87,7 +100,7 @@ say "mini-router installer — Alpine $(cat /etc/alpine-release), $(uname -m) �
 # ---------------------------------------------------------------- packages
 say "1/5 安装软件包 / installing packages"
 PKGS="ca-certificates ssl_client busybox-extras busybox-openrc iproute2 nftables dnsmasq dnsmasq-openrc
-ppp-daemon ppp-pppoe dhcpcd iw"
+ppp-daemon ppp-pppoe dhcpcd ethtool iw"
 HAVE_WIFI=0
 if [ -n "$(ls /sys/class/ieee80211 2> /dev/null)" ]; then
 	HAVE_WIFI=1
@@ -177,6 +190,7 @@ done
 ask MR_WAN_PROTO "WAN 类型 dhcp / pppoe / static" dhcp
 case $MR_WAN_PROTO in
 pppoe)
+	pppoe_kernel
 	ask MR_PPPOE_USER "PPPoE 账号 / username"
 	ask_secret MR_PPPOE_PASS "PPPoE 密码 / password" 1
 	;;
@@ -315,13 +329,28 @@ umask 077
 chmod 600 "$CONF/secrets.yaml"
 umask 022
 printf '%s\n' "$MR_ADMIN_PASS" | /usr/sbin/mr passwd > /dev/null
+/bin/mkdir -p "$CONF/state"
 /usr/sbin/mr validate || die "router.yaml is not valid (fix $CONF/router.yaml and run: mr apply)"
 
-# ---------------------------------------------------------------- apply
+# ---------------------------------------------------------------- takeover / apply
 if [ "${MR_APPLY:-1}" = 0 ]; then
+	# Deferred installs enter the browser wizard after the operator reviews the
+	# generated config. An immediately applied install already completed setup.
+	/usr/bin/printf 'install\n' > "$CONF/state/first-run"
 	say "MR_APPLY=0: configuration written, nothing applied. Run 'mr apply' when ready."
 	exit 0
 fi
+
+takeover_network() {
+	for s in networking dhcpcd; do
+		for rl in boot default; do rc-update del "$s" "$rl" > /dev/null 2>&1 || :; done
+	done
+	[ -f /etc/network/interfaces ] && mv /etc/network/interfaces /etc/network/interfaces.before-mini-router
+	# A change that was never confirmed (power cut in the confirm window) is
+	# rolled back at the next boot.
+	rc-update add mr-unconfirmed boot > /dev/null 2>&1 || :
+}
+
 say "5/5 应用 / applying"
 [ "$MR_MODE" = router ] || echo "mode $MR_MODE · main router $MR_GATEWAY"
 echo "WAN $MR_WAN ($MR_WAN_PROTO) · LAN $MR_LAN_PORTS · $MR_LAN_IP · WiFi $([ "$MR_WIFI" = 1 ] && echo "$MR_WIFI_SSID" || echo off)"
@@ -331,13 +360,7 @@ if [ "$YES" != 1 ]; then
 	read -r go < /dev/tty || go=y
 	case ${go:-y} in y | Y | yes) ;; *) die "stopped; run 'mr apply' when ready" ;; esac
 fi
-# mr-network owns the interfaces from now on; Alpine's ifupdown and its dhcpcd service would fight it
-for s in networking dhcpcd; do
-	for rl in boot default; do rc-update del "$s" "$rl" > /dev/null 2>&1 || :; done
-done
-[ -f /etc/network/interfaces ] && mv /etc/network/interfaces /etc/network/interfaces.before-mini-router
-# a change that was never confirmed (power cut in the confirm window) is rolled back at the next boot
-rc-update add mr-unconfirmed boot > /dev/null 2>&1 || :
+takeover_network
 /usr/sbin/mr apply || die "apply failed (it was rolled back); see 'mr plan' and /var/log/messages"
 say "完成 / done: http://$host/  (admin password as entered)"
 echo "配置文件 / config: $CONF/router.yaml · 命令 / commands: mr plan | mr apply | mr status | mr rollback"

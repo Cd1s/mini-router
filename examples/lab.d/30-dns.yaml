@@ -39,6 +39,7 @@ dns:
   no_negcache: true
   edns_packet_max: 1232
   upstream: dot                       # everything over DoT via stubby (services.stubby in 70-sys.yaml)
+  # fallback: [9.9.9.9]               # used when upstream is isp and every WAN lost DNS
   dot:
     port: 5453
     servers:
