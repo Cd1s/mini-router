@@ -228,6 +228,8 @@ stat -c '%a %u %g' / > $R/rootmode
 cat /etc/mini-router/gen/services > $R/services 2>&1
 ls /etc/runlevels/default > $R/default 2>&1
 if [ -e /etc/mini-router/.firstboot ]; then echo yes; else echo no; fi > $R/firstboot
+if [ -e /etc/mini-router/router.yaml.rejected ]; then echo yes; else echo no; fi > $R/rejected
+if [ -s /etc/mini-router/gen/applied.yaml ] && [ -s /etc/mini-router/gen/applied-secrets ]; then echo yes; else echo no; fi > $R/applied
 grep -m1 'ipv4:' /etc/mini-router/router.yaml > $R/lan 2>&1
 if [ -e /etc/config/network ]; then echo visible; else echo hidden; fi > $R/foreign
 if touch /probe-was-here; then echo ok; else echo fail; fi > $R/writable
@@ -295,6 +297,7 @@ PROBE
 	umount /data
 	boot P3
 	has P3 '^no$' firstboot
+	has P3 '^yes$' applied
 	has P3 '192.168.1.6' lan
 	for s in mr-pppoe.wan mr-pppoe.wan2 tailscale stubby dropbear mr-panel; do has P3 "^$s\$" default; done
 	sort "/t/res/P3/services" > /t/s1 && sort "/t/res/P3/default" > /t/s2
@@ -323,9 +326,12 @@ PROBE
 	: > /data/mr/upper/etc/mini-router/.firstboot
 	umount /data
 	boot P5
-	has P5 '^yes$' firstboot
+	has P5 '^no$' firstboot
 	has P5 '^mr-panel$' default
-	has P5 'invalid, keeping the factory files' kmsg
+	has P5 '^yes$' rejected
+	has P5 '^yes$' applied
+	has P5 'router.yaml rejected' kmsg
+	has P5 '192.168.31.1' lan
 	echo "P5 ok"
 
 	say "P6: no rootfs_data volume"

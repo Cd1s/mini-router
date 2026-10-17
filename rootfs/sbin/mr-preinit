@@ -65,12 +65,12 @@ wipe_vol() {
 firstboot() {
 	[ -e /etc/mini-router/.firstboot ] && [ -x /usr/sbin/mr ] || return 0
 	if ! out=$(/usr/sbin/mr validate 2>&1); then
-		log "provisioned router.yaml is invalid, keeping the factory files: $(echo "$out" | sed -n 2p)"
-		return 1
+		firstboot_reject "validate failed: $(echo "$out" | sed -n 2p)" || return 1
+		return 0
 	fi
 	if ! out=$(/usr/sbin/mr render / 2>&1); then
-		log "mr render failed: $out"
-		return 1
+		firstboot_reject "render failed: $(echo "$out" | sed -n 1p)" || return 1
+		return 0
 	fi
 	want=/etc/mini-router/gen/services
 	rl=/etc/runlevels/default
@@ -93,6 +93,34 @@ firstboot() {
 	rm -f /etc/mini-router/.firstboot
 	log "applied the provisioned router.yaml"
 	return 0
+}
+
+# Keep a bad provisioned file for diagnosis, then expose the factory config before any service
+# starts. This prevents hooks and the setup API from reading a config that disagrees with factory
+# generated files and locking the owner out on first boot.
+firstboot_reject() {
+	reason=$1
+	if [ -e /etc/mini-router/router.yaml ]; then
+		mv -f /etc/mini-router/router.yaml /etc/mini-router/router.yaml.rejected || return 1
+	fi
+	if [ -r /rom/etc/mini-router/router.yaml ]; then
+		cp /rom/etc/mini-router/router.yaml /etc/mini-router/router.yaml || return 1
+	else
+		log "cannot restore factory router.yaml from /rom"
+		return 1
+	fi
+	# A failed render may have left only part of the generated tree behind. Expose the image's
+	# factory tree again before rendering the restored configuration.
+	rm -rf /etc/mini-router/gen
+	if out=$(/usr/sbin/mr render / 2>&1); then
+		rm -f /etc/mini-router/.firstboot
+		log "provisioned router.yaml rejected ($reason); restored factory configuration"
+		logger -t mr-preinit "provisioned router.yaml rejected ($reason); factory configuration restored" 2>/dev/null
+		return 0
+	fi
+	log "provisioned router.yaml rejected ($reason); factory render failed: $(echo "$out" | sed -n 1p)"
+	logger -t mr-preinit "provisioned router.yaml rejected; factory render failed" 2>/dev/null
+	return 1
 }
 
 # A change that was never accepted (the router went down during an apply or inside its confirm window)

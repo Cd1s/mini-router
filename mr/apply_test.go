@@ -447,3 +447,96 @@ func TestRollbackRestoresAcceptedConfig(t *testing.T) {
 		t.Errorf("fallback sources: %v", src)
 	}
 }
+
+func TestRestoreStopsAndDisablesRemovedWANService(t *testing.T) {
+	confirmEnv(t)
+	oldRun := runCommand
+	t.Cleanup(func() { runCommand = oldRun })
+	var calls []string
+	runCommand = func(name string, args ...string) (string, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return "", nil
+	}
+	// The snapshot predates a newly generated per-WAN service.
+	service := filepath.Join(initDir, "mr-pppoe.newwan")
+	os.MkdirAll(filepath.Dir(service), 0755)
+	snap, err := snapshot([]string{service}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(service, []byte("#!/sbin/openrc-run\n"), 0755)
+	os.Symlink(service, filepath.Join(runlevelDir, "mr-pppoe.newwan"))
+	if _, err := restore(snap); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(service); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("removed service still exists: %v", err)
+	}
+	if strings.Join(calls, "|") != "rc-service mr-pppoe.newwan stop|rc-update del mr-pppoe.newwan default" {
+		t.Fatalf("service cleanup calls: %v", calls)
+	}
+	if _, err := os.Lstat(filepath.Join(runlevelDir, "mr-pppoe.newwan")); err != nil {
+		t.Fatal("test symlink vanished before runlevel reconciliation")
+	}
+}
+
+func TestReconcileRunlevelRemovesDanglingManagedLink(t *testing.T) {
+	confirmEnv(t)
+	oldRun := runCommand
+	t.Cleanup(func() { runCommand = oldRun })
+	runCommand = func(string, ...string) (string, error) { return "", nil }
+	name := "mr-pppoe.removed"
+	os.Symlink(filepath.Join(initDir, name), filepath.Join(runlevelDir, name))
+	reconcileRunlevel(testConfig(t))
+	if _, err := os.Lstat(filepath.Join(runlevelDir, name)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("dangling managed link remains: %v", err)
+	}
+}
+
+func TestCleanupOrphanWANFiles(t *testing.T) {
+	d, _, _ := confirmEnv(t)
+	oldPeers, oldRun := pppPeersDir, runCommand
+	t.Cleanup(func() { pppPeersDir, runCommand = oldPeers, oldRun })
+	pppPeersDir = filepath.Join(d, "ppp", "peers")
+	os.MkdirAll(pppPeersDir, 0755)
+	os.WriteFile(filepath.Join(pppPeersDir, "gone"), []byte("password secret\n"), 0600)
+	os.WriteFile(filepath.Join(pppPeersDir, "keep"), []byte("password keep\n"), 0600)
+	os.WriteFile(filepath.Join(initDir, "mr-pppoe.gone"), []byte("#!/sbin/openrc-run\n"), 0755)
+	os.WriteFile(filepath.Join(initDir, "mr-pppoe.keep"), []byte("#!/sbin/openrc-run\n"), 0755)
+	var calls []string
+	runCommand = func(name string, args ...string) (string, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return "", nil
+	}
+	c := testConfig(t)
+	c.WAN = []WAN{{Name: "keep", Proto: "pppoe", Device: "wan", Username: "u", Password: "pppoe_password"}}
+	cleanupOrphanWANFiles(c)
+	for _, p := range []string{filepath.Join(pppPeersDir, "gone"), filepath.Join(initDir, "mr-pppoe.gone")} {
+		if _, err := os.Stat(p); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("orphan survived: %s (%v)", p, err)
+		}
+	}
+	for _, p := range []string{filepath.Join(pppPeersDir, "keep"), filepath.Join(initDir, "mr-pppoe.keep")} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("wanted file removed: %s (%v)", p, err)
+		}
+	}
+	if !strings.Contains(strings.Join(calls, "|"), "rc-service mr-pppoe.gone stop") {
+		t.Errorf("orphan service was not stopped: %v", calls)
+	}
+}
+
+func TestRenderOutputIncludesAppliedConfigBookkeeping(t *testing.T) {
+	c := testConfig(t)
+	files, err := renderOutputFiles(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, f := range files {
+		seen[f.Path] = true
+	}
+	if !seen[appliedYAML] || !seen[appliedSecrets] {
+		t.Fatalf("render output missing bookkeeping: %v", seen)
+	}
+}

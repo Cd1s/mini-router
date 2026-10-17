@@ -40,10 +40,18 @@ const (
 
 // the apply job's input and state (variables so tests can point them elsewhere)
 var (
-	CandidateYAML = RunDir + "/candidate.yaml"
-	CandidateSec  = RunDir + "/candidate-secrets.yaml"
-	JobFile       = RunDir + "/job.json"
-	JobLog        = RunDir + "/job.log"
+	CandidateYAML  = RunDir + "/candidate.yaml"
+	CandidateSec   = RunDir + "/candidate-secrets.yaml"
+	JobFile        = RunDir + "/job.json"
+	JobLog         = RunDir + "/job.log"
+	loadLANConfig  = func() (*Config, error) { return loadConfig(ConfigPath, SecretsPath) }
+	lanBridgeAddrs = func(bridge string) ([]net.Addr, error) {
+		i, err := net.InterfaceByName(bridge)
+		if err != nil {
+			return nil, err
+		}
+		return i.Addrs()
+	}
 )
 
 type apiReq struct {
@@ -275,14 +283,40 @@ func apiLogin(r apiReq, secrets map[string]string) apiResp {
 	return apiResp{body: map[string]any{"ok": true}, cookie: sessionCookie(newSession())}
 }
 
-func fromLAN(remote string) bool {
-	c, err := loadConfig(ConfigPath, SecretsPath)
+func fromLAN(remote string) (bool, error) {
+	c, err := loadLANConfig()
 	if err != nil {
-		return false
+		return false, err
 	}
-	_, n, err := net.ParseCIDR(c.LAN.IPv4)
-	ip := net.ParseIP(remote)
-	return err == nil && ip != nil && n.Contains(ip)
+	ip := net.ParseIP(strings.TrimSpace(strings.SplitN(remote, "%", 2)[0]))
+	if ip == nil {
+		return false, nil
+	}
+	if ip.To4() != nil {
+		_, n, err := net.ParseCIDR(c.LAN.IPv4)
+		return err == nil && n.Contains(ip), nil
+	}
+	bridge := c.LAN.Bridge
+	if bridge == "" {
+		bridge = "br-lan"
+	}
+	addrs, _ := lanBridgeAddrs(bridge)
+	for _, a := range addrs {
+		var n *net.IPNet
+		switch v := a.(type) {
+		case *net.IPNet:
+			n = v
+		case *net.IPAddr:
+			n = &net.IPNet{IP: v.IP, Mask: net.CIDRMask(128, 128)}
+		}
+		if n == nil || n.IP.To4() != nil {
+			continue
+		}
+		if n.Contains(ip) || (ip.IsLinkLocalUnicast() && n.IP.IsLinkLocalUnicast()) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func apiSetup(r apiReq, secrets map[string]string) apiResp {
@@ -292,7 +326,9 @@ func apiSetup(r apiReq, secrets map[string]string) apiResp {
 	if _, ok := secrets[pwSecretKey]; ok {
 		return errResp(409, "password already set")
 	}
-	if !fromLAN(r.remote) {
+	if ok, err := fromLAN(r.remote); err != nil {
+		return errResp(500, "router.yaml missing/invalid; please restore the factory configuration: %v", err)
+	} else if !ok {
 		return errResp(403, "first-time setup is only allowed from the LAN")
 	}
 	var in struct{ Password string }

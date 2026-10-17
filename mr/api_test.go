@@ -2,10 +2,42 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"net"
 	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestSetupReportsInvalidConfigSeparatelyFromLANAccess(t *testing.T) {
+	oldLoad := loadLANConfig
+	t.Cleanup(func() { loadLANConfig = oldLoad })
+	loadLANConfig = func() (*Config, error) { return nil, errors.New("router.yaml: invalid") }
+	r := apiSetup(apiReq{method: "POST", remote: "192.168.1.20", body: []byte(`{"password":"correct horse"}`)}, map[string]string{})
+	if r.status != 500 || !strings.Contains(r.body.(map[string]any)["error"].(string), "router.yaml") {
+		t.Fatalf("invalid config setup response: %d %v", r.status, r.body)
+	}
+}
+
+func TestFromLANAcceptsIPv6OnLANBridge(t *testing.T) {
+	oldLoad, oldAddrs := loadLANConfig, lanBridgeAddrs
+	t.Cleanup(func() { loadLANConfig, lanBridgeAddrs = oldLoad, oldAddrs })
+	loadLANConfig = func() (*Config, error) {
+		return &Config{LAN: LAN{Bridge: "br-lan", IPv4: "192.168.1.1/24"}}, nil
+	}
+	lanBridgeAddrs = func(string) ([]net.Addr, error) {
+		return []net.Addr{&net.IPNet{IP: net.ParseIP("fe80::1"), Mask: net.CIDRMask(64, 128)}, &net.IPNet{IP: net.ParseIP("2001:db8:1::1"), Mask: net.CIDRMask(64, 128)}}, nil
+	}
+	for _, remote := range []string{"fe80::abcd", "2001:db8:1::abcd"} {
+		ok, err := fromLAN(remote)
+		if err != nil || !ok {
+			t.Errorf("%s: fromLAN=%v err=%v", remote, ok, err)
+		}
+	}
+	if ok, err := fromLAN("2001:db8:2::abcd"); err != nil || ok {
+		t.Errorf("outside LAN IPv6 accepted: %v %v", ok, err)
+	}
+}
 
 func TestPasswordHash(t *testing.T) {
 	h := hashPassword("correct horse")
