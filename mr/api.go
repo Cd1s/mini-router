@@ -135,6 +135,29 @@ func lanIPv4Host(cidr string) string {
 	return ip.To4().String()
 }
 
+// prepareLANConfirmToken stages the raw token only for browser-originated changes
+// that can strand the current origin, including web rollbacks. API-token and CLI
+// changes keep their existing confirmation semantics.
+func prepareLANConfirmToken(candidate, via string) (string, string, error) {
+	os.Remove(confirmTokenFile)
+	if via != "web UI" && via != "rollback" {
+		return "", "", nil
+	}
+	live, err := loadConfig(ConfigPath, SecretsPath)
+	if err != nil {
+		return "", "", nil
+	}
+	next, err := loadConfig(candidate, CandidateSec)
+	if err != nil || live.LAN.IPv4 == next.LAN.IPv4 {
+		return "", "", nil
+	}
+	token := newConfirmToken()
+	if token == "" || writeAtomic(confirmTokenFile, []byte(token), 0600) != nil {
+		return "", "", errors.New("cannot create LAN confirmation token")
+	}
+	return token, lanIPv4Host(next.LAN.IPv4), nil
+}
+
 // confirmWithToken is deliberately separate from the normal session path. The token
 // is scoped to the current pending marker, expires with it, is accepted only here,
 // and is consumed by confirm (which removes the marker atomically under its lock).
@@ -149,6 +172,8 @@ func confirmWithToken(token, remote string) apiResp {
 	if !okLAN {
 		return errResp(403, "confirmation is only allowed from the LAN")
 	}
+	unlock := lockPending()
+	defer unlock()
 	p, err := readPending()
 	if err != nil || p.ConfirmHash == "" || p.left() <= 0 {
 		return errResp(409, "no matching LAN confirmation is pending")
@@ -158,7 +183,7 @@ func confirmWithToken(token, remote string) apiResp {
 	if err != nil || subtle.ConstantTimeCompare(want, h[:]) != 1 {
 		return errResp(401, "invalid confirmation token")
 	}
-	ok, err := confirm()
+	ok, err := confirmLocked()
 	if err != nil {
 		return errResp(409, "%v", err)
 	}
@@ -717,6 +742,7 @@ func apiApply(r apiReq) apiResp {
 		return errResp(400, "comment: one line, at most 200 characters")
 	}
 	os.MkdirAll(RunDir, 0700)
+	os.Remove(confirmTokenFile)
 	if len(in.Patch) == 0 && in.YAML == "" {
 		y = uiConfigYAML(y, c) // a patch's text is already the live file with only its edits; raw text stays as typed
 	}
@@ -724,26 +750,18 @@ func apiApply(r apiReq) apiResp {
 	if via == "" {
 		via = "web UI"
 	}
-	// Keep the raw handoff token only in a root-readable tmpfs file while the apply
-	// worker starts. The persistent pending marker stores its SHA-256 digest only.
-	confirmToken, confirmIP := "", ""
-	if via == "web UI" {
-		os.Remove(confirmTokenFile)
-		if live, e := loadConfig(ConfigPath, SecretsPath); e == nil && live.LAN.IPv4 != c.LAN.IPv4 {
-			confirmToken = newConfirmToken()
-			if confirmToken == "" || writeAtomic(confirmTokenFile, []byte(confirmToken), 0600) != nil {
-				return errResp(500, "cannot create LAN confirmation token")
-			}
-			confirmIP = lanIPv4Host(c.LAN.IPv4)
-		}
-	}
 	if err := writeAtomic(CandidateYAML, y, 0600); err != nil {
-		os.Remove(confirmTokenFile)
 		return errResp(500, "%v", err)
 	}
 	if err := writeSecrets(CandidateSec, sec); err != nil {
 		os.Remove(confirmTokenFile)
 		return errResp(500, "%v", err)
+	}
+	// Keep the raw handoff token only in a root-readable tmpfs file while the apply
+	// worker starts. The persistent pending marker stores its SHA-256 digest only.
+	confirmToken, confirmIP, tokenErr := prepareLANConfirmToken(CandidateYAML, via)
+	if tokenErr != nil {
+		return errResp(500, "%v", tokenErr)
 	}
 	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: via, From: r.remote, Comment: in.Comment, BaseRev: base})
 	self, _ := os.Executable()
@@ -764,7 +782,7 @@ func runApplyJob(confirmSecs int) error {
 	j0.Pid = os.Getpid()
 	writeJob(j0)
 	token := ""
-	if j0.Via == "" || j0.Via == "web UI" {
+	if j0.Via == "" || j0.Via == "web UI" || j0.Via == "rollback" {
 		tokenBytes, _ := os.ReadFile(confirmTokenFile)
 		token = strings.TrimSpace(string(tokenBytes))
 	}
@@ -930,10 +948,19 @@ func apiRollback(r apiReq) apiResp {
 	if r.via != "" {
 		via = r.via // an API token (the comment says what it is): it may confirm its own rollback
 	}
+	confirmToken, confirmIP, tokenErr := prepareLANConfirmToken(CandidateYAML, via)
+	if tokenErr != nil {
+		return errResp(500, "%v", tokenErr)
+	}
 	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: 120, Via: via, From: r.remote, Comment: comment})
 	self, _ := os.Executable()
 	startDetached(self, "apply-job", "120")
-	return apiResp{body: map[string]any{"ok": true, "confirm": 120}}
+	body := map[string]any{"ok": true, "confirm": 120}
+	if confirmToken != "" {
+		body["confirm_token"] = confirmToken
+		body["confirm_ip"] = confirmIP
+	}
+	return apiResp{body: body}
 }
 
 func apiLogs() apiResp {

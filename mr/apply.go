@@ -1049,6 +1049,13 @@ func rollbackIfUnconfirmed(snap string, secs int) error {
 func confirm() (bool, error) {
 	unlock := lockPending()
 	defer unlock()
+	return confirmLocked()
+}
+
+// confirmLocked is confirm's state transition with lockPending already held. Token
+// confirmation uses the same lock while checking the digest, so a token cannot race
+// a timer or a second pending change between validation and consumption.
+func confirmLocked() (bool, error) {
 	p, err := readPending()
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
@@ -1070,7 +1077,6 @@ func confirm() (bool, error) {
 	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
 	acceptStaged()
-	unlock()
 	if commitCfg != nil {
 		if commitErr := netCommit(commitCfg); commitErr != nil {
 			logf("net: post-confirm cleanup: %v", commitErr)

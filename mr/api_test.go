@@ -67,6 +67,15 @@ func TestLANConfirmTokenSuccessIsOneShotAndLANOnly(t *testing.T) {
 	if got := confirmWithToken(token, "192.168.9.44"); got.status != 403 {
 		t.Fatalf("non-LAN token status = %d, want 403", got.status)
 	}
+	if err := setPending(pendingApply{Snapshot: "/tmp/snap", State: statePending, Deadline: time.Now().Unix() - 1, ConfirmHash: hex.EncodeToString(h[:])}); err != nil {
+		t.Fatal(err)
+	}
+	if got := confirmWithToken(token, "192.168.2.44"); got.status != 409 {
+		t.Fatalf("expired token status = %d, want 409", got.status)
+	}
+	if got := handleAPI(apiReq{method: "GET", action: "confirm", header: "1", remote: "192.168.2.44", body: []byte(`{"token":"` + token + `"}`)}); got.status == 0 {
+		t.Fatal("GET confirmation unexpectedly succeeded")
+	}
 }
 
 func TestNormalizeRemoteAddrBusyboxFormats(t *testing.T) {
