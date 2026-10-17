@@ -52,6 +52,23 @@ var (
 		}
 		return i.Addrs()
 	}
+	lanIPv6Source = func(remote, bridge string) bool {
+		if strings.Contains(remote, "%") {
+			zone := strings.TrimSpace(strings.SplitN(remote, "%", 2)[1])
+			zone = strings.TrimPrefix(zone, "25") // URL-escaped scope id: %25br-lan
+			return zone == bridge
+		}
+		ip := net.ParseIP(remote)
+		if ip == nil {
+			return false
+		}
+		if ip.IsLinkLocalUnicast() {
+			out, err := run("ip", "-6", "neigh", "show", "to", ip.String())
+			return err == nil && routeHasDev(out, bridge)
+		}
+		out, err := run("ip", "-6", "route", "get", ip.String())
+		return err == nil && routeHasDev(out, bridge)
+	}
 )
 
 type apiReq struct {
@@ -293,6 +310,9 @@ func fromLAN(remote string) (bool, error) {
 		return false, nil
 	}
 	if ip.To4() != nil {
+		if strings.Contains(remote, ":") { // IPv4-mapped IPv6 is not a LAN IPv4 source.
+			return false, nil
+		}
 		_, n, err := net.ParseCIDR(c.LAN.IPv4)
 		return err == nil && n.Contains(ip), nil
 	}
@@ -312,11 +332,21 @@ func fromLAN(remote string) (bool, error) {
 		if n == nil || n.IP.To4() != nil {
 			continue
 		}
-		if n.Contains(ip) || (ip.IsLinkLocalUnicast() && n.IP.IsLinkLocalUnicast()) {
+		if n.Contains(ip) && lanIPv6Source(remote, bridge) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func routeHasDev(out, bridge string) bool {
+	fields := strings.Fields(out)
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "dev" && fields[i+1] == bridge {
+			return true
+		}
+	}
+	return false
 }
 
 func apiSetup(r apiReq, secrets map[string]string) apiResp {
@@ -327,7 +357,8 @@ func apiSetup(r apiReq, secrets map[string]string) apiResp {
 		return errResp(409, "password already set")
 	}
 	if ok, err := fromLAN(r.remote); err != nil {
-		return errResp(500, "router.yaml missing/invalid; please restore the factory configuration: %v", err)
+		logf("webui setup: cannot load router.yaml: %v", err)
+		return errResp(500, "配置文件缺失或无效，请按复位键恢复出厂设置，或通过串口修复")
 	} else if !ok {
 		return errResp(403, "first-time setup is only allowed from the LAN")
 	}

@@ -14,21 +14,25 @@ func TestSetupReportsInvalidConfigSeparatelyFromLANAccess(t *testing.T) {
 	t.Cleanup(func() { loadLANConfig = oldLoad })
 	loadLANConfig = func() (*Config, error) { return nil, errors.New("router.yaml: invalid") }
 	r := apiSetup(apiReq{method: "POST", remote: "192.168.1.20", body: []byte(`{"password":"correct horse"}`)}, map[string]string{})
-	if r.status != 500 || !strings.Contains(r.body.(map[string]any)["error"].(string), "router.yaml") {
+	msg := r.body.(map[string]any)["error"].(string)
+	if r.status != 500 || !strings.Contains(msg, "配置文件缺失") || strings.Contains(msg, "router.yaml: invalid") {
 		t.Fatalf("invalid config setup response: %d %v", r.status, r.body)
 	}
 }
 
 func TestFromLANAcceptsIPv6OnLANBridge(t *testing.T) {
-	oldLoad, oldAddrs := loadLANConfig, lanBridgeAddrs
-	t.Cleanup(func() { loadLANConfig, lanBridgeAddrs = oldLoad, oldAddrs })
+	oldLoad, oldAddrs, oldSource := loadLANConfig, lanBridgeAddrs, lanIPv6Source
+	t.Cleanup(func() { loadLANConfig, lanBridgeAddrs, lanIPv6Source = oldLoad, oldAddrs, oldSource })
 	loadLANConfig = func() (*Config, error) {
 		return &Config{LAN: LAN{Bridge: "br-lan", IPv4: "192.168.1.1/24"}}, nil
 	}
 	lanBridgeAddrs = func(string) ([]net.Addr, error) {
 		return []net.Addr{&net.IPNet{IP: net.ParseIP("fe80::1"), Mask: net.CIDRMask(64, 128)}, &net.IPNet{IP: net.ParseIP("2001:db8:1::1"), Mask: net.CIDRMask(64, 128)}}, nil
 	}
-	for _, remote := range []string{"fe80::abcd", "2001:db8:1::abcd"} {
+	lanIPv6Source = func(remote, bridge string) bool {
+		return bridge == "br-lan" && (remote == "fe80::abcd%br-lan" || remote == "2001:db8:1::abcd")
+	}
+	for _, remote := range []string{"fe80::abcd%br-lan", "2001:db8:1::abcd"} {
 		ok, err := fromLAN(remote)
 		if err != nil || !ok {
 			t.Errorf("%s: fromLAN=%v err=%v", remote, ok, err)
@@ -36,6 +40,12 @@ func TestFromLANAcceptsIPv6OnLANBridge(t *testing.T) {
 	}
 	if ok, err := fromLAN("2001:db8:2::abcd"); err != nil || ok {
 		t.Errorf("outside LAN IPv6 accepted: %v %v", ok, err)
+	}
+	if ok, err := fromLAN("fe80::bad%wan"); err != nil || ok {
+		t.Errorf("WAN link-local IPv6 accepted: %v %v", ok, err)
+	}
+	if ok, err := fromLAN("::ffff:192.168.1.20"); err != nil || ok {
+		t.Errorf("IPv4-mapped IPv6 accepted: %v %v", ok, err)
 	}
 }
 
