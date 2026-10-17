@@ -166,6 +166,16 @@ func plan(c *Config) (*Plan, error) {
 		return nil, err
 	}
 	files = append(files, appliedFiles(c)...)
+	want := map[string]bool{}
+	for _, s := range enabledServices(c) {
+		want[s] = true
+	}
+	// a service mr owns that this config does not run is disabled, never restarted: e.g. mr-hostapd on
+	// a machine without radios, whose generated files are new on the first apply like all others
+	off := map[string]bool{}
+	for _, s := range managedServices(c) {
+		off[s] = !want[s]
+	}
 	p := &Plan{}
 	svc := map[string]bool{}
 	for _, f := range files {
@@ -174,7 +184,7 @@ func plan(c *Config) (*Plan, error) {
 			continue
 		}
 		p.Changed = append(p.Changed, f)
-		if s := serviceFor(f.Path); s != "" {
+		if s := serviceFor(f.Path); s != "" && !off[s] {
 			svc[s] = true
 		}
 	}
@@ -186,10 +196,6 @@ func plan(c *Config) (*Plan, error) {
 	cur, _ := os.ReadFile(GenDir + "/nftables.nft")
 	p.Firewall = string(cur) != renderNft(c, netdevExists)
 
-	want := map[string]bool{}
-	for _, s := range enabledServices(c) {
-		want[s] = true
-	}
 	have := map[string]bool{}
 	if ents, err := os.ReadDir(runlevelDir); err == nil {
 		for _, e := range ents {
