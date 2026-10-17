@@ -17,7 +17,8 @@
 #   P2 OpenWrt's upper/ on rootfs_data: ignored
 #   P3 provisioned config (.firstboot): rendered, default runlevel = its services; factory-reset -y
 #   P4 the next boot after factory-reset: settings gone, factory config back
-#   P5 invalid provisioned router.yaml: factory files and the marker kept
+#   P5 invalid provisioned router.yaml/secrets: rejected files, factory render and marker removed
+#   P5b initramfs-like firstboot with no /rom: files and marker kept
 #   P6 no rootfs_data volume: tmpfs overlay
 #   P7 first boot of a new image: overlay copies of its programs dropped, config and other files kept;
 #      the next boot of the same image leaves the overlay alone
@@ -229,6 +230,9 @@ cat /etc/mini-router/gen/services > $R/services 2>&1
 ls /etc/runlevels/default > $R/default 2>&1
 if [ -e /etc/mini-router/.firstboot ]; then echo yes; else echo no; fi > $R/firstboot
 if [ -e /etc/mini-router/state/first-run ]; then echo yes; else echo no; fi > $R/first-run
+if [ -e /etc/mini-router/router.yaml.rejected ]; then echo yes; else echo no; fi > $R/rejected
+if [ -e /etc/mini-router/secrets.yaml.rejected ]; then echo yes; else echo no; fi > $R/secrets-rejected
+if [ -s /etc/mini-router/gen/applied.yaml ] && [ -s /etc/mini-router/gen/applied-secrets ]; then echo yes; else echo no; fi > $R/applied
 grep -m1 'ipv4:' /etc/mini-router/router.yaml > $R/lan 2>&1
 if [ -e /etc/config/network ]; then echo visible; else echo hidden; fi > $R/foreign
 if touch /probe-was-here; then echo ok; else echo fail; fi > $R/writable
@@ -238,11 +242,17 @@ sync
 reboot -f
 PROBE
 	mksquashfs /t/sq-tree /t/test.squashfs -comp gzip -noappend -no-xattrs -quiet -no-progress > /dev/null
+	rm -rf /t/sq-norom
+	cp -a /t/sq-tree /t/sq-norom
+	rm -f /t/sq-norom/etc/mini-router/router.yaml
+	mksquashfs /t/sq-norom /t/test-norom.squashfs -comp gzip -noappend -no-xattrs -quiet -no-progress > /dev/null
 	boot() { # boot NAME: run /sbin/init of the test squashfs as PID 1; results in /t/res/NAME
 		rm -rf "/t/res/$1" && mkdir -p "/t/res/$1" /sq
+		image=/t/test.squashfs
+		[ "${2:-}" = norom ] && image=/t/test-norom.squashfs
 		lo=$(losetup -f) # the container's /dev predates new loop devices: make the node
 		[ -b "$lo" ] || mknod "$lo" b 7 "${lo#/dev/loop}"
-		losetup "$lo" /t/test.squashfs
+		losetup "$lo" "$image"
 		mount -t squashfs -o ro "$lo" /sq
 		mount --bind "/t/res/$1" /sq/srv
 		# preinit logs to /dev/kmsg, i.e. the host's kernel log: take the lines after t0 (never cleared)
@@ -296,6 +306,7 @@ PROBE
 	umount /data
 	boot P3
 	has P3 '^no$' firstboot
+	has P3 '^yes$' applied
 	has P3 '192.168.1.6' lan
 	for s in mr-pppoe.wan mr-pppoe.wan2 tailscale stubby dropbear mr-panel; do has P3 "^$s\$" default; done
 	sort "/t/res/P3/services" > /t/s1 && sort "/t/res/P3/default" > /t/s2
@@ -334,13 +345,33 @@ PROBE
 	datamount
 	mkdir -p /data/mr/upper/etc/mini-router /data/mr/work
 	echo 'lan: [' > /data/mr/upper/etc/mini-router/router.yaml
+	echo '[' > /data/mr/upper/etc/mini-router/secrets.yaml
 	: > /data/mr/upper/etc/mini-router/.firstboot
 	umount /data
 	boot P5
-	has P5 '^yes$' firstboot
+	has P5 '^no$' firstboot
 	has P5 '^mr-panel$' default
-	has P5 'invalid, keeping the factory files' kmsg
+	has P5 '^yes$' rejected
+	has P5 '^yes$' secrets-rejected
+	has P5 '^yes$' applied
+	has P5 'router.yaml rejected' kmsg
+	has P5 '192.168.31.1' lan
 	echo "P5 ok"
+
+	say "P5b: invalid provisioned config without /rom (initramfs-like)"
+	fresh
+	datamount
+	mkdir -p /data/mr/upper/etc/mini-router /data/mr/work
+	echo 'lan: [' > /data/mr/upper/etc/mini-router/router.yaml
+	echo '[' > /data/mr/upper/etc/mini-router/secrets.yaml
+	: > /data/mr/upper/etc/mini-router/.firstboot
+	umount /data
+	boot P5b norom
+	has P5b '^yes$' firstboot
+	has P5b '^no$' rejected
+	has P5b '^no$' secrets-rejected
+	has P5b 'cannot restore factory router.yaml' kmsg
+	echo "P5b ok"
 
 	say "P6: no rootfs_data volume"
 	fresh nodata

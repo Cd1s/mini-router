@@ -40,10 +40,35 @@ const (
 
 // the apply job's input and state (variables so tests can point them elsewhere)
 var (
-	CandidateYAML = RunDir + "/candidate.yaml"
-	CandidateSec  = RunDir + "/candidate-secrets.yaml"
-	JobFile       = RunDir + "/job.json"
-	JobLog        = RunDir + "/job.log"
+	CandidateYAML  = RunDir + "/candidate.yaml"
+	CandidateSec   = RunDir + "/candidate-secrets.yaml"
+	JobFile        = RunDir + "/job.json"
+	JobLog         = RunDir + "/job.log"
+	loadLANConfig  = func() (*Config, error) { return loadConfig(ConfigPath, SecretsPath) }
+	lanBridgeAddrs = func(bridge string) ([]net.Addr, error) {
+		i, err := net.InterfaceByName(bridge)
+		if err != nil {
+			return nil, err
+		}
+		return i.Addrs()
+	}
+	lanIPv6Source = func(remote, bridge string) bool {
+		if strings.Contains(remote, "%") {
+			zone := strings.TrimSpace(strings.SplitN(remote, "%", 2)[1])
+			zone = strings.TrimPrefix(zone, "25") // URL-escaped scope id: %25br-lan
+			return zone == bridge
+		}
+		ip := net.ParseIP(remote)
+		if ip == nil {
+			return false
+		}
+		if ip.IsLinkLocalUnicast() {
+			out, err := run("ip", "-6", "neigh", "show", "to", ip.String())
+			return err == nil && routeHasDev(out, bridge)
+		}
+		out, err := run("ip", "-6", "route", "get", ip.String())
+		return err == nil && routeHasDev(out, bridge)
+	}
 )
 
 type apiReq struct {
@@ -62,6 +87,35 @@ type apiResp struct {
 	body   any
 	cookie string
 	authed bool // answered to an API token: carries X-MR-Pending like a session
+}
+
+// normalizeRemoteAddr converts BusyBox httpd's REMOTE_ADDR forms to the address shape used by
+// every API, risk and login-throttle consumer. httpd brackets IPv6 (including IPv4-mapped IPv6)
+// when listening on an IPv6 socket and appends a zone to link-local addresses.
+func normalizeRemoteAddr(raw string) string {
+	s := strings.TrimSpace(raw)
+	if strings.HasPrefix(s, "[") {
+		if end := strings.LastIndexByte(s, ']'); end > 0 {
+			s = s[1:end] + s[end+1:]
+		}
+	}
+	zone := ""
+	if i := strings.LastIndexByte(s, '%'); i >= 0 {
+		zone = s[i:]
+		s = s[:i]
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return s + zone
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return ip.String() + zone
+}
+
+func normalizedRemoteIP(remote string) net.IP {
+	return net.ParseIP(strings.SplitN(normalizeRemoteAddr(remote), "%", 2)[0])
 }
 
 func runAPI() error {
@@ -103,6 +157,7 @@ func errResp(code int, msg string, a ...any) apiResp {
 }
 
 func handleAPI(r apiReq) apiResp {
+	r.remote = normalizeRemoteAddr(r.remote)
 	if r.auth != "" { // API token: the header alone authenticates (no cookie, so no CSRF)
 		return handleToken(r)
 	}
@@ -277,14 +332,51 @@ func apiLogin(r apiReq, secrets map[string]string) apiResp {
 	return apiResp{body: map[string]any{"ok": true}, cookie: sessionCookie(newSession())}
 }
 
-func fromLAN(remote string) bool {
-	c, err := loadConfig(ConfigPath, SecretsPath)
+func fromLAN(remote string) (bool, error) {
+	remote = normalizeRemoteAddr(remote)
+	c, err := loadLANConfig()
 	if err != nil {
-		return false
+		return false, err
 	}
-	_, n, err := net.ParseCIDR(c.LAN.IPv4)
-	ip := net.ParseIP(remote)
-	return err == nil && ip != nil && n.Contains(ip)
+	ip := net.ParseIP(strings.TrimSpace(strings.SplitN(remote, "%", 2)[0]))
+	if ip == nil {
+		return false, nil
+	}
+	if ip.To4() != nil {
+		_, n, err := net.ParseCIDR(c.LAN.IPv4)
+		return err == nil && n.Contains(ip), nil
+	}
+	bridge := c.LAN.Bridge
+	if bridge == "" {
+		bridge = "br-lan"
+	}
+	addrs, _ := lanBridgeAddrs(bridge)
+	for _, a := range addrs {
+		var n *net.IPNet
+		switch v := a.(type) {
+		case *net.IPNet:
+			n = v
+		case *net.IPAddr:
+			n = &net.IPNet{IP: v.IP, Mask: net.CIDRMask(128, 128)}
+		}
+		if n == nil || n.IP.To4() != nil {
+			continue
+		}
+		if n.Contains(ip) && lanIPv6Source(remote, bridge) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func routeHasDev(out, bridge string) bool {
+	fields := strings.Fields(out)
+	for i := 0; i+1 < len(fields); i++ {
+		if fields[i] == "dev" && fields[i+1] == bridge {
+			return true
+		}
+	}
+	return false
 }
 
 func apiSetup(r apiReq, secrets map[string]string) apiResp {
@@ -294,7 +386,10 @@ func apiSetup(r apiReq, secrets map[string]string) apiResp {
 	if _, ok := secrets[pwSecretKey]; ok {
 		return errResp(409, "password already set")
 	}
-	if !fromLAN(r.remote) {
+	if ok, err := fromLAN(r.remote); err != nil {
+		logf("webui setup: cannot load router.yaml: %v", err)
+		return errResp(500, "配置文件缺失或无效，请通过串口执行 /usr/libexec/mr/factory-reset，或重新刷写固件")
+	} else if !ok {
 		return errResp(403, "first-time setup is only allowed from the LAN")
 	}
 	var in struct{ Password string }

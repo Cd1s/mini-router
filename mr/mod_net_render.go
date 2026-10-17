@@ -44,7 +44,7 @@ func netRender(c *Config, out *Out) error {
 			if err != nil {
 				return err
 			}
-			out.Add("/etc/ppp/peers/"+w.Name, 0600, renderPeer(w, wanNic(c, w), pw, len(dialEarlier(c.MultiWAN, w.Name)) == 0))
+			out.Add(pppPeersDir+"/"+w.Name, 0600, renderPeer(w, wanNic(c, w), pw, len(dialEarlier(c.MultiWAN, w.Name)) == 0))
 			out.Add("/etc/init.d/mr-pppoe."+w.Name, 0755, renderInstance("mr-pppoe", w, ""))
 		case "dhcp":
 			out.Add("/etc/init.d/mr-udhcpc."+w.Name, 0755, renderInstance("mr-udhcpc", w, w.Ifname()))
