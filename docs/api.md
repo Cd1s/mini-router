@@ -12,6 +12,15 @@ over SSH, and `mr schema` describes router.yaml as JSON Schema (Cd1s/mini-router
 | Checks | `mr/api_token_test.go`, `mr/cfgpath_test.go`, `mr/schema_test.go`; `tools/ci.sh` step 5 (real `mr api` CGI runs); lab fragment `examples/lab.d/80-api.yaml` |
 | Cost | no process, no port; `mr` grows by the code above; per token request one flock'ed write to `/run` (last use), to flash at most once an hour per token |
 
+## WAN discovery
+
+`POST /cgi-bin/api?a=net.wan_detect` requires a logged-in session (or an
+`operate` API token explicitly allowed to use `net.wan_detect`). The body is
+`{"port":"wan","timeout":8}`; timeout is 1–8 seconds and defaults to 8.
+The response contains `link`, `pppoe`, `dhcp`, `ipv6_ra`, a
+`recommendation`, and `lan_conflict` / `suggested_lan`. Discovery is
+side-effect free and never returns credentials.
+
 ## Tokens
 
 ```yaml

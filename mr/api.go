@@ -115,7 +115,7 @@ func handleAPI(r apiReq) apiResp {
 	switch r.action {
 	case "session":
 		_, hasPw := secrets[pwSecretKey]
-		return apiResp{body: map[string]any{"authenticated": validSession(r.cookie), "password_set": hasPw}}
+		return apiResp{body: map[string]any{"authenticated": validSession(r.cookie), "password_set": hasPw, "wizard": firstRunPending()}}
 	case "login":
 		return apiLogin(r, secrets)
 	case "setup":
@@ -177,6 +177,8 @@ func apiAction(r apiReq, secrets map[string]string) apiResp {
 		return apiLogs()
 	case "password":
 		return apiPassword(r, secrets)
+	case "setup.complete":
+		return apiSetupComplete(r)
 	case "reboot":
 		if r.method != "POST" {
 			return errResp(405, "POST required")

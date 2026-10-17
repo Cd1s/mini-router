@@ -1,0 +1,17 @@
+{
+  "port": "wan",
+  "link": {"carrier": true, "speed_mbps": 1000, "duplex": "full"},
+  "pppoe": {"pado": false},
+  "dhcp": {
+    "offer": true,
+    "address": "192.168.1.77",
+    "mask": "255.255.255.0",
+    "gateway": "192.168.1.1",
+    "dns": ["192.168.1.1", "1.1.1.1"]
+  },
+  "ipv6_ra": {"seen": true, "prefix": "2001:db8:1::/64", "managed": false, "other_config": true},
+  "recommendation": "dhcp",
+  "lan_conflict": true,
+  "suggested_lan": "192.168.2.1/24",
+  "elapsed_ms": 120
+}
