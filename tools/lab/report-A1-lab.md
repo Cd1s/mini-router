@@ -57,3 +57,18 @@ the real local `install.sh`; the current 200 MiB Alpine base was resized to 512 
 Alpine's `apk add` still blocks at installer step 1, so the seed records the failure and exposes a
 clearly labelled static LAN fallback. This leaves 01/02 as diagnostic failures until the guest
 package path is fixed; no product code was changed.
+
+Current five-scenario summary:
+
+```text
+01-fresh-dhcp             not ok: guest LAN DHCP/panel unavailable; DNS lookup failed
+02-pppoe-pd               not ok: no PPP IPv6/PD; ping6 reported Network is unreachable
+03-move-dhcp-samesubnet   not ok: API baseline unavailable after guest install; LAN internet failed
+04-powercut-confirm       not ok: baseline API unavailable after guest install
+05-isp-switch-live        ok diagnostic: live ISP switch command completed; status/check unavailable
+```
+
+Final cleanup check: `ip -br link | grep -c mrlab = 0`, and `ip netns` had zero `mrlab` entries.
+The final route hash was `8d68d72a56a0b91d0d77f83e3558bd1169f3ab084dbde69c4d85278497c6ad6f` and
+the final nft digest was `f1aaf441dc72ac54cec52f69868c7fff`; the differing nft digest is from
+pre-existing host rules changing during the run.
