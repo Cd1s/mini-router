@@ -87,7 +87,7 @@ say "mini-router installer — Alpine $(cat /etc/alpine-release), $(uname -m) �
 # ---------------------------------------------------------------- packages
 say "1/5 安装软件包 / installing packages"
 PKGS="ca-certificates ssl_client busybox-extras busybox-openrc iproute2 nftables dnsmasq dnsmasq-openrc
-ppp-daemon ppp-pppoe dhcpcd iw"
+ppp-daemon ppp-pppoe dhcpcd ethtool iw"
 HAVE_WIFI=0
 if [ -n "$(ls /sys/class/ieee80211 2> /dev/null)" ]; then
 	HAVE_WIFI=1

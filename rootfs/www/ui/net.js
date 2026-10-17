@@ -126,7 +126,7 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
     if (!r) return h("div",{class:"net-rt"}, "（尚未应用）");
     const now = Date.now()/1000;
     return h("div",{class:"net-rt row"}, h("span",{class:"dot "+(r.up?"ok":"bad")}),
-      r.up ? ["已连接 ", mono(r.ip), r.gateway?[" · 网关 ", mono(r.gateway)]:null, r.since?" · "+fmtDur(now-r.since):null, (r.dns||[]).length?" · DNS "+r.dns.join(", "):null] : "未连接",
+      r.up ? ["已连接 ", mono(r.ip), r.gateway?[" · 网关 ", mono(r.gateway)]:null, r.overlap?[" · 上游/LAN 同网段 ", mono(r.overlap)]:null, r.since?" · "+fmtDur(now-r.since):null, (r.dns||[]).length?" · DNS "+r.dns.join(", "):null] : "未连接",
       " · 接口 ", mono(r.dev), healthTag(r));
   };
   const redial = w=>{

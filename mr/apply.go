@@ -166,6 +166,16 @@ func plan(c *Config) (*Plan, error) {
 		return nil, err
 	}
 	files = append(files, appliedFiles(c)...)
+	want := map[string]bool{}
+	for _, s := range enabledServices(c) {
+		want[s] = true
+	}
+	// a service mr owns that this config does not run is disabled, never restarted: e.g. mr-hostapd on
+	// a machine without radios, whose generated files are new on the first apply like all others
+	off := map[string]bool{}
+	for _, s := range managedServices(c) {
+		off[s] = !want[s]
+	}
 	p := &Plan{}
 	svc := map[string]bool{}
 	for _, f := range files {
@@ -174,7 +184,7 @@ func plan(c *Config) (*Plan, error) {
 			continue
 		}
 		p.Changed = append(p.Changed, f)
-		if s := serviceFor(f.Path); s != "" {
+		if s := serviceFor(f.Path); s != "" && !off[s] {
 			svc[s] = true
 		}
 	}
@@ -186,10 +196,6 @@ func plan(c *Config) (*Plan, error) {
 	cur, _ := os.ReadFile(GenDir + "/nftables.nft")
 	p.Firewall = string(cur) != renderNft(c, netdevExists)
 
-	want := map[string]bool{}
-	for _, s := range enabledServices(c) {
-		want[s] = true
-	}
 	have := map[string]bool{}
 	if ents, err := os.ReadDir(runlevelDir); err == nil {
 		for _, e := range ents {
@@ -636,6 +642,9 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 		clearPending(snap)
 		acceptStaged()
 		setResult(snap, "applied")
+		if err := netCommit(c); err != nil {
+			logf("net: post-apply cleanup: %v", err)
+		}
 	}
 	return nil
 }
@@ -1042,9 +1051,23 @@ func confirm() (bool, error) {
 	if err == nil && p.State == stateReverting {
 		return false, errors.New("the change is being rolled back")
 	}
+	var commitCfg *Config
+	if err == nil {
+		cfgPath, secPath := acceptedConfig(), acceptedSecrets()
+		if _, statErr := os.Stat(cfgPath + ".staged"); statErr == nil {
+			cfgPath += ".staged"
+			secPath += ".staged"
+		}
+		commitCfg, _ = loadConfig(cfgPath, secPath)
+	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
 	acceptStaged()
 	unlock()
+	if commitCfg != nil {
+		if commitErr := netCommit(commitCfg); commitErr != nil {
+			logf("net: post-confirm cleanup: %v", commitErr)
+		}
+	}
 	if err == nil {
 		setResult(p.Snapshot, "confirmed")
 	}
