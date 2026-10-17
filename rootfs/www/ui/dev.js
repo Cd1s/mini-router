@@ -67,7 +67,7 @@ function editDevice(orig, save){
     else if (S.cfg.dhcp.host_leases) delete S.cfg.dhcp.host_leases;
   };
   const leaseBox = h("div");
-  const drawLease = ()=>{ leaseBox.replaceChildren(...(o.ip ? [h("input",{type:"text",value:leaseValue,placeholder:"默认（"+(S.cfg.dhcp.lease||"12h")+"）",oninput:e=>{ leaseValue=e.target.value.trim(); clearDraft(o.macs); if(leaseValue&&o.macs[0]) leaseDraft[lc(o.macs[0])]=leaseValue; }}),h("div",{class:"hint"},"固定 IPv4 设备可使用独立租期，例如 30m、12h、1d、infinite")]:[h("span",{class:"mut"},"填入固定 IPv4 后可设置")])) };
+  const drawLease = ()=>{ leaseBox.replaceChildren(...(o.ip ? [h("input",{type:"text",value:leaseValue,placeholder:"默认（"+(S.cfg.dhcp.lease||"12h")+"）",oninput:e=>{ leaseValue=e.target.value.trim(); }}),h("div",{class:"hint"},"固定 IPv4 设备可使用独立租期，例如 30m、12h、1d、infinite")]:[h("span",{class:"mut"},"填入固定 IPv4 后可设置")])) };
   drawLease();
   const ipInput = inText(o,"ip",{placeholder:"留空 = 动态分配"}); ipInput.addEventListener("input",drawLease);
   const macInput = inList(o,"macs",{placeholder:"aa:bb:cc:dd:ee:ff, …"}); macInput.addEventListener("input",drawLease);
