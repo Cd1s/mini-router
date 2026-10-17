@@ -219,6 +219,9 @@ EOF
 
 up(){
   id=$1; valid_id "$id"; d=$(state "$id"); mkdir -p "$d"
+  for s in dnsmasq kea-dhcp6-server radvd; do
+    systemctl is-active --quiet "$s" 2>/dev/null && echo "lab: warning: the host service $s runs; the lab only needs the binary (systemctl disable --now $s)" >&2
+  done
   if [ -s "$d/flavor" ] && [ -e "$d/overlay.qcow2" ]; then use_flavor "$(cat "$d/flavor")"; else echo "$FLAVOR" > "$d/flavor"; fi
   ensure_base
   [ -e "$d/overlay.qcow2" ] || { qemu-img create -f qcow2 -F qcow2 -b "$BASE" "$d/overlay.qcow2" >/dev/null; qemu-img resize "$d/overlay.qcow2" 1G >/dev/null; }
@@ -300,10 +303,11 @@ isp_cmd(){
   id=$1; wan=$2; mode=$3; shift 3; valid_id "$id"; n=$(isp "$id" "$wan"); d=$(state "$id")/isp$wan; dev=mrlab${id}s${wan}p
   [ -e "/run/netns/$n" ] || die "lab $id is not up"
   mkdir -p "$d"; isp_stop "$id" "$wan"
-  v6=none; badpass=0; nopado=0; cgnat=0; subnet=10.$id.$wan
+  v6=none; badpass=0; nopado=0; cgnat=0; subnet=10.$id.$wan; gw=1
   while [ $# -gt 0 ]; do case $1 in
     v6=*) v6=${1#v6=};; --cgnat) cgnat=1;; --badpass) badpass=1;; nopado|--nopado) nopado=1;;
     --subnet) shift; subnet=${1%.*}; subnet=${subnet%/*}; subnet=${subnet%.0};;
+    --gw) shift; gw=$1;;
     *) die "isp: unknown option $1";; esac; shift; done
   case $v6 in none|slaac|pd) ;; *) die "isp: v6=none|slaac|pd";; esac
   [ "$mode" = pppoe ] && subnet=203.0.113
@@ -311,14 +315,18 @@ isp_cmd(){
   if [ "$mode" = down ]; then run_ns "$n" ip link set "$dev" down; echo "down" > "$d/mode"; echo "isp $id wan$wan down"; return; fi
   run_ns "$n" ip link set "$dev" up
   slirp_start "$id" "$wan"
-  dns="--no-resolv --no-hosts --server=10.0.2.3 --address=/isp.test/$subnet.1 --pid-file=$d/dnsmasq.pid --log-facility=$d/dnsmasq.log --dhcp-leasefile=$d/dnsmasq.leases"
+  # --conf-file=/dev/null: never the host's /etc/dnsmasq.conf or /etc/dnsmasq.d
+  dns="--conf-file=/dev/null --no-resolv --no-hosts --server=10.0.2.3 --address=/isp.test/$subnet.$gw --pid-file=$d/dnsmasq.pid --log-facility=$d/dnsmasq.log --dhcp-leasefile=$d/dnsmasq.leases"
   case $mode in
     dhcp)
-      run_ns "$n" ip addr add "$subnet.1/24" dev "$dev"
+      run_ns "$n" ip addr add "$subnet.$gw/24" dev "$dev"
+      # a modem on the router's LAN subnet (192.168.1.0/24): its pool stays below the router's
+      # DHCP range (.100-.249) and it serves a page ("Directory listing") on its address
+      pool="$subnet.10,$subnet.200"; [ "$subnet" = 192.168.1 ] && pool="$subnet.10,$subnet.99"
       # shellcheck disable=SC2086
-      run_ns "$n" dnsmasq $dns --interface="$dev" --bind-interfaces --dhcp-range="$subnet.10,$subnet.200,255.255.255.0,1h" \
-        --dhcp-option=3,"$subnet.1" --dhcp-option=6,"$subnet.1"
-      [ "$subnet" = 192.168.1 ] && { (cd "$d" && exec ip netns exec "$n" python3 -m http.server 80 --bind 192.168.1.1 >/dev/null 2>&1) & echo $! > "$d/http.pid"; }
+      run_ns "$n" dnsmasq $dns --interface="$dev" --bind-interfaces --dhcp-range="$pool,255.255.255.0,1h" \
+        --dhcp-option=3,"$subnet.$gw" --dhcp-option=6,"$subnet.$gw"
+      [ "$subnet" = 192.168.1 ] && { (cd "$d" && exec ip netns exec "$n" python3 -m http.server 80 --bind "$subnet.$gw" >/dev/null 2>&1) & echo $! > "$d/http.pid"; }
       ;;
     static)
       run_ns "$n" ip addr add "$subnet.1/24" dev "$dev"
@@ -357,11 +365,13 @@ $(command -v radvd) -C $d/radvd.conf -p $d/radvd.pid -m logfile -l $d/radvd.log
 # one subscriber per lab: the whole delegation pool is routed down this session
 ip -6 route add 2001:db8:$id:${wan}00::/56 dev "\$dev" proto static
 # the host's AppArmor profile lets kea use only /etc/kea, /run/kea, /run/lock/kea and /var/lib/kea:
-# a private mount namespace puts lab directories there
-k=$d/kea; mkdir -p \$k/etc \$k/run \$k/lock \$k/lib
+# in a private mount namespace those are lab directories (and /run a tmpfs), so neither the host's
+# kea service nor its directories under /run are needed
+k=$d/kea; mkdir -p \$k/etc \$k/lib
 sed "s/@DEV@/\$dev/" $d/kea6.conf.in > \$k/etc/kea-dhcp6.conf
-setsid $(command -v unshare) -m --propagation private sh -c 'mount --bind "\$1/etc" /etc/kea && mount --bind "\$1/run" /run/kea &&
-  mount --bind "\$1/lock" /run/lock/kea && mount --bind "\$1/lib" /var/lib/kea && KEA_LOCKFILE_DIR=/run/lock/kea exec "\$2" -c /etc/kea/kea-dhcp6.conf' sh \$k $(command -v kea-dhcp6) > $d/kea.log 2>&1 &
+setsid $(command -v unshare) -m --propagation private sh -c 'mount -t tmpfs mrlab-kea /run && mkdir -p /run/kea /run/lock/kea &&
+  mount --bind "\$1/etc" /etc/kea && mount --bind "\$1/lib" /var/lib/kea &&
+  KEA_LOCKFILE_DIR=/run/lock/kea exec "\$2" -c /etc/kea/kea-dhcp6.conf' sh \$k $(command -v kea-dhcp6) > $d/kea.log 2>&1 &
 echo \$! > $d/kea.pid
 EOF
       chmod +x "$d/ipv6-up.sh"
@@ -383,7 +393,7 @@ EOF
       ;;
     *) die "unknown ISP mode: $mode (dhcp|pppoe|static|down)";;
   esac
-  printf '%s v6=%s cgnat=%s badpass=%s nopado=%s subnet=%s\n' "$mode" "$v6" "$cgnat" "$badpass" "$nopado" "$subnet" > "$d/mode"
+  printf '%s v6=%s cgnat=%s badpass=%s nopado=%s subnet=%s gw=%s\n' "$mode" "$v6" "$cgnat" "$badpass" "$nopado" "$subnet" "$subnet.$gw" > "$d/mode"
   echo "isp $id wan$wan $mode ($(cat "$d/mode"))"
 }
 

@@ -46,6 +46,22 @@ Scenarios (TAP output, log in `/tmp/mrlab<ID>-<name>.log`): `$L run $ID 01-fresh
 `02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`.
 Each starts with `reset`, so give every parallel scenario its own ID.
 
+## Dependencies
+
+Root on the IN build host with KVM. Install the **binaries only; do not enable their system
+services** — every daemon is started by `lab.sh` inside a lab namespace with its own config, and a
+host dnsmasq would listen on the host's port 53:
+
+```sh
+apt-get install --no-install-recommends qemu-system-x86 qemu-utils slirp4netns iproute2 nftables \
+  dnsmasq-base ppp pppoe radvd kea-dhcp6-server genisoimage socat curl jq busybox
+systemctl disable --now dnsmasq kea-dhcp6-server radvd 2>/dev/null   # if the packages enabled them
+```
+
+`lab.sh up` warns when one of those services is running. Kea needs only the package's `/etc/kea`
+and `/var/lib/kea` directories (its AppArmor profile allows no other paths), which a private mount
+namespace replaces with lab directories. Go comes from `/etc/profile.d/buildtools.sh`.
+
 ## What a lab is
 
 ```text
@@ -132,11 +148,11 @@ Never point the lab at a real LAN or a household device.
 
 ## Known product findings
 
-See the latest report (`report-A1c-lab.md` in the fleet share) for details and reproduction.
-
-- `install.sh` rolled back on every machine without WiFi (`mr-hostapd` restarted): fixed by PR
-  #143. Until it is merged, run with `MR_LAB_TREE=/path/to/fix/install-fresh-alpine` or every
-  scenario stops at the install.
-- Alpine's `linux-virt` kernel has no PPPoE: `install.sh` with `MR_WAN_PROTO=pppoe` on a VM using
-  it ends in "PPPoE did not come up within 90s" and a rollback, without saying why
-  (`MR_LAB_KERNEL=virt` reproduces it).
+- `install.sh` rolled back on every machine without WiFi (`mr-hostapd` restarted) — fixed in #143.
+- Since #138 the first apply of `install.sh` rolls back on every fresh machine: `network.sh` writes
+  `/run/mini-router/modem-aliases` before `mr-network` ever created the directory — fix/netsh-run-dir.
+  Until it is merged run the lab with `MR_LAB_TREE=<checkout of that branch>`.
+- Alpine's `linux-virt` kernel has no PPPoE: without a check `install.sh` waited 90 s and rolled
+  back — fix/install-kernel-check (`MR_LAB_KERNEL=virt` reproduces it).
+- `05-isp-switch-live` check 5: when the line moves from PPPoE to DHCP, `mr doctor` only reports
+  "no IPv4 address on pppoe-wan" (no "no PPPoE server answers" / "DHCP answers on this port").
