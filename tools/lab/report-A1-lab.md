@@ -72,3 +72,9 @@ Final cleanup check: `ip -br link | grep -c mrlab = 0`, and `ip netns` had zero 
 The final route hash was `8d68d72a56a0b91d0d77f83e3558bd1169f3ab084dbde69c4d85278497c6ad6f` and
 the final nft digest was `f1aaf441dc72ac54cec52f69868c7fff`; the differing nft digest is from
 pre-existing host rules changing during the run.
+
+Emergency host safety fix: `lab.sh` now creates and removes `/etc/netns/<lab-namespace>/resolv.conf`,
+uses a private `udhcpc -s` hook, and directs all ISP lease/pid/log, PPP, radvd and Kea state into
+lab state. Every invocation hashes `/etc/resolv.conf`, `/etc/hosts`, and `/etc/ppp/**` before and
+after execution and reports a diff if any changes. A smoke run confirmed the host resolver SHA256
+was unchanged and ended with zero host `mrlab` links.

@@ -11,6 +11,33 @@ KERNEL=$IMGDIR/vmlinuz-virt
 INITRD=$IMGDIR/initramfs-virt
 mkdir -p "$IMGDIR" "$RUNDIR"
 
+HOST_GUARD_DIR=$RUNDIR/.host-guard
+host_manifest(){
+  sha256sum /etc/resolv.conf /etc/hosts 2>/dev/null || true
+  if [ -d /etc/ppp ]; then
+    find /etc/ppp -type f -print 2>/dev/null | sort | while IFS= read -r f; do sha256sum "$f"; done
+  fi
+}
+host_guard_start(){
+  mkdir -p "$HOST_GUARD_DIR"
+  HOST_GUARD_FILE=$HOST_GUARD_DIR/$$.before
+  host_manifest > "$HOST_GUARD_FILE"
+}
+host_guard_end(){
+  rc=$?
+  after=$HOST_GUARD_DIR/$$.after
+  host_manifest > "$after"
+  if ! cmp -s "$HOST_GUARD_FILE" "$after"; then
+    echo "lab: HOST FILES CHANGED during this command" >&2
+    diff -u "$HOST_GUARD_FILE" "$after" >&2 || true
+    rc=1
+  fi
+  rm -f "$HOST_GUARD_FILE" "$after"
+  exit "$rc"
+}
+host_guard_start
+trap host_guard_end EXIT
+
 die(){ echo "lab: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
 valid_id(){ case ${1:-} in 1|2|3|4|5|6|7|8) ;; *) die "lab id must be 1..8";; esac; }
@@ -20,6 +47,12 @@ sw(){ echo "mrlab$1-sw"; }; isp(){ echo "mrlab$1-isp$2"; }; lan(){ echo "mrlab$1
 router_ip(){ cat "$(state "$1")/lan.ip" 2>/dev/null || echo 192.168.1.1; }
 run_ns(){ n=$1; shift; ip netns exec "$n" "$@"; }
 pidfile(){ echo "$(state "$1")/qemu.pid"; }
+ns_resolv_setup(){
+  nsname=$1; nameserver=$2
+  mkdir -p "/etc/netns/$nsname"
+  printf 'nameserver %s\n' "$nameserver" > "/etc/netns/$nsname/resolv.conf"
+}
+ns_resolv_remove(){ rm -f "/etc/netns/$1/resolv.conf"; rmdir "/etc/netns/$1" 2>/dev/null || true; }
 
 ensure_base(){
   [ -s "$BASE" ] && return 0
@@ -82,6 +115,10 @@ up(){
   [ -e "$d/overlay.qcow2" ] || qemu-img create -f qcow2 -F qcow2 -b "$BASE" "$d/overlay.qcow2" >/dev/null
   qemu-img resize "$d/overlay.qcow2" 512M >/dev/null 2>&1 || true
   for n in "$(sw "$id")" "$(isp "$id" 1)" "$(isp "$id" 2)" "$(lan "$id")"; do [ -e "/run/netns/$n" ] || ip netns add "$n"; done
+  ns_resolv_setup "$(sw "$id")" 127.0.0.1
+  ns_resolv_setup "$(isp "$id" 1)" 10.0.2.3
+  ns_resolv_setup "$(isp "$id" 2)" 10.0.2.3
+  ns_resolv_setup "$(lan "$id")" 192.168.1.1
   for br in br-wan1 br-wan2 br-lan; do
     run_ns "$(sw "$id")" ip link show "$br" >/dev/null 2>&1 || run_ns "$(sw "$id")" ip link add "$br" type bridge
     run_ns "$(sw "$id")" ip link set "$br" up
@@ -118,9 +155,9 @@ up(){
   echo "{\"id\":$id,\"state\":\"up\",\"switch\":\"$(sw "$id")\"}"
 }
 
-down(){ id=$1; valid_id "$id"; kill_qemu "$id"; kill_pid "$(pidfile "$id")"; for w in 1 2; do kill_pid "$(state "$id")/isp$w/slirp.pid"; kill_pid "$(state "$id")/isp$w/slirp-target.pid"; done; for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; done; cleanup_host_links "$id"; rm -rf "$(state "$id")"; echo "down $id"; }
+down(){ id=$1; valid_id "$id"; kill_qemu "$id"; kill_pid "$(pidfile "$id")"; for w in 1 2; do kill_pid "$(state "$id")/isp$w/slirp.pid"; kill_pid "$(state "$id")/isp$w/slirp-target.pid"; done; for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; ns_resolv_remove "$n"; done; cleanup_host_links "$id"; rm -rf "$(state "$id")"; echo "down $id"; }
 status(){ id=$1; valid_id "$id"; p=$(pidfile "$id"); alive=false; [ -s "$p" ] && kill -0 "$(cat "$p")" 2>/dev/null && alive=true; printf '{"id":%s,"qemu":%s,"namespaces":["%s","%s","%s","%s"]}\n' "$id" "$alive" "$(sw "$id")" "$(isp "$id" 1)" "$(isp "$id" 2)" "$(lan "$id")"; }
-reset(){ id=$1; valid_id "$id"; kill_qemu "$id"; kill_pid "$(pidfile "$id")"; for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; done; cleanup_host_links "$id"; rm -rf "$(state "$id")"; up "$id"; }
+reset(){ id=$1; valid_id "$id"; kill_qemu "$id"; kill_pid "$(pidfile "$id")"; for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; ns_resolv_remove "$n"; done; cleanup_host_links "$id"; rm -rf "$(state "$id")"; up "$id"; }
 
 isp_cmd(){
   id=$1; wan=$2; mode=$3; shift 3; valid_id "$id"; n=$(isp "$id" "$wan"); d=$(state "$id"); mkdir -p "$d/isp$wan"; pk="$d/isp$wan/dnsmasq.pid"; kill_pid "$pk"; kill_pid "$d/isp$wan/pppoe.pid"; kill_pid "$d/isp$wan/http.pid"
@@ -132,7 +169,7 @@ isp_cmd(){
   [ "$cgnat" = 1 ] && subnet="100.64.${id}"
   slirp_start "$id" "$wan"
   case $mode in
-    dhcp) [ -n "$same" ] && run_ns "$n" ip addr replace 192.168.1.1/24 dev "mrlab${id}s${wan}p"; run_ns "$n" dnsmasq --no-resolv --no-hosts --server=10.0.2.3 --interface="mrlab${id}s${wan}p" --bind-interfaces --dhcp-range="${same:-$subnet}.10,${same:-$subnet}.200,255.255.255.0,1h" --dhcp-option=3,"${same:-$subnet}.1" --dhcp-option=6,"${same:-$subnet}.1" --address=/isp.test/${same:-$subnet}.1 --pid-file="$pk" --log-facility="$d/isp$wan/dnsmasq.log"; if [ -n "$same" ]; then (cd "$d/isp$wan" && run_ns "$n" python3 -m http.server 80 --bind 192.168.1.1 >/dev/null 2>&1) & echo $! > "$d/isp$wan/http.pid"; fi;;
+    dhcp) [ -n "$same" ] && run_ns "$n" ip addr replace 192.168.1.1/24 dev "mrlab${id}s${wan}p"; run_ns "$n" dnsmasq --no-resolv --no-hosts --server=10.0.2.3 --interface="mrlab${id}s${wan}p" --bind-interfaces --dhcp-range="${same:-$subnet}.10,${same:-$subnet}.200,255.255.255.0,1h" --dhcp-option=3,"${same:-$subnet}.1" --dhcp-option=6,"${same:-$subnet}.1" --address=/isp.test/${same:-$subnet}.1 --dhcp-leasefile="$d/isp$wan/dnsmasq.leases" --pid-file="$pk" --log-facility="$d/isp$wan/dnsmasq.log"; if [ -n "$same" ]; then (cd "$d/isp$wan" && run_ns "$n" python3 -m http.server 80 --bind 192.168.1.1 >/dev/null 2>&1) & echo $! > "$d/isp$wan/http.pid"; fi;;
     static) run_ns "$n" ip addr replace "${subnet}.1/24" dev "mrlab${id}s${wan}p";;
     pppoe)
       printf '* lab %s %s\n' "${badpass:+badpass}" > "$d/isp$wan/chap-secrets"; [ "$badpass" = 0 ] && printf 'lab * labpass *\n' >> "$d/isp$wan/chap-secrets" || printf 'lab * wrongpass *\n' >> "$d/isp$wan/chap-secrets"
@@ -144,6 +181,9 @@ mschap-v2
 mtu 1492
 mru 1492
 noipdefault
+nolock
+nopeerdns
+logfile $d/isp$wan/pppd.log
 ms-dns 10.0.2.3
 ipv6 ,::
 ip-up-script $d/isp$wan/ipv6-up.sh
@@ -240,7 +280,7 @@ EOF
   # Recreate the switch namespaces so the seed is attached on the first guest boot and no
   # previous tap/veth endpoint survives the restart.
   kill_qemu "$id"; kill_pid "$(pidfile "$id")"
-  for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; done
+  for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; ns_resolv_remove "$n"; done
   cleanup_host_links "$id"
   up "$id"
   isp_cmd "$id" 1 "$proto" 2>/dev/null || true
@@ -250,7 +290,45 @@ EOF
   echo "install handoff complete (guest marker: /root/mr-lab-install.done)"
 }
 
-lan_cmd(){ id=$1; op=$2; valid_id "$id"; n=$(lan "$id"); case $op in dhcp) if run_ns "$n" busybox udhcpc -n -q -i mrlab${id}slp 2>/dev/null; then echo '{"dhcp":"ok"}'; else run_ns "$n" ip addr replace 192.168.1.100/24 dev mrlab${id}slp 2>/dev/null || true; run_ns "$n" ip route replace default via "$(router_ip "$id")" 2>/dev/null || true; run_ns "$n" sh -c 'printf "nameserver 192.168.1.1\n" > /etc/resolv.conf' 2>/dev/null || true; echo '{"dhcp":"fallback-static","warning":"guest DHCP service unavailable"}'; fi;; check) run_ns "$n" sh -c 'ip -4 addr show; ip -6 addr show; getent hosts example.com >/dev/null 2>&1' && echo '{"ipv4":true,"dns":true}' || echo '{"ipv4":false,"dns":false}';; exec) shift 2; run_ns "$n" sh -c "$*";; *) die "lan: dhcp|check|exec";; esac; }
+udhcpc_script(){
+  id=$1; script=$(state "$id")/lan-udhcpc.sh
+  cat > "$script" <<'EOF'
+#!/bin/sh
+case "$1" in
+  bound|renew)
+    ip addr flush dev "$interface" 2>/dev/null || true
+    ip addr add "$ip/24" dev "$interface" 2>/dev/null || true
+    [ -n "${router:-}" ] && ip route replace default via "$router" dev "$interface" 2>/dev/null || true
+    : > "${UDHCPC_STATE:?}"
+    for dns_server in ${dns:-}; do printf 'nameserver %s\n' "$dns_server" >> "$UDHCPC_STATE"; done
+    ;;
+esac
+exit 0
+EOF
+  chmod +x "$script"
+  echo "$script"
+}
+lan_cmd(){
+  id=$1; op=$2; valid_id "$id"; n=$(lan "$id")
+  case $op in
+    dhcp)
+      script=$(udhcpc_script "$id"); resolv_state=$(state "$id")/lan.resolv.conf
+      if run_ns "$n" env UDHCPC_STATE="$resolv_state" busybox udhcpc -n -q -s "$script" -i mrlab${id}slp 2>/dev/null; then
+        [ -s "$resolv_state" ] || printf 'nameserver 192.168.1.1\n' > "$resolv_state"
+        cp "$resolv_state" "/etc/netns/$n/resolv.conf"
+        echo '{"dhcp":"ok"}'
+      else
+        run_ns "$n" ip addr replace 192.168.1.100/24 dev mrlab${id}slp 2>/dev/null || true
+        run_ns "$n" ip route replace default via "$(router_ip "$id")" 2>/dev/null || true
+        printf 'nameserver 192.168.1.1\n' > "$resolv_state"
+        cp "$resolv_state" "/etc/netns/$n/resolv.conf"
+        echo '{"dhcp":"fallback-static","warning":"guest DHCP service unavailable"}'
+      fi;;
+    check) run_ns "$n" sh -c 'ip -4 addr show; ip -6 addr show; getent hosts example.com >/dev/null 2>&1' && echo '{"ipv4":true,"dns":true}' || echo '{"ipv4":false,"dns":false}';;
+    exec) shift 2; run_ns "$n" sh -c "$*";;
+    *) die "lan: dhcp|check|exec";;
+  esac
+}
 ssh_cmd(){ id=$1; shift; lan_cmd "$id" exec ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 root@"$(router_ip "$id")" "$*"; }
 console(){ id=$1; shift; f=$(state "$id")/console.log; marker="MRLAB-END-$$"; if [ -S "$(state "$id")/serial.sock" ] && command -v socat >/dev/null 2>&1; then printf '%s\necho %s\n' "$*" "$marker" | timeout 8 socat - "UNIX-CONNECT:$(state "$id")/serial.sock" || true; else printf '%s\n' "$*" >> "$f"; echo "$marker"; tail -20 "$f"; fi; }
 api_cmd(){

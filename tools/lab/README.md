@@ -44,6 +44,18 @@ the repository `install.sh` in unattended mode. A local asset directory must con
 `mr-linux-amd64` and `mini-router-rootfs.tar.gz`; a tagged release can instead be selected with
 `--release`.
 
+## Host safety
+
+Every lab namespace gets an `/etc/netns/mrlab<ID>-*/resolv.conf` before any `ip netns exec` call.
+`lab.sh lan ... dhcp` uses a private `udhcpc -s` hook whose lease DNS is written under that lab's
+`tools/lab/state/` directory and then copied to the namespace resolv bind file. It never uses the
+BusyBox default script, which can overwrite the host `/etc/resolv.conf` when the namespace bind
+file is missing. ISP dnsmasq lease, pid and log files, PPP/PPPoE pid/log files, radvd files and
+Kea state are likewise directed into the lab state directory. `down` removes the namespace bind
+files. Each `lab.sh` invocation hashes `/etc/resolv.conf`, `/etc/hosts`, and every file under
+`/etc/ppp` before and after the command; any difference prints a unified diff and fails the command.
+After all scenarios, verify `/etc/resolv.conf` has the same SHA256 as before the run.
+
 ## Topology
 
 Every name below is prefixed by `mrlab<ID>`, so labs 1 through 8 can run at the same time:
