@@ -206,47 +206,85 @@ func probeDHCP(ctx context.Context, port string) (detectDHCP, error) {
 	if err != nil || len(mac) != 6 {
 		return out, fmt.Errorf("no mac")
 	}
-	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 68})
+	iface, err := net.InterfaceByName(port)
 	if err != nil {
 		return out, err
 	}
-	defer conn.Close()
-	// Keep the one-shot socket on the requested WAN device.  Without this a
-	// wildcard UDP socket can emit the discover through another interface.
-	if raw, e := conn.SyscallConn(); e == nil {
-		var bindErr error
-		_ = raw.Control(func(fd uintptr) {
-			bindErr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, port)
-		})
-		if bindErr != nil {
-			return out, bindErr
-		}
-	} else {
-		return out, e
+	// AF_PACKET avoids the global UDP/68 bind used by dhcpcd/udhcpc. The
+	// socket is bound to this interface and only sees the one-shot Ethernet
+	// exchange, so an active DHCP client remains untouched.
+	fd, err := syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, int(htons(0x0003)))
+	if err != nil {
+		return out, err
 	}
-	if f, e := conn.File(); e == nil {
-		_ = syscall.SetsockoptInt(int(f.Fd()), syscall.SOL_SOCKET, syscall.SO_BROADCAST, 1)
-		_ = f.Close()
+	defer syscall.Close(fd)
+	if err := syscall.Bind(fd, &syscall.SockaddrLinklayer{Protocol: htons(0x0800), Ifindex: iface.Index, Halen: 6, Addr: [8]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}}); err != nil {
+		return out, err
 	}
 	var xidb [4]byte
 	_, _ = rand.Read(xidb[:])
 	xid := binary.BigEndian.Uint32(xidb[:])
 	pkt := dhcpDiscover(xid, mac)
-	if _, err = conn.WriteToUDP(pkt, &net.UDPAddr{IP: net.IPv4bcast, Port: 67}); err != nil {
+	frame := dhcpEthernetFrame(pkt, mac)
+	if _, err = syscall.Write(fd, frame); err != nil {
 		return out, err
 	}
-	_ = conn.SetReadDeadline(deadline(ctx))
-	buf := make([]byte, 1500)
+	d := time.Until(deadline(ctx))
+	if d <= 0 {
+		return out, context.DeadlineExceeded
+	}
+	tv := syscall.NsecToTimeval(d.Nanoseconds())
+	_ = syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
+	buf := make([]byte, 2048)
 	for {
-		n, _, e := conn.ReadFromUDP(buf)
+		n, _, e := syscall.Recvfrom(fd, buf, 0)
 		if e != nil {
 			return out, e
 		}
-		d, ok := parseDHCPOffer(buf[:n], xid)
-		if ok {
-			return d, nil
+		if len(buf) >= 14+20+8 && binary.BigEndian.Uint16(buf[12:14]) == 0x0800 {
+			i := 14 + int(buf[14]&0x0f)*4
+			if i+8 <= n && buf[14+9] == 17 && binary.BigEndian.Uint16(buf[i+2:i+4]) == 68 {
+				if d, ok := parseDHCPOffer(buf[i+8:n], xid); ok {
+					return d, nil
+				}
+			}
 		}
 	}
+}
+
+func htons(v uint16) uint16 { return (v<<8)&0xff00 | v>>8 }
+
+func dhcpEthernetFrame(payload []byte, mac net.HardwareAddr) []byte {
+	iplen := 20 + 8 + len(payload)
+	f := make([]byte, 14+iplen)
+	for i := 0; i < 6; i++ {
+		f[i] = 0xff
+		f[6+i] = mac[i]
+	}
+	binary.BigEndian.PutUint16(f[12:14], 0x0800)
+	f[14], f[15], f[16], f[17] = 0x45, 0, byte(iplen>>8), byte(iplen)
+	f[18], f[19] = 0, 1
+	f[20], f[21] = 0x80, 0
+	f[22], f[23], f[24], f[25] = 128, 17, 0, 0
+	copy(f[26:30], net.IPv4zero.To4())
+	copy(f[30:34], net.IPv4bcast.To4())
+	binary.BigEndian.PutUint16(f[24:26], ipv4Checksum(f[14:34]))
+	binary.BigEndian.PutUint16(f[34:36], 68)
+	binary.BigEndian.PutUint16(f[36:38], 67)
+	binary.BigEndian.PutUint16(f[38:40], uint16(8+len(payload)))
+	copy(f[42:], payload)
+	return f
+}
+
+func ipv4Checksum(b []byte) uint16 {
+	var sum uint32
+	for i := 0; i+1 < len(b); i += 2 {
+		sum += uint32(binary.BigEndian.Uint16(b[i : i+2]))
+	}
+	for sum>>16 != 0 {
+		sum = (sum & 0xffff) + sum>>16
+	}
+	return ^uint16(sum)
 }
 
 // probeRA listens for an ICMPv6 Router Advertisement on the requested link.
