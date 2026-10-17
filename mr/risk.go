@@ -41,11 +41,13 @@ type adminPath struct {
 
 // findAdminPath: addr is the web client's REMOTE_ADDR or the SSH client (SSH_CLIENT's first field).
 var findAdminPath = func(addr string) adminPath {
+	addr = normalizeRemoteAddr(addr)
 	a := adminPath{Addr: addr}
 	if addr == "" {
 		return a
 	}
-	out, err := run("ip", "route", "get", addr)
+	routeAddr := strings.SplitN(addr, "%", 2)[0]
+	out, err := run("ip", "route", "get", routeAddr)
 	if err != nil {
 		return a
 	}
@@ -58,7 +60,7 @@ var findAdminPath = func(addr string) adminPath {
 	}
 	if _, err := os.Stat("/sys/class/net/" + a.Dev + "/bridge"); err == nil {
 		// the client's MAC, then the bridge port that learned it
-		if n, err := run("ip", "neigh", "show", addr, "dev", a.Dev); err == nil {
+		if n, err := run("ip", "neigh", "show", routeAddr, "dev", a.Dev); err == nil {
 			if nf := strings.Fields(n); len(nf) > 0 {
 				for i := 0; i+1 < len(nf); i++ {
 					if nf[i] == "lladdr" {

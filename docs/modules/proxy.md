@@ -188,7 +188,7 @@ proxy_airport_sub: "https://sub.example.net/api/v1/client/subscribe?token=..."
 ```yaml
 proxy:
   global:
-    - {name: tv, device: tv-box, outbound: jp1}                # devices 里的设备（不需要固定地址）
+    - {name: tv, device: tv-box, outbound: jp1}                # devices / group:NAME（不需要固定地址）
     - {name: vps, mac: "aa:bb:cc:00:00:01", outbound: auto}     # 或一个 MAC
 ```
 
