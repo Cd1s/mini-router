@@ -321,6 +321,10 @@ func docWAN(c *Config, e *docEnv) []docFinding {
 		}
 		ip, isUp := up[w.Name]
 		switch {
+		case !isUp && w.Proto == "pppoe" && !e.exists("/proc/net/pppoe"):
+			k := strings.TrimSpace(e.read("/proc/sys/kernel/osrelease"))
+			f.Sev, f.Detail = "warn", fmt.Sprintf("no IPv4 address on %s: the kernel %s has no PPPoE (the pppoe module is not loaded)", w.Ifname(), k)
+			f.Fix = "modprobe pppoe; a kernel without it (Alpine's linux-virt): apk add linux-lts, reboot"
 		case !isUp:
 			f.Sev, f.Detail = "warn", fmt.Sprintf("no IPv4 address on %s (%s)", w.Ifname(), w.Proto)
 			f.Fix = restart + "; grep -E 'pppd|udhcpc' /var/log/messages | tail (cable, account, ISP)"
