@@ -293,14 +293,15 @@ function edgeCard(c, st, svc){
     try { await api("sys.edgerenew",{}); toast("已开始申请 / 续期证书"); setTimeout(()=>poll(60), 3000); }
     catch(err){ toast(err.message, 5000); } finally { e.target.disabled = false; } }}, "立即申请 / 续期");
   const run = svc ? h("span",{class:"tag "+(svc.running?"ok":(svc.wanted?"bad":""))}, !svc.installed?"未安装":svc.running?"运行中":"已停止") : null;
+  const wanPort = h("input",{type:"number", min:0, max:65535, value:ed.wan_port||"", disabled:!ed.open, placeholder:"留空 = 不使用", style:"max-width:130px",
+    oninput:e=>{ if(e.target.value===""||Number(e.target.value)===0) delete ed.wan_port; else ed.wan_port=Number(e.target.value); attach(); }});
   return card("HTTPS 反向代理（自动证书）", [
     h("div",{style:"padding:10px 16px 0"}, form(
       ...field("启用", inBool(ed,"enabled",attach), "mr-edge：按域名把 HTTPS 转发到内网服务；证书由 Let's Encrypt 通过 DNS 验证（Cloudflare、阿里云或 DNSPod）自动申请、每天检查续期（不需要 80 端口）"),
       ...field("HTTPS 端口", h("input",{type:"number", min:1, max:65535, value:ed.port??443, style:"max-width:110px",
         oninput:e=>{ ed.port = e.target.value===""?443:Number(e.target.value); attach(); }})),
-      ...field("对外网开放", sw(!!ed.open, v=>{ ed.open = v; }), "打开后外网（IPv4 + IPv6）能访问这个端口；每个站点还可以用“允许访问”限制来源。不要再在防火墙里开放同一端口（会被拒绝）"),
-      ...field("外网端口", h("input",{type:"number", min:0, max:65535, value:ed.wan_port||"", disabled:!ed.open, placeholder:"留空 = 不使用", style:"max-width:130px",
-        oninput:e=>{ if(e.target.value===""||Number(e.target.value)===0) delete ed.wan_port; else ed.wan_port=Number(e.target.value); attach(); }}), "需先开启“对外网开放”；留空 / 0 = 只使用 HTTPS 端口"),
+      ...field("对外网开放", sw(!!ed.open, v=>{ ed.open = v; wanPort.disabled = !v; }), "打开后外网（IPv4 + IPv6）能访问这个端口；每个站点还可以用“允许访问”限制来源。不要再在防火墙里开放同一端口（会被拒绝）"),
+      ...field("外网端口", wanPort, "需先开启“对外网开放”；留空 / 0 = 只使用 HTTPS 端口"),
       ...field("局域网解析", sw(ed.lan_dns!==false, v=>{ if (v) delete ed.lan_dns; else ed.lan_dns = false; }), "局域网里这些域名直接解析到路由器（不绕公网，WAN 断了也能用）"),
       ...field("证书邮箱", tx(acme,"email","可留空","260px")),
       ...field("DNS 验证", inSel(acme,"provider",["cloudflare","alidns","dnspod"].map(k=>[k, DDNS_P[k][0]]), ()=>{ attach(); drawAcme(); })),
