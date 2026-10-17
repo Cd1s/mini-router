@@ -1,0 +1,9 @@
+{
+  "dir": "/etc/mini-router/dns",
+  "files": [
+    {"name": "cloudflare.domains", "path": "/etc/mini-router/dns/cloudflare.domains", "size": 15, "content": "example.com\n"},
+    {"name": "extra.hosts", "path": "/etc/mini-router/dns/extra.hosts", "size": 23, "content": "192.0.2.1 nas.lan\n"},
+    {"name": "upstream.servers", "path": "/etc/mini-router/dns/upstream.servers", "size": 31, "content": "server=/example.com/1.1.1.1\n"},
+    {"name": "doh.ips", "path": "/etc/mini-router/dns/doh.ips", "size": 11, "content": "1.1.1.1\n"}
+  ]
+}

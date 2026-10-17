@@ -96,6 +96,7 @@ def base_config():
 
 
 STATE = {"cfg": base_config(), "job": None, "pending": False, "deadline": 0, "wizard": True}
+STATE["dns_files"] = copy.deepcopy(load("dns.files.json", {"dir": "/etc/mini-router/dns", "files": []}))
 
 
 def pending_view():
@@ -150,6 +151,20 @@ class H(http.server.SimpleHTTPRequestHandler):
             return self.send_json(live_mon_now())
         if a in ("wifi.stations", "wifi.health"):
             return self.send_json(live_wifi(a))
+        if a == "dns.files":
+            files = STATE["dns_files"].setdefault("files", [])
+            if body.get("file"):
+                name = body["file"]
+                item = next((x for x in files if x.get("name") == name), None)
+                if body.get("save"):
+                    if item is None:
+                        item = {"name": name, "path": STATE["dns_files"].get("dir", "/etc/mini-router/dns") + "/" + name, "content": ""}
+                        files.append(item)
+                    item["content"] = body.get("content", "")
+                    item["size"] = len(item["content"].encode())
+                    return self.send_json({"ok": True, "path": item["path"]})
+                return self.send_json({"file": name, "path": item.get("path", name) if item else name, "exists": item is not None, "content": item.get("content", "") if item else ""})
+            return self.send_json({"dir": STATE["dns_files"].get("dir", "/etc/mini-router/dns"), "files": files})
         if a == "validate":
             p, empty = plan_for(body.get("config", {}))
             changes = ["~ %s: (changed)" % k for k in sorted(set(STATE["cfg"]["config"]) | set(body.get("config", {})))
