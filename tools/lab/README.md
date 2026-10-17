@@ -1,5 +1,24 @@
 # mini-router fresh environment lab
 
+## Quick reference for test agents
+
+```sh
+L=tools/lab/lab.sh; ID=1
+$L reset $ID
+$L isp $ID 1 dhcp
+$L install $ID --wan-proto dhcp       # --no-apply leaves config unapplied
+$L lan $ID dhcp; $L lan $ID check
+$L api $ID GET status                  # logs in with labpass and keeps a cookie jar
+$L lan $ID exec curl -fsS http://192.168.1.1/
+$L run $ID 01-fresh-dhcp
+$L down $ID
+```
+
+Use IDs 1–8 concurrently. `isp` accepts `dhcp`, `pppoe`, `static`, `down`; PPPoE variants are
+`--badpass`, `nopado`, `--cgnat`, and `v6=pd`. `ssh`, `console`, `reboot`, `powercut`, and
+`status` are recovery commands. Scenarios 01–05 emit TAP `ok`/`not ok` lines and leave logs in
+`/tmp/mrlab<ID>-*.log`. Always run `down` in a trap when writing a test agent.
+
 `tools/lab/lab.sh` builds isolated Alpine/QEMU router laboratories. Each lab has its own
 network namespaces, bridge, tap devices, QEMU process, ISP simulator and LAN client namespace.
 The host's network namespace, routes and firewall are not modified.
