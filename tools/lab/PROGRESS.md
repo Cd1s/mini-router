@@ -14,4 +14,7 @@ milestone and commit it with the corresponding implementation change.
 - [x] 2026-10-17 ISP plumbing: WAN/LAN bridges separated, ISP slirp4netns DNS path works, PPPoE server/auth variants and IPv6-up radvd/Kea-PD hooks added.
 - [x] 2026-10-17 scenarios: 04 powercut-confirm and 05 live ISP switch added; both emit diagnostic TAP results.
 - [ ] 2026-10-17 guest acceptance: cloud-init seed and explicit Alpine kernel boot are wired, but this host image still needs guest userspace/cloud-init completion before 01/02 can pass.
+- [x] 2026-10-17 DNS follow-up: ISP netns resolves and HTTPS-fetches `dl-cdn.alpinelinux.org`; host resolver guard remained unchanged.
+- [x] 2026-10-17 offline package layer: Alpine package set is prebuilt and seeded; install now reaches configuration/apply.
+- [ ] 2026-10-17 remaining guest issue: `install.sh` apply reports `mr-network would not start` after package installation; 01/02 still need a clean guest network/apply fix.
 

@@ -8,7 +8,7 @@ $L reset $ID
 $L isp $ID 1 dhcp
 $L install $ID --wan-proto dhcp       # --no-apply leaves config unapplied
 $L lan $ID dhcp; $L lan $ID check
-$L api $ID GET status                  # logs in with labpass and keeps a cookie jar
+$L api $ID GET status                  # logs in with labpass1 and keeps a cookie jar
 $L lan $ID exec curl -fsS http://192.168.1.1/
 $L run $ID 01-fresh-dhcp
 $L down $ID

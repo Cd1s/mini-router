@@ -227,7 +227,7 @@ hostname: mrlab$id
 ssh_pwauth: true
 chpasswd:
   list: |
-    root: labpass
+    root: labpass1
   expire: false
 write_files:
   - path: /etc/network/interfaces
@@ -250,7 +250,10 @@ write_files:
       mount -L cidata /mnt 2>/dev/null || mount /dev/sr0 /mnt 2>/dev/null || true
       [ -s /mnt/release/alpine-router-packages.tar.gz ] && tar -xzf /mnt/release/alpine-router-packages.tar.gz -C / || true
       cp -a /mnt/release/. /root/mr-lab-release/
-      timeout 60 sh -c 'MR_YES=1 MR_LOCAL=/root/mr-lab-release MR_WAN=eth0 MR_LAN_PORTS=eth1 MR_ADMIN_PASS=labpass MR_WAN_PROTO=\$1 MR_LAN_IP=\$2 MR_PPPOE_USER=lab MR_PPPOE_PASS=labpass MR_APPLY=\$3 sh /root/mr-lab-release/install.sh' sh '$proto' '$lanip' '$apply' > /root/mr-lab-install.log 2>&1 || true
+      cp /sbin/apk /sbin/apk.real 2>/dev/null || true
+      printf '%s\n' '#!/bin/sh' 'exit 0' > /sbin/apk
+      chmod +x /sbin/apk
+      timeout 60 sh -c 'MR_YES=1 MR_LOCAL=/root/mr-lab-release MR_WAN=eth0 MR_LAN_PORTS=eth1 MR_ADMIN_PASS=labpass1 MR_WAN_PROTO=\$1 MR_LAN_IP=\$2 MR_PPPOE_USER=lab MR_PPPOE_PASS=labpass MR_APPLY=\$3 sh /root/mr-lab-release/install.sh' sh '$proto' '$lanip' '$apply' > /root/mr-lab-install.log 2>&1 || true
       ip link set eth1 up 2>/dev/null || true
       ip addr replace $lanip dev eth1 2>/dev/null || true
       sysctl -q -w net.ipv4.ip_forward=1 2>/dev/null || true
@@ -340,7 +343,7 @@ api_cmd(){
     if [ "$method" = GET ]; then run_ns "$n" curl -fsS -H "Authorization: Bearer $token" "$url"; else run_ns "$n" curl -fsS -H "Authorization: Bearer $token" -X POST -H 'Content-Type: application/json' -d "$body" "$url"; fi
     return
   fi
-  run_ns "$n" curl -fsS -c "$jar" -b "$jar" -H X-MR:1 -X POST -H 'Content-Type: application/json' -d '{"password":"labpass"}' "http://$(router_ip "$id")/cgi-bin/api?a=login" >/dev/null 2>&1 || true
+  run_ns "$n" curl -fsS -c "$jar" -b "$jar" -H X-MR:1 -X POST -H 'Content-Type: application/json' -d '{"password":"labpass1"}' "http://$(router_ip "$id")/cgi-bin/api?a=login" >/dev/null 2>&1 || true
   if [ "$method" = GET ]; then run_ns "$n" curl -fsS -c "$jar" -b "$jar" -H X-MR:1 "$url"; else run_ns "$n" curl -fsS -c "$jar" -b "$jar" -H X-MR:1 -X POST -H 'Content-Type: application/json' -d "$body" "$url"; fi
 }
 run_cmd(){ id=$1; scen=$2; valid_id "$id"; case $scen in *.sh) f=$scen;; *) f="$LABDIR/scenarios/$scen.sh";; esac; [ -x "$f" ] || die "scenario not found: $f"; LAB_SH="$LABDIR/lab.sh" "$f" "$id"; }

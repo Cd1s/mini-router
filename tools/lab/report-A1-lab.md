@@ -77,4 +77,11 @@ Emergency host safety fix: `lab.sh` now creates and removes `/etc/netns/<lab-nam
 uses a private `udhcpc -s` hook, and directs all ISP lease/pid/log, PPP, radvd and Kea state into
 lab state. Every invocation hashes `/etc/resolv.conf`, `/etc/hosts`, and `/etc/ppp/**` before and
 after execution and reports a diff if any changes. A smoke run confirmed the host resolver SHA256
-was unchanged and ended with zero host `mrlab` links.
+ was unchanged and ended with zero host `mrlab` links.
+
+Latest guest investigation: ISP-side `getent hosts dl-cdn.alpinelinux.org` and HTTPS both return
+200. The guest package layer is now prebuilt from Alpine 3.24 and copied into the seed, so the
+real installer reaches configuration and apply. The lab admin password was corrected to
+`labpass1` (the previous `labpass` was rejected as seven characters). The remaining guest failure
+is `mr-network would not start` during apply; the installer rolls back. 01/02 therefore remain
+not ok pending a clean guest network/apply fix.
