@@ -637,9 +637,12 @@ cleanup_detect() {
 		for p in $(ip netns pids "$n" 2> /dev/null); do kill "$p" 2> /dev/null || :; done
 		ip netns del "$n" 2> /dev/null || :
 	done
+}
+cleanup_detect_all() {
+	cleanup_detect
 	cleanup
 }
-trap cleanup_detect EXIT HUP INT TERM
+trap cleanup_detect_all EXIT HUP INT TERM
 for n in "$PDPS" "$PDPC" "$PDDS" "$PDDC"; do ip netns add "$n"; done
 ip link add pps netns "$PDPC" type veth peer name pps netns "$PDPS"
 ip -n "$PDPC" link set lo up; ip -n "$PDPS" link set lo up
@@ -677,4 +680,4 @@ printf '%s\n' "$dhjson" | python3 -c 'import json,sys; x=json.load(sys.stdin); a
 grep -q 'DHCPOFFER(dps)' "$T/detect-dnsmasq.log" || fail "real dnsmasq did not emit an OFFER"
 echo "net: real PPPoE PADO and DHCP OFFER server integration passed"
 cleanup_detect
-trap - EXIT HUP INT TERM
+trap cleanup EXIT HUP INT TERM
