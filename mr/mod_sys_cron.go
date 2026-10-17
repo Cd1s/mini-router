@@ -36,6 +36,10 @@ package main
 //
 //	* * * * * /usr/sbin/mr wifi tick
 //
+// and while a PPPoE WAN requires a public IPv4 address, the one-minute session review (net hooks):
+//
+//	* * * * * /usr/sbin/mr wan public-check --cron
+//
 // and while notify.update_check is on, the daily release check (mod_sys_update.go; never installs):
 //
 //	M H * * * /usr/sbin/mr notify update-check
@@ -236,7 +240,7 @@ func validateSchedules(c *Config, v *Validator) {
 }
 
 func cronWanted(c *Config) bool {
-	if ddnsInterval(c) > 0 || len(dialCronLine(c)) > 0 || edgeOn(c) || c.DNS.Adblock.Enabled || len(wifiCronLine(c)) > 0 || c.Notify.UpdateCheck || c.System.Watchcat.Enabled || len(presenceRules(c)) > 0 {
+	if ddnsInterval(c) > 0 || len(dialCronLine(c)) > 0 || len(publicIPCheckCronLine(c)) > 0 || edgeOn(c) || c.DNS.Adblock.Enabled || len(wifiCronLine(c)) > 0 || c.Notify.UpdateCheck || c.System.Watchcat.Enabled || len(presenceRules(c)) > 0 {
 		return true
 	}
 	for _, s := range c.Schedules {
@@ -271,6 +275,7 @@ func renderCronLines(c *Config) []string {
 		lines = append(lines, "# ddns (services.ddns)", fmt.Sprintf("*/%d * * * * %s ddns sync --cron", n, mrBin))
 	}
 	lines = append(lines, dialCronLine(c)...)
+	lines = append(lines, publicIPCheckCronLine(c)...)
 	return append(append(append(append(append(append(lines, edgeCronLine(c)...), adblockCronLine(c)...), wifiCronLine(c)...), updateCronLine(c)...), wcCronLine(c)...), presenceCronLine(c)...)
 }
 

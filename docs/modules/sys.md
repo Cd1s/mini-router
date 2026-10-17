@@ -153,7 +153,7 @@ Validation (the security boundary — everything below ends up in a file, a cron
 | `/etc/conf.d/tailscale` (on) | `TS_PORT=` (read by `/etc/init.d/tailscale`) | restart `tailscale` |
 | `/etc/conf.d/mr-panel` (on) | `PANEL_ADDR=` main LAN address (was a `sed` on router.yaml) | restart `mr-panel` |
 | `/etc/conf.d/crond` (schedules) | `CRON_OPTS`, `export TZ=…` | restart `crond` |
-| `/etc/crontabs/root` | managed block between markers (schedules; DDNS on with an interval adds `*/N * * * * /usr/sbin/mr ddns sync --cron`; the reverse proxy adds `M H * * * /usr/sbin/mr edge renew --cron`, M and H fixed per router, H 2–5; dns.adblock adds `M * * * * /usr/sbin/mr dns adblock update --cron`; wifi.steering / wifi.self_heal add `* * * * * /usr/sbin/mr wifi tick`); Alpine's periodic lines and anything else kept | — (crond rescans the directory) |
+| `/etc/crontabs/root` | managed block between markers (schedules; DDNS on with an interval adds `*/N * * * * /usr/sbin/mr ddns sync --cron`; the reverse proxy adds `M H * * * /usr/sbin/mr edge renew --cron`, M and H fixed per router, H 2–5; dns.adblock adds `M * * * * /usr/sbin/mr dns adblock update --cron`; `wan[].require_public_ip` adds `* * * * * /usr/sbin/mr wan public-check --cron`; wifi.steering / wifi.self_heal add `* * * * * /usr/sbin/mr wifi tick`); Alpine's periodic lines and anything else kept | — (crond rescans the directory) |
 | `/etc/mini-router/gen/edge.json` (edge on) | port, WAN port, certificate directory, routes (host, target, certificate name, allow) — nothing secret, 0644 | restart `mr-edge` |
 | `/root/.ssh/authorized_keys` | managed block between markers; every other line kept | — (read per login) |
 

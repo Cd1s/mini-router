@@ -29,23 +29,25 @@ type LAN struct {
 }
 
 type WAN struct {
-	Name     string   `yaml:"name"`           // logical name, e.g. wan / wan2
-	Device   string   `yaml:"device"`         // underlying netdev, e.g. wan
-	VLAN     int      `yaml:"vlan,omitempty"` // 802.1Q id on Device (0 = untagged), e.g. ISPs that tag PPPoE
-	MAC      string   `yaml:"mac"`
-	Proto    string   `yaml:"proto"` // pppoe | dhcp | static
-	Username string   `yaml:"username"`
-	Password string   `yaml:"password_secret"`   // key in secrets.yaml
-	IPv4     string   `yaml:"ipv4,omitempty"`    // static: address/prefix, e.g. 203.0.113.10/24
-	Gateway  string   `yaml:"gateway,omitempty"` // static: IPv4 gateway inside IPv4's subnet
-	DNS      []string `yaml:"dns,omitempty"`     // static: upstream DNS servers
-	MTU      int      `yaml:"mtu"`
-	Metric   int      `yaml:"metric"` // default-route metric: lower = preferred (failover order)
-	PeerDNS  bool     `yaml:"peerdns"`
-	IPv6     bool     `yaml:"ipv6"`
-	IPv6PD   bool     `yaml:"ipv6_pd"`         // request a delegated prefix and put it on the LAN
-	SrcRoute bool     `yaml:"ipv6_srcroute"`   // IPv6 traffic sourced from this WAN's prefix leaves via this WAN
-	Modem    Modem    `yaml:"modem,omitempty"` // optional modem management address on the physical WAN link
+	Name               string   `yaml:"name"`           // logical name, e.g. wan / wan2
+	Device             string   `yaml:"device"`         // underlying netdev, e.g. wan
+	VLAN               int      `yaml:"vlan,omitempty"` // 802.1Q id on Device (0 = untagged), e.g. ISPs that tag PPPoE
+	MAC                string   `yaml:"mac"`
+	Proto              string   `yaml:"proto"` // pppoe | dhcp | static
+	Username           string   `yaml:"username"`
+	Password           string   `yaml:"password_secret"`   // key in secrets.yaml
+	IPv4               string   `yaml:"ipv4,omitempty"`    // static: address/prefix, e.g. 203.0.113.10/24
+	Gateway            string   `yaml:"gateway,omitempty"` // static: IPv4 gateway inside IPv4's subnet
+	DNS                []string `yaml:"dns,omitempty"`     // static: upstream DNS servers
+	MTU                int      `yaml:"mtu"`
+	Metric             int      `yaml:"metric"` // default-route metric: lower = preferred (failover order)
+	PeerDNS            bool     `yaml:"peerdns"`
+	IPv6               bool     `yaml:"ipv6"`
+	IPv6PD             bool     `yaml:"ipv6_pd"`                         // request a delegated prefix and put it on the LAN
+	SrcRoute           bool     `yaml:"ipv6_srcroute"`                   // IPv6 traffic sourced from this WAN's prefix leaves via this WAN
+	RequirePublicIP    bool     `yaml:"require_public_ip,omitempty"`     // PPPoE: redial while the assigned IPv4 is private/CGNAT
+	RequirePublicIPGap int      `yaml:"require_public_ip_gap,omitempty"` // seconds between automatic redials (default 180)
+	Modem              Modem    `yaml:"modem,omitempty"`                 // optional modem management address on the physical WAN link
 }
 
 // Modem is the upstream modem/router address reachable on the WAN's Ethernet segment.
@@ -628,6 +630,12 @@ func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
 			}
 		default:
 			v.Add("%s.proto: pppoe|dhcp|static, got %q", p, w.Proto)
+		}
+		if (w.RequirePublicIP || w.RequirePublicIPGap != 0) && w.Proto != "pppoe" {
+			v.Add("%s.require_public_ip: only supported on pppoe WANs", p)
+		}
+		if w.RequirePublicIPGap < 0 || w.RequirePublicIPGap > 86400 {
+			v.Add("%s.require_public_ip_gap: 1-86400 seconds (0 = default 180)", p)
 		}
 		if w.Proto != "static" && (w.IPv4 != "" || w.Gateway != "" || len(w.DNS) > 0) {
 			v.Add("%s: ipv4/gateway/dns are only for proto static", p)

@@ -33,6 +33,8 @@ wan:
     peerdns: true
     ipv6: true
     ipv6_pd: true
+    require_public_ip: true
+    require_public_ip_gap: 180
     modem: {address: 192.168.1.1} # optional bridged modem management path
   - name: wan2                  # backup; also carries desktop (policy below)
     device: wan
