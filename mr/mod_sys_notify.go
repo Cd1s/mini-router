@@ -790,6 +790,21 @@ func notifyTest(c *Config, name string) ([]map[string]any, error) {
 
 // ---- mr notify, API ----
 
+// apiSysUpdateCheck performs the same read-only release check as `mr notify update-check`.
+func apiSysUpdateCheck(r apiReq) apiResp {
+	if r.method != "POST" {
+		return errResp(405, "POST required")
+	}
+	c, err := loadConfig(ConfigPath, SecretsPath)
+	if err != nil {
+		return errResp(500, "%v", err)
+	}
+	if err := updateCheck(c, ddnsHTTP()); err != nil {
+		return errResp(502, "%v", err)
+	}
+	return apiResp{body: map[string]any{"ok": true}}
+}
+
 // notifyCommand: `mr notify status | test [NAME] | flush [--hook]`.
 func notifyCommand(c *Config, args []string) error {
 	usage := errors.New("usage: mr notify status | test [NAME] | flush [--hook] | update-check | archive")

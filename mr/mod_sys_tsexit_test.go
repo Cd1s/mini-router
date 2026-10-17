@@ -10,6 +10,7 @@ func TestTailscaleExitNode(t *testing.T) {
 	c.Services.Tailscale.Enabled = true
 	c.Devices = append(c.Devices, Device{Name: "laptop", MACs: []string{"02:00:00:00:00:41"}})
 	c.Services.Tailscale.ExitNode = TSExit{Node: "exit-sg", Devices: []string{"laptop"}, KillSwitch: true}
+	c.Services.Tailscale.AdvertiseRoutes = []string{"192.168.6.0/24", "2001:db8:6::/64"}
 	if errs := c.Validate(); len(errs) > 0 {
 		t.Fatal(errs)
 	}
@@ -33,9 +34,13 @@ func TestTailscaleExitNode(t *testing.T) {
 	if got := renderMap(t, c)["/etc/conf.d/tailscale"]; !strings.Contains(got, "TS_EXIT_NODE='exit-sg'\n") {
 		t.Errorf("conf.d: %q", got)
 	}
+	if got := renderMap(t, c)["/etc/conf.d/tailscale"]; !strings.Contains(got, "TS_ADVERTISE_ROUTES='192.168.6.0/24,2001:db8:6::/64'\n") {
+		t.Errorf("advertise routes conf.d: %q", got)
+	}
 	c.Services.Tailscale.ExitNode = TSExit{Node: "x' ;reboot", Devices: []string{"nobody"}}
+	c.Services.Tailscale.AdvertiseRoutes = []string{"not-a-cidr"}
 	errs := strings.Join(c.Validate(), "\n")
-	if !strings.Contains(errs, "exit_node.node: a tailnet IP") || !strings.Contains(errs, `unknown device "nobody"`) {
+	if !strings.Contains(errs, "exit_node.node: a tailnet IP") || !strings.Contains(errs, `unknown device "nobody"`) || !strings.Contains(errs, "advertise_routes: invalid CIDR") {
 		t.Errorf("errs: %s", errs)
 	}
 }

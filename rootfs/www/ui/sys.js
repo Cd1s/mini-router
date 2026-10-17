@@ -191,7 +191,7 @@ function ddnsCard(c, st){
 }
 
 // ---------- HTTPS 反向代理 (services.edge: `mr edge serve` = service mr-edge; certificates: `mr edge renew`) ----------
-const EDGE_BLANK = ()=>({name:"", host:"", to:"http://192.168.1.10:5000"});
+const EDGE_BLANK = ()=>({name:"", enabled:true, host:"", to:"http://192.168.1.10:5000"});
 function edgeCard(c, st, svc){
   const sv = c.services;
   const ed = sv.edge || {enabled:false, port:443};
@@ -215,14 +215,33 @@ function edgeCard(c, st, svc){
       ...field(p==="alidns" ? "AccessKey Secret" : "SecretKey", inSecret(acme,"key_secret"))]).filter(Boolean));
   };
   drawAcme();
-  const t = etable(routes, [
-    {k:"name", l:"名称", ph:"nas", w:"90px"},
-    {k:"host", l:"域名", ph:"nas.example.com"},
-    {k:"to", l:"转发到（内网服务）", ph:"http://192.168.1.10:5000"},
-    {k:"allow", l:"允许访问", t:"list", ph:"留空 = 所有人；lan, 203.0.113.0/24"},
-  ], ()=>{ attach(); return EDGE_BLANK(); }, {noMove:true});
-  const days = x => Math.floor((x - Date.now()/1000)/86400);
   const allowText = a => !a || !a.length ? "所有人" : a.map(x=>x==="lan"?"局域网":x).join("、");
+  const routeBody = h("tbody");
+  const editRoute = (orig, save)=>{
+    const o = clone(orig), auth = o.auth || {};
+    if (o.enabled === undefined) o.enabled = true;
+    const m = modal(orig.name ? "编辑站点 · "+orig.name : "添加站点", form(
+      ...field("启用", inBool(o,"enabled")),
+      ...field("名称", inText(o,"name",{placeholder:"nas"})),
+      ...field("域名", inText(o,"host",{placeholder:"nas.example.com"})),
+      ...field("转发到（内网服务）", inText(o,"to",{placeholder:"http://192.168.1.10:5000"})),
+      ...field("允许访问", inList(o,"allow",{placeholder:"留空 = 所有人；lan, 203.0.113.0/24"})),
+      ...field("说明", inText(o,"desc",{placeholder:"可选"})),
+      h("h4",{style:"grid-column:1/-1;margin:10px 0 0"},"Basic Auth（可选）"),
+      ...field("用户名", inText(auth,"user",{placeholder:"alice"})),
+      ...field("密码引用名", inText(auth,"password_secret",{placeholder:"edge_nas_pw",class:"mono"}), "密码只写入 secrets.yaml，已设置的密码不会回显"),
+      ...field("密码", inSecret(auth,"password_secret"))
+    ), [h("button",{class:"btn",onclick:()=>m.remove()},"取消"), h("button",{class:"btn p",onclick:()=>{
+      o.auth = (auth.user || auth.password_secret) ? auth : undefined;
+      for (const k of ["desc","allow","auth"]) if (o[k]===undefined || o[k]==="" || (Array.isArray(o[k])&&!o[k].length)) delete o[k];
+      save(o); m.remove(); attach(); drawRoutes(); }} ,"确定")]);
+  };
+  const drawRoutes = ()=>routeBody.replaceChildren(...(routes.length ? routes.map((r,i)=>h("tr",{},
+    h("td",{},inBool(r,"enabled")), h("td",{},mono(r.name||"")), h("td",{},mono(r.host||"")), h("td",{},mono(r.to||"")),
+    h("td",{},allowText(r.allow)), h("td",{},r.desc||""), h("td",{},h("button",{class:"btn sm",onclick:()=>editRoute(r,o=>{routes[i]=o; drawRoutes();})},"编辑")," ",h("button",{class:"btn sm d",onclick:()=>{routes.splice(i,1);attach();drawRoutes();}},"删除")))) : [h("tr",{},h("td",{colspan:7,class:"mut"},"（空）"))]));
+  drawRoutes();
+  const t = {el:h("div",{class:"tw"},h("table",{},h("thead",{},h("tr",{},["启用","名称","域名","转发到","允许访问","说明",""] .map(x=>h("th",{},x)))),routeBody)), add:h("button",{class:"btn sm p",onclick:()=>editRoute(EDGE_BLANK(),o=>{routes.push(o);attach();drawRoutes();})},"+ 添加站点")};
+  const days = x => Math.floor((x - Date.now()/1000)/86400);
   const certState = x=>{
     if (x.error) return h("span",{class:"err",title:x.error}, "失败（"+ago(x.error_at)+"）：", x.error);
     const d = x.not_after ? days(x.not_after) : 0;
@@ -295,6 +314,10 @@ registerPage("services", "services", "服务", 10, async ()=>{
   const tsBody = [form(
     ...field("启用", inBool(sv.tailscale,"enabled")),
     ...field("UDP 端口", inNum(sv.tailscale,"port",{min:1,max:65535}), "在所有 WAN 上放行，用于直连"),
+    ...field("出口节点", inText(sv.tailscale.exit_node ||= {},"node",{placeholder:"100.x.y.z 或 tailnet 名称"}), "让选定设备经该 Tailscale 节点出网；留空关闭"),
+    ...field("出口设备 / 分组", inList(sv.tailscale.exit_node,"devices",{placeholder:"laptop, group:kids"}), "留空 = 整个 LAN；设备名来自 网络 › 设备"),
+    ...field("出口 kill switch", inBool(sv.tailscale.exit_node,"kill_switch"), "出口节点不可用时阻止这些设备回落到普通 WAN（高风险）"),
+    ...field("通告子网路由", inList(sv.tailscale,"advertise_routes",{placeholder:"192.168.1.0/24, 2001:db8:1::/64"}), "保存并应用后由 tailscale set --advertise-routes 设置；还需在 Tailscale 管理台批准"),
   )];
   if (ts) tsBody.push(h("dl",{class:"kv",style:"margin-top:12px"},
     h("dt",{},"状态"), h("dd",{}, ts.state||"-"),
@@ -303,6 +326,9 @@ registerPage("services", "services", "服务", 10, async ()=>{
     h("dt",{},"节点"), h("dd",{}, (ts.peers_online??"-")+" 在线 / "+(ts.peers_total??"-")),
     ts.error ? [h("dt",{},"错误"), h("dd",{class:"err"}, ts.error)] : null));
   if (ts && ts.auth_url) tsBody.push(h("div",{class:"sys-warnbox"}, "此路由器尚未登录 Tailscale：", h("a",{href:ts.auth_url,target:"_blank",rel:"noopener noreferrer"},"点此登录"), "，登录后刷新本页。"));
+  tsBody.push(h("div",{class:"row",style:"margin-top:8px"}, h("button",{class:"btn sm",onclick:async e=>{
+    e.target.disabled=true; try { const x=await api("sys.services"); const u=x.tailscale&&x.tailscale.auth_url; if(u) window.open(u,"_blank","noopener"); else toast("Tailscale 已登录或暂时没有登录链接"); } catch(err){ toast(err.message,4000); } finally { e.target.disabled=false; }
+  }},"获取登录链接")));
 
   const cards = [
     svcCard("Tailscale", "tailscale", tsBody),
@@ -392,7 +418,23 @@ registerPage("system", "system", "系统设置", 10, async ()=>{
   return h("div",{},
     card("基本设置", form(
       ...field("主机名", inText(s,"hostname",{maxlength:63})),
-      ...field("zram 压缩内存", inBool(s,"zram"), "内存的 1/4 做压缩交换（zstd），内存紧张时更稳"))),
+      ...field("zram 压缩内存", inBool(s,"zram"), "内存的 1/4 做压缩交换（zstd），内存紧张时更稳"),
+      ...field("指示灯", inBool(s,"leds"), "关闭路由器前面板状态 / 网络灯；默认开启"),
+      ...field("硬件看门狗", inBool(s,"watchdog"), "没有 /dev/watchdog 的硬件请关闭，否则应用会回滚"),
+      ...field("历史快照数", inNum(s,"history",{min:5,max:200}), "保留 5–200 次配置快照，默认 20"),
+      ...field("按设备流量统计", inBool(s,"traffic_stats"), "每月统计设备和 WAN 流量，使用少量闪存"))),
+    card("断网自救（watchcat）", form(
+      ...field("启用", inBool(s.watchcat ||= {},"enabled"), "所有 WAN 断网后自动重拨、重启网络，最后才重启路由器"),
+      ...field("首次动作等待（分钟）", inNum(s.watchcat,"after",{min:3,max:240}), "3–240 分钟；后续动作按指数退避"),
+      ...field("重启最短间隔（小时）", inNum(s.watchcat,"reboot_hours",{min:1,max:168}), "两次 watchcat 重启之间至少 1–168 小时"),
+      ...field("探测地址", inList(s.watchcat,"targets",{placeholder:"1.1.1.1, 223.5.5.5"}), "最多 4 个 IPv4；为空时使用多 WAN 设置或默认地址"))),
+    h("div",{id:"guard-card"}, card("安全基线 guard", [roTable(["键","当前值"], [["never_expose",(c.guard&&c.guard.never_expose||[]).join(", ")||"—"],["always_bypass",(c.guard&&c.guard.always_bypass||[]).join(", ")||"—"],["offload",(c.guard&&c.guard.offload)||"—"],["ssh_lan_only",String(!!(c.guard&&c.guard.ssh_lan_only))]]),
+      h("div",{class:"sys-warnbox"}, "这些设置决定路由器的最低安全边界。降低保护可能暴露管理端口或让设备绕过代理，请确认风险后再保存。"),
+      form(
+        ...field("永不暴露", inList(c.guard ||= {},"never_expose",{placeholder:"ssh, panel, dns"}), "禁止 WAN 开放、转发或 edge 代理触达这些服务"),
+        ...field("始终绕过代理", inList(c.guard,"always_bypass",{placeholder:"desktop, group:kids"}), "这些设备必须出现在代理页的例外设备中"),
+        ...field("最低流量卸载", inSel(c.guard,"offload",[["","不设最低要求"],["hardware","硬件"],["software","软件"],["off","关闭"]]), "只能提高防护要求；防火墙页的卸载级别不能低于此值"),
+        ...field("SSH 只允许 LAN", inBool(c.guard,"ssh_lan_only"), "开启后 SSH 必须只监听 LAN 地址"))], null, false)),
     card("时间", form(
       ...field("路由器时间", h("div",{class:"row"}, clock, sync, h("button",{class:"btn sm",onclick:async()=>{
         try { await api("service",{name:"ntpd",op:"restart"}); toast("已重启 ntpd，几秒后同步"); } catch(e){ toast(e.message,4000); } }},"立即同步"))),
@@ -463,7 +505,7 @@ const SCOPES = {read:"只读", operate:"操作", apply:"修改配置"};
 const tokenKey = n => "api_token_"+n;
 function tokenCard(c){
   const toks = ()=>(c.api && c.api.tokens) || [];
-  const nt = {name:"", scope:"read", from:[], expires:""};
+  const nt = {name:"", scope:"read", from:[], allow:[], expires:""};
   const list = h("div");
   let used = {};
   const draw = ()=>list.replaceChildren(toks().length ? roTable(["名称","权限","来源","到期","最后使用",""], toks().map(t=>{
@@ -482,6 +524,7 @@ function tokenCard(c){
     const sh = new Sha256(); sh.update(new TextEncoder().encode(tok));
     const t = {name, scope:nt.scope};
     if (nt.from.length) t.from = nt.from.slice();
+    if (nt.allow.length) t.allow = nt.allow.slice();
     if (nt.expires) t.expires = nt.expires;
     c.api ||= {}; c.api.tokens ||= []; c.api.tokens.push(t);
     S.secrets[tokenKey(name)] = "sha256:"+sh.hex(); // only the hash leaves the browser
@@ -500,6 +543,7 @@ function tokenCard(c){
     form(...field("名称", inText(nt,"name",{placeholder:"如 homeassistant", maxlength:15})),
       ...field("权限", inSel(nt,"scope",[["read","只读"],["operate","操作（重拨、踢下线、重启服务）"],["apply","修改配置（plan / apply）"]])),
       ...field("来源", inList(nt,"from",{placeholder:"可选，如 192.168.1.0/24"}), "留空 = 任意来源（管理页只在 LAN 地址上监听）"),
+      ...field("允许动作", inList(nt,"allow",{placeholder:"可选，如 status,config"}), "动作白名单；留空 = 此权限范围内的全部动作"),
       ...field("到期", inText(nt,"expires",{type:"date"}), "留空 = 永不过期"),
       h("span"), h("div",{}, h("button",{class:"btn p",onclick:create},"生成令牌")))]);
 }
@@ -1079,7 +1123,8 @@ async function pageNotify(){
       ...field("免打扰时段", quiet, "路由器时间，例如 23:00-07:00：期间只发警告 / 风险，其余等结束后发送"),
       ...field("后台体检（分钟）", num("doctor_interval", chans.length?30:0, {min:0, max:1440}), "每隔多久后台跑一次 mr doctor，新问题记为事件；0 = 关闭。有渠道时默认 30"),
       ...field("自动修复", inBool(n,"auto_heal",attach), "后台体检时先重启已启用但没在运行的服务（每个服务 10 分钟内最多一次），记为体检事件；需要后台体检"),
-      ...field("检查新版本", inBool(n,"update_check",attach), "每天查一次 GitHub 上的新版本，有新版本记为事件；只提醒，不会下载或安装"))),
+      ...field("检查新版本", inBool(n,"update_check",attach), "每天查一次 GitHub 上的新版本，有新版本记为事件；只提醒，不会下载或安装"),
+      h("span"), h("div",{},h("button",{class:"btn sm",onclick:async e=>{e.target.disabled=true;try{await api("sys.updatecheck",{});toast("已检查更新");}catch(err){toast(err.message,5000);}finally{e.target.disabled=false;}}},"检查更新")))),
     card("发送状态", status, null, true));
 }
 registerPage("status", "doctor", "体检与事件", 60, ()=>tabs([["doctor","体检",pageDoctor], ["events","事件",pageEvents], ["notify","通知",pageNotify]]));

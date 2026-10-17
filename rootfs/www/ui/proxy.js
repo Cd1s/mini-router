@@ -484,6 +484,22 @@ registerPage("proxy", "proxy-rules", "分流规则", 20, async ()=>{
 });
 
 // ---------------- 例外设备 ----------------
+registerPage("proxy", "proxy-global", "按设备全局代理", 25, async ()=>{
+  const p = P(); p.global ||= [];
+  const devices = (S.cfg.devices||[]).map(d=>[d.name,d.name]);
+  const body = h("tbody");
+  const draw = ()=>body.replaceChildren(...(p.global.length ? p.global.map((g,i)=>h("tr",{},
+    h("td",{},inText(g,"name",{placeholder:"电视"})),
+    h("td",{},h("div",{class:"row"}, inText(g,"device",{placeholder:"设备名",list:"proxy-devices"}), h("span",{class:"mut"},"或"), inText(g,"mac",{placeholder:"MAC"}))),
+    h("td",{},inSel(g,"outbound",outbounds(p),undefined)),
+    h("td",{},h("button",{class:"btn sm d",onclick:()=>{p.global.splice(i,1);touch();draw();}},"删除")))) : [h("tr",{},h("td",{colspan:4,class:"mut"},"（空）"))]));
+  draw();
+  return card("按设备全局代理", [h("div",{class:"mut",style:"padding:10px 16px 0"},"整台设备的 TCP / UDP 外网流量进入指定出口节点或组；局域网和本地地址仍直连。按设备清单名称或 MAC 匹配，设备的动态 IP 也有效。"),
+    h("datalist",{id:"proxy-devices"},devices.map(x=>h("option",{value:x[0]}))),
+    h("div",{class:"tw"},h("table",{},h("thead",{},h("tr",{},["名称","设备 / MAC","出口节点 / 组",""] .map(x=>h("th",{},x)))),body))], h("button",{class:"btn sm p",onclick:()=>{p.global.push({name:"",mac:"",outbound:outbounds(p)[0]?.[0]||""});touch();draw();}},"+ 添加"), true);
+});
+
+// ---------------- 例外设备 ----------------
 registerPage("proxy", "proxy-bypass", "例外设备", 30, async ()=>{
   const p = P();
   let leases = [];
@@ -548,6 +564,8 @@ registerPage("proxy", "proxy-status", "代理状态", 40, async ()=>{
   };
   await draw();
   S.timer = setInterval(()=>draw().catch(()=>{}), 3000);
-  return h("div",{}, top, card(connTitle, connBox, filter, true));
+  const check = h("button",{class:"btn sm",onclick:async e=>{ e.target.disabled=true; try { await api("proxy.check",{}); toast("代理自检通过"); } catch(err){ toast((err.data&&err.data.errors?err.data.errors.join("\n"):err.message),6000); } finally { e.target.disabled=false; } }},"代理自检");
+  const ex = p.extra_config ? h("div",{},h("span",{class:"mono"},p.extra_config),h("div",{class:"mut"},"只读：该路径的 sing-box JSON 片段会在应用时合并；内容和密钥不会在面板回显。")) : h("span",{class:"mut"},"未设置");
+  return h("div",{}, top, card("代理自检 / 额外配置", [h("div",{class:"row"},check,h("span",{class:"sp"}),ex)]), card(connTitle, connBox, filter, true));
 });
 })();

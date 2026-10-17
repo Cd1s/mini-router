@@ -408,7 +408,12 @@ services:
   tailscale:
     enabled: true
     exit_node: {node: 100.101.102.103, devices: [laptop, "group:kids"], kill_switch: false}  # devices empty = whole LAN zone
+    advertise_routes: [192.168.1.0/24, 2001:db8:1::/64]  # subnet routes approved in the tailnet admin console
 ```
+
+`services.tailscale.advertise_routes` accepts up to 32 IPv4 or IPv6 CIDRs. mr writes the
+comma-separated list to `TS_ADVERTISE_ROUTES` in `/etc/conf.d/tailscale`; the OpenRC hook applies it
+with `tailscale set --advertise-routes` and clears routes previously managed by mr when the list is removed.
 
 Checked on the router (tailscale 1.102, NetfilterMode on): tailscale owns ip rules 5210-5270 and table 52
 (its routes; with an exit node also the default route), its nft tables masquerade only its own 0x40000 mark.
