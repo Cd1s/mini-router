@@ -157,6 +157,9 @@ func TestLan6RenumberRetiresProtoSwitchAfterCommit(t *testing.T) {
 	// A real apply can run dhcpcd hooks with the new config before the
 	// confirmation commit.  That observation must preserve the old owner.
 	lan6Renumber(c)
+	if out, err := exec.Command("ip", "-j", "-6", "addr", "show", "dev", "br-lan", "scope", "global").CombinedOutput(); err != nil {
+		t.Fatalf("fake ip failed: %v %s", err, out)
+	}
 	var observed lan6State
 	stateBytes, _ := os.ReadFile(lan6StateFile)
 	json.Unmarshal(stateBytes, &observed)
@@ -174,6 +177,73 @@ func TestLan6RenumberRetiresProtoSwitchAfterCommit(t *testing.T) {
 	log, _ := os.ReadFile(filepath.Join(d, "ip.log"))
 	if !strings.Contains(string(log), "addr replace 2001:db8:1::1/64") {
 		t.Fatalf("stale prefix was not announced: %q", log)
+	}
+}
+
+func TestDeletedWANPrefixSurvivesHookUntilCommit(t *testing.T) {
+	oldState, oldRun, oldFW := lan6StateFile, wanRunDir, fwLoadForCommit
+	d := t.TempDir()
+	lan6StateFile, wanRunDir = filepath.Join(d, "lan6.json"), filepath.Join(d, "wan")
+	fwLoadForCommit = func(*Config) error { return nil }
+	t.Cleanup(func() { lan6StateFile, wanRunDir, fwLoadForCommit = oldState, oldRun, oldFW })
+	os.MkdirAll(wanRunDir, 0755)
+	bin := filepath.Join(d, "bin")
+	os.Mkdir(bin, 0755)
+	ip := "#!/bin/sh\ncase \"$*\" in *'-j -6 addr show dev br-lan'*) echo '[{\"addr_info\":[{\"family\":\"inet6\",\"local\":\"2001:db8:1::1\",\"prefixlen\":64,\"scope\":\"global\",\"deprecated\":false,\"tentative\":false,\"temporary\":false,\"valid_life_time\":2550450,\"preferred_life_time\":2550450}]}]' ;; *'addr replace'*) echo \"$*\" >> '" + filepath.Join(d, "ip.log") + "' ;; esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "ip"), []byte(ip), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "nft"), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	os.Setenv("PATH", bin+string(os.PathListSeparator)+oldPath)
+	t.Cleanup(func() { os.Setenv("PATH", oldPath) })
+	c := testConfig(t)
+	c.DHCP.IPv6 = RA{Lease: "1h"}
+	if !c.LAN.IPv6RA {
+		t.Fatal("test config has no LAN RA")
+	}
+	if nets := dhcpNets(c); len(nets) == 0 || !nets[0].ra || nets[0].bridge != "br-lan" {
+		t.Fatalf("unexpected dhcp nets: %+v", nets)
+	}
+	delegatedEnv := map[string]string{
+		"interface": "pppoe-wan2", "reason": "DELEGATED6",
+		"new_dhcp6_ia_pd1_prefix1": "2001:db8:1::", "new_dhcp6_ia_pd1_prefix1_length": "64",
+	}
+	for k, v := range delegatedEnv {
+		os.Setenv(k, v)
+		t.Cleanup(func() { os.Unsetenv(k) })
+	}
+	if err := hookDhcpcd(c); err != nil {
+		t.Fatal(err)
+	}
+	stateBytes, _ := os.ReadFile(lan6StateFile)
+	var state lan6State
+	json.Unmarshal(stateBytes, &state)
+	if _, ok := state.Addrs["wan2 br-lan"]; !ok {
+		t.Fatalf("initial dhcpcd hook did not record wan2: %v pd=%q", state, readFile(pd6File("wan2")))
+	}
+	// The delete apply has restarted dhcpcd with wan2 gone. Its pre-commit
+	// hook must retain the record until confirmation calls netCommit.
+	c2 := *c
+	c2.WAN = append([]WAN(nil), c.WAN[0])
+	os.Setenv("interface", "br-lan")
+	os.Setenv("reason", "ROUTERADVERT")
+	if err := hookDhcpcd(&c2); err != nil {
+		t.Fatal(err)
+	}
+	stateBytes, _ = os.ReadFile(lan6StateFile)
+	json.Unmarshal(stateBytes, &state)
+	if _, ok := state.Addrs["wan2 br-lan"]; !ok {
+		t.Fatalf("pre-commit hook dropped deleted WAN record: %v", state)
+	}
+	if err := netCommit(&c2); err != nil {
+		t.Fatal(err)
+	}
+	log, _ := os.ReadFile(filepath.Join(d, "ip.log"))
+	if !strings.Contains(string(log), "addr replace 2001:db8:1::1/64") {
+		t.Fatalf("commit did not deprecate deleted WAN prefix: %q", log)
 	}
 }
 

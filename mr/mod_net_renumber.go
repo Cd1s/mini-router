@@ -152,6 +152,15 @@ func lan6Plan(prev lan6State, cur map[string][]string, retireMissing ...bool) (s
 				}
 			}
 		}
+	} else {
+		// During a pending apply, a hook may observe a WAN that is about to be
+		// deleted. Keep its record until the accepted commit can announce it as
+		// stale; otherwise the commit has nothing left to retire.
+		for k, old := range prev.Addrs {
+			if _, present := cur[k]; !present {
+				next.Addrs[k] = old
+			}
+		}
 	}
 	return stale, next
 }

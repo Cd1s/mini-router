@@ -885,7 +885,12 @@ func confirm() (bool, error) {
 	}
 	var commitCfg *Config
 	if err == nil {
-		commitCfg, _ = loadConfig(ConfigPath, SecretsPath)
+		cfgPath, secPath := acceptedConfig(), acceptedSecrets()
+		if _, statErr := os.Stat(cfgPath + ".staged"); statErr == nil {
+			cfgPath += ".staged"
+			secPath += ".staged"
+		}
+		commitCfg, _ = loadConfig(cfgPath, secPath)
 	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
 	acceptStaged()

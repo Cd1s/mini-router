@@ -27,10 +27,11 @@ const downMetric = 10000
 
 // runtime state paths (variables so tests can use a temp dir)
 var (
-	wanRunDir     = RunDir + "/wan"
-	wanStateFile  = RunDir + "/wan-state.json"
-	resolvConf    = RunDir + "/resolv.conf"
-	fwLoadForHook = fwLoad
+	wanRunDir       = RunDir + "/wan"
+	wanStateFile    = RunDir + "/wan-state.json"
+	resolvConf      = RunDir + "/resolv.conf"
+	fwLoadForHook   = fwLoad
+	fwLoadForCommit = fwLoad
 )
 
 // wanLease is what a WAN got when it came up.
@@ -423,7 +424,7 @@ func netCommit(c *Config) error {
 	lan6Renumber(c, true)
 	srcDefaults6(c)
 	writeResolv(c)
-	return fwLoad(c)
+	return fwLoadForCommit(c)
 }
 
 // writeResolv rewrites resolvConf from the WANs that are up (healthy first, then by metric).
