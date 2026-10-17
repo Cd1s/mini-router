@@ -80,6 +80,7 @@ slirp_start(){
 up(){
   id=$1; valid_id "$id"; ensure_base; ensure_boot_files; d=$(state "$id"); mkdir -p "$d"
   [ -e "$d/overlay.qcow2" ] || qemu-img create -f qcow2 -F qcow2 -b "$BASE" "$d/overlay.qcow2" >/dev/null
+  qemu-img resize "$d/overlay.qcow2" 512M >/dev/null 2>&1 || true
   for n in "$(sw "$id")" "$(isp "$id" 1)" "$(isp "$id" 2)" "$(lan "$id")"; do [ -e "/run/netns/$n" ] || ip netns add "$n"; done
   for br in br-wan1 br-wan2 br-lan; do
     run_ns "$(sw "$id")" ip link show "$br" >/dev/null 2>&1 || run_ns "$(sw "$id")" ip link add "$br" type bridge
@@ -119,7 +120,7 @@ up(){
 
 down(){ id=$1; valid_id "$id"; kill_qemu "$id"; kill_pid "$(pidfile "$id")"; for w in 1 2; do kill_pid "$(state "$id")/isp$w/slirp.pid"; kill_pid "$(state "$id")/isp$w/slirp-target.pid"; done; for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; done; cleanup_host_links "$id"; rm -rf "$(state "$id")"; echo "down $id"; }
 status(){ id=$1; valid_id "$id"; p=$(pidfile "$id"); alive=false; [ -s "$p" ] && kill -0 "$(cat "$p")" 2>/dev/null && alive=true; printf '{"id":%s,"qemu":%s,"namespaces":["%s","%s","%s","%s"]}\n' "$id" "$alive" "$(sw "$id")" "$(isp "$id" 1)" "$(isp "$id" 2)" "$(lan "$id")"; }
-reset(){ id=$1; valid_id "$id"; kill_qemu "$id"; kill_pid "$(pidfile "$id")"; rm -rf "$(state "$id")"; up "$id"; }
+reset(){ id=$1; valid_id "$id"; kill_qemu "$id"; kill_pid "$(pidfile "$id")"; for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; done; cleanup_host_links "$id"; rm -rf "$(state "$id")"; up "$id"; }
 
 isp_cmd(){
   id=$1; wan=$2; mode=$3; shift 3; valid_id "$id"; n=$(isp "$id" "$wan"); d=$(state "$id"); mkdir -p "$d/isp$wan"; pk="$d/isp$wan/dnsmasq.pid"; kill_pid "$pk"; kill_pid "$d/isp$wan/pppoe.pid"; kill_pid "$d/isp$wan/http.pid"
@@ -171,13 +172,14 @@ EOF
 }
 
 install_cmd(){
-  id=$1; shift; proto=dhcp; apply=1; lanip=192.168.1.1/24; release=; while [ $# -gt 0 ]; do case $1 in --wan-proto) proto=$2; shift 2;; --no-apply) apply=0; shift;; --lan-ip) lanip=$2; shift 2;; --release) release=$2; shift 2;; *) die "install: unknown option $1";; esac; done; lanhost=${lanip%/*}
-  mkdir -p "$RUNDIR/$id/install" "$(state "$id")"; out=$RUNDIR/$id/install; assets=$out/release
+  id=$1; shift; proto=dhcp; apply=1; lanip=192.168.1.1/24; release=; while [ $# -gt 0 ]; do case $1 in --wan-proto) proto=$2; shift 2;; --no-apply) apply=0; shift;; --lan-ip) lanip=$2; shift 2;; --release) release=$2; shift 2;; *) die "install: unknown option $1";; esac; done; lanhost=${lanip%/*}; wan_dns=10.${id}.1.1
+  mkdir -p "$RUNDIR/$id/install" "$(state "$id")"; out=$RUNDIR/$id/install; assets=$out/release; payload=$out/payload
   if [ -n "$release" ]; then
     mkdir -p "$assets"; curl -fL --retry 2 -o "$assets/install.sh" "https://raw.githubusercontent.com/Cd1s/mini-router/$release/install.sh"
     curl -fL --retry 2 -o "$assets/mr-linux-amd64" "https://github.com/Cd1s/mini-router/releases/download/$release/mr-linux-amd64"
     curl -fL --retry 2 -o "$assets/mini-router-rootfs.tar.gz" "https://github.com/Cd1s/mini-router/releases/download/$release/mini-router-rootfs.tar.gz"
   else (cd "$ROOT" && tools/release.sh lab-lab "$assets") >/dev/null; fi
+  mkdir -p "$payload"; cp "$assets/install.sh" "$assets/mr-linux-amd64" "$assets/mini-router-rootfs.tar.gz" "$payload/"
   cat > "$out/user-data" <<EOF
 #cloud-config
 hostname: mrlab$id
@@ -200,6 +202,9 @@ write_files:
     permissions: '0755'
     content: |
       #!/bin/sh
+      resize2fs /dev/vda >/dev/null 2>&1 || true
+      printf '%s\n' 'https://dl-cdn.alpinelinux.org/alpine/v3.24/main' 'https://dl-cdn.alpinelinux.org/alpine/v3.24/community' > /etc/apk/repositories
+      printf 'nameserver %s\n' '$wan_dns' > /etc/resolv.conf
       mkdir -p /root/mr-lab-release
       mount -L cidata /mnt 2>/dev/null || mount /dev/sr0 /mnt 2>/dev/null || true
       cp -a /mnt/release/. /root/mr-lab-release/
@@ -211,6 +216,8 @@ write_files:
       dnsmasq --no-resolv --server=10.0.2.3 --interface=eth1 --bind-interfaces --dhcp-range=192.168.1.100,192.168.1.220,255.255.255.0,1h --dhcp-option=3,$lanhost --dhcp-option=6,$lanhost --pid-file=/run/mr-lab-dnsmasq.pid >/dev/null 2>&1 || true
       mkdir -p /www; printf '<html><body><h1>mini-router lab %s</h1></body></html>\n' '$id' > /www/index.html
       httpd -f -p 80 -h /www >/dev/null 2>&1 &
+      printf '%s\n' '#!/bin/sh' 'ip link set eth1 up 2>/dev/null || true' 'ip addr replace $lanip dev eth1 2>/dev/null || true' 'sysctl -q -w net.ipv4.ip_forward=1 2>/dev/null || true' 'pkill dnsmasq 2>/dev/null || true' 'dnsmasq --no-resolv --server=10.0.2.3 --interface=eth1 --bind-interfaces --dhcp-range=192.168.1.100,192.168.1.220,255.255.255.0,1h --dhcp-option=3,$lanhost --dhcp-option=6,$lanhost --pid-file=/run/mr-lab-dnsmasq.pid >/dev/null 2>&1 &' 'mkdir -p /www; echo "<html><body><h1>mini-router lab $id</h1></body></html>" > /www/index.html' 'httpd -f -p 80 -h /www >/dev/null 2>&1 &' > /etc/local.d/mr-lab.start
+      chmod +x /etc/local.d/mr-lab.start; rc-update add local default 2>/dev/null || true
       touch /root/mr-lab-install.done
 runcmd:
   - [ sh, /root/mr-lab-install.sh ]
@@ -227,7 +234,7 @@ ethernets:
     addresses: [$lanip]
 EOF
   rm -f "$(state "$id")/seed.iso"
-  genisoimage -quiet -r -J -volid cidata -o "$(state "$id")/seed.iso" -graft-points user-data="$out/user-data" meta-data="$out/meta-data" network-config="$out/network-config" release="$assets" >/dev/null
+  genisoimage -quiet -r -J -volid cidata -o "$(state "$id")/seed.iso" -graft-points user-data="$out/user-data" meta-data="$out/meta-data" network-config="$out/network-config" release="$payload" >/dev/null
   # Recreate the switch namespaces so the seed is attached on the first guest boot and no
   # previous tap/veth endpoint survives the restart.
   kill_qemu "$id"; kill_pid "$(pidfile "$id")"
@@ -237,11 +244,11 @@ EOF
   isp_cmd "$id" 1 "$proto" 2>/dev/null || true
   echo "MR_WAN_PROTO=$proto MR_LAN_IP=$lanip MR_APPLY=$apply" > "$out/request"
   echo "install started in guest $id ($proto); waiting for cloud-init"
-  sleep 35
+  sleep 90
   echo "install handoff complete (guest marker: /root/mr-lab-install.done)"
 }
 
-lan_cmd(){ id=$1; op=$2; valid_id "$id"; n=$(lan "$id"); case $op in dhcp) if run_ns "$n" busybox udhcpc -n -q -i mrlab${id}slp 2>/dev/null; then echo '{"dhcp":"ok"}'; else echo '{"dhcp":"requested"}'; fi;; check) run_ns "$n" sh -c 'ip -4 addr show; ip -6 addr show; getent hosts example.com >/dev/null 2>&1' && echo '{"ipv4":true,"dns":true}' || echo '{"ipv4":false,"dns":false}';; exec) shift 2; run_ns "$n" sh -c "$*";; *) die "lan: dhcp|check|exec";; esac; }
+lan_cmd(){ id=$1; op=$2; valid_id "$id"; n=$(lan "$id"); case $op in dhcp) if run_ns "$n" busybox udhcpc -n -q -i mrlab${id}slp 2>/dev/null; then echo '{"dhcp":"ok"}'; else run_ns "$n" ip addr replace 192.168.1.100/24 dev mrlab${id}slp 2>/dev/null || true; run_ns "$n" ip route replace default via "$(router_ip "$id")" 2>/dev/null || true; run_ns "$n" sh -c 'printf "nameserver 192.168.1.1\n" > /etc/resolv.conf' 2>/dev/null || true; echo '{"dhcp":"fallback-static","warning":"guest DHCP service unavailable"}'; fi;; check) run_ns "$n" sh -c 'ip -4 addr show; ip -6 addr show; getent hosts example.com >/dev/null 2>&1' && echo '{"ipv4":true,"dns":true}' || echo '{"ipv4":false,"dns":false}';; exec) shift 2; run_ns "$n" sh -c "$*";; *) die "lan: dhcp|check|exec";; esac; }
 ssh_cmd(){ id=$1; shift; lan_cmd "$id" exec ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 root@"$(router_ip "$id")" "$*"; }
 console(){ id=$1; shift; f=$(state "$id")/console.log; marker="MRLAB-END-$$"; if [ -S "$(state "$id")/serial.sock" ] && command -v socat >/dev/null 2>&1; then printf '%s\necho %s\n' "$*" "$marker" | timeout 8 socat - "UNIX-CONNECT:$(state "$id")/serial.sock" || true; else printf '%s\n' "$*" >> "$f"; echo "$marker"; tail -20 "$f"; fi; }
 api_cmd(){

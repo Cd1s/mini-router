@@ -38,3 +38,22 @@ bridge, route, or sysctl.
 
 Known limits: Wi-Fi/PPE/DSA and hardware switch behavior cannot be tested in QEMU; full guest
 install, PPPoE, DHCPv6-PD, and panel API authentication need follow-up guest automation.
+
+## A1 continuation
+
+The continuation fixed the host leak and committed these additional changes:
+
+```text
+2847d82 veth pairs stay inside lab namespaces
+c7f338c LAN/WAN bridges, cloud-init seed install, scenarios 04/05
+ec5c6e0 slirp DNS, PPPoE server/auth variants, IPv6-up radvd/Kea hooks
+9f8a00b milestone record
+dfacbb7 explicit Alpine kernel boot, package/repository seed, guest fallback services
+```
+
+`ip -br link | grep -c mrlab` was 0 both immediately after `up 1; up 2` and after teardown.
+The guest cloud-init seed is now discovered as `DataSourceNoCloud [seed=/dev/vdb]` and executes
+the real local `install.sh`; the current 200 MiB Alpine base was resized to 512 MiB. On this host,
+Alpine's `apk add` still blocks at installer step 1, so the seed records the failure and exposes a
+clearly labelled static LAN fallback. This leaves 01/02 as diagnostic failures until the guest
+package path is fixed; no product code was changed.

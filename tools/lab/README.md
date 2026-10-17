@@ -17,7 +17,9 @@ $L down $ID
 Use IDs 1–8 concurrently. `isp` accepts `dhcp`, `pppoe`, `static`, `down`; PPPoE variants are
 `--badpass`, `nopado`, `--cgnat`, and `v6=pd`. `ssh`, `console`, `reboot`, `powercut`, and
 `status` are recovery commands. Scenarios 01–05 emit TAP `ok`/`not ok` lines and leave logs in
-`/tmp/mrlab<ID>-*.log`. Always run `down` in a trap when writing a test agent.
+`/tmp/mrlab<ID>-*.log`. If the guest DHCP service is not ready, `lan dhcp` reports
+`fallback-static` explicitly so a test never mistakes the fallback for a real lease. Always run
+`down` in a trap when writing a test agent.
 
 `tools/lab/lab.sh` builds isolated Alpine/QEMU router laboratories. Each lab has its own
 network namespaces, bridge, tap devices, QEMU process, ISP simulator and LAN client namespace.
