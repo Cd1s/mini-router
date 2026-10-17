@@ -382,13 +382,19 @@ func restore(snap string, stopRemoved ...bool) ([]string, error) {
 	stopServices := len(stopRemoved) == 0 || stopRemoved[0]
 	for _, p := range covered {
 		if !present[p] {
+			remove := true
 			if stopServices {
 				if s := removedWANService(p); s != "" && !stopped[s] {
-					stopAndDisableService(s)
-					stopped[s] = true
+					if !stopAndDisableService(s) {
+						remove = false
+					} else {
+						stopped[s] = true
+					}
 				}
 			}
-			os.Remove(p)
+			if remove {
+				os.Remove(p)
+			}
 		}
 		if s := serviceFor(p); s != "" {
 			svc[s] = true
@@ -413,13 +419,16 @@ func removedWANService(path string) string {
 	return ""
 }
 
-func stopAndDisableService(service string) {
+func stopAndDisableService(service string) bool {
+	stopped := true
 	if out, err := runCommand("rc-service", service, "stop"); err != nil {
 		logf("rollback: stopping removed service %s failed: %v %s", service, err, strings.TrimSpace(out))
+		stopped = false
 	}
 	if out, err := runCommand("rc-update", "del", service, "default"); err != nil {
 		logf("rollback: removing %s from default runlevel failed: %v %s", service, err, strings.TrimSpace(out))
 	}
+	return stopped
 }
 
 // keepPassword: secrets.yaml data with the web UI password as it is now. A password set while a change
@@ -635,7 +644,9 @@ func cleanupOrphanWANFiles(c *Config) {
 	stopped := map[string]bool{}
 	for _, path := range orphanWANPaths(c) {
 		if s := removedWANService(path); s != "" && !stopped[s] {
-			stopAndDisableService(s)
+			if !stopAndDisableService(s) {
+				continue
+			}
 			stopped[s] = true
 		}
 		os.Remove(path)

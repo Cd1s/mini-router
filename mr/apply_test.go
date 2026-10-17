@@ -480,6 +480,30 @@ func TestRestoreStopsAndDisablesRemovedWANService(t *testing.T) {
 	}
 }
 
+func TestRestoreKeepsRemovedServiceWhenStopFails(t *testing.T) {
+	confirmEnv(t)
+	oldRun := runCommand
+	t.Cleanup(func() { runCommand = oldRun })
+	runCommand = func(name string, args ...string) (string, error) {
+		if name == "rc-service" {
+			return "busy", errors.New("stop failed")
+		}
+		return "", nil
+	}
+	service := filepath.Join(initDir, "mr-udhcpc.wan")
+	snap, err := snapshot([]string{service}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(service, []byte("#!/sbin/openrc-run\n"), 0755)
+	if _, err := restore(snap); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(service); err != nil {
+		t.Fatalf("service removed after stop failure: %v", err)
+	}
+}
+
 func TestReconcileRunlevelRemovesDanglingManagedLink(t *testing.T) {
 	confirmEnv(t)
 	oldRun := runCommand
