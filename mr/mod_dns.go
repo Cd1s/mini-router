@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -476,6 +478,227 @@ func splitFile(name string) (string, bool) {
 
 var domainRe = lazyRegexp(`^[A-Za-z0-9_*.-]+$`)
 
+var dnsListDir = "/etc/mini-router/dns"
+
+const dnsListMax = 1 << 20
+
+var dnsListRun = func(name string, args ...string) (string, error) { return run(name, args...) }
+var dnsListIsReferenced = dnsListReferenced
+
+var reDNSListFile = lazyRegexp(`^[A-Za-z0-9_-]{1,64}\.(domains|hosts|servers|ips)$`)
+var reDNSHostName = lazyRegexp(`^[A-Za-z0-9_*.-]{1,253}$`)
+
+func dnsListPath(name string) (string, bool) {
+	if !reDNSListFile.MatchString(name) {
+		return "", false
+	}
+	return filepath.Join(dnsListDir, name), true
+}
+
+func dnsListReferenced(path string) bool {
+	c, err := loadConfig(ConfigPath, SecretsPath)
+	if err != nil {
+		return false
+	}
+	path = filepath.Clean(path)
+	if filepath.Clean(c.DNS.ServersFile) == path {
+		return true
+	}
+	for _, p := range c.DNS.AddnHosts {
+		if filepath.Clean(p) == path {
+			return true
+		}
+	}
+	return false
+}
+
+func restoreDNSList(path string, old []byte, existed bool) error {
+	if existed {
+		return writeAtomic(path, old, 0644)
+	}
+	return os.Remove(path)
+}
+
+func validateAndReloadDNSList(path string, old []byte, existed bool) error {
+	if !dnsListIsReferenced(path) {
+		return nil
+	}
+	if out, err := dnsListRun("dnsmasq", "--test", "--conf-file=/etc/dnsmasq.conf"); err != nil {
+		_ = restoreDNSList(path, old, existed)
+		return fmt.Errorf("dnsmasq config check failed: %v %s", err, strings.TrimSpace(out))
+	}
+	if out, err := dnsListRun("rc-service", "dnsmasq", "restart"); err != nil {
+		_ = restoreDNSList(path, old, existed)
+		_, _ = dnsListRun("rc-service", "dnsmasq", "restart")
+		return fmt.Errorf("dnsmasq restart failed: %v %s", err, strings.TrimSpace(out))
+	}
+	if out, err := dnsListRun("rc-service", "dnsmasq", "status"); err != nil {
+		_ = restoreDNSList(path, old, existed)
+		_, _ = dnsListRun("rc-service", "dnsmasq", "restart")
+		return fmt.Errorf("dnsmasq is not running: %v %s", err, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+func dnsListContentErrors(name, content string) []string {
+	var errs []string
+	for i, line := range strings.Split(strings.ReplaceAll(content, "\r", ""), "\n") {
+		if len(line) > 4096 || strings.IndexByte(line, 0) >= 0 {
+			errs = append(errs, fmt.Sprintf("line %d is too long or contains NUL", i+1))
+			continue
+		}
+		for _, ch := range line {
+			if ch < 0x20 && ch != '\t' {
+				errs = append(errs, fmt.Sprintf("line %d contains control characters", i+1))
+				break
+			}
+		}
+		trim := strings.TrimSpace(line)
+		if trim == "" || strings.HasPrefix(trim, "#") {
+			continue
+		}
+		fields := strings.Fields(trim)
+		switch {
+		case strings.HasSuffix(name, ".domains"):
+			if !domainRe.MatchString(trim) {
+				errs = append(errs, fmt.Sprintf("bad domain line %q", trim))
+			}
+		case strings.HasSuffix(name, ".ips"):
+			if _, err := netip.ParsePrefix(trim); err != nil {
+				if _, err = netip.ParseAddr(trim); err != nil {
+					errs = append(errs, fmt.Sprintf("bad IP/CIDR on line %d", i+1))
+				}
+			}
+		case strings.HasSuffix(name, ".hosts"):
+			if len(fields) < 2 {
+				errs = append(errs, fmt.Sprintf("line %d must be IP followed by hostname", i+1))
+				continue
+			}
+			if _, err := netip.ParseAddr(fields[0]); err != nil {
+				errs = append(errs, fmt.Sprintf("line %d has an invalid IP", i+1))
+				continue
+			}
+			for _, host := range fields[1:] {
+				if !reDNSHostName.MatchString(host) {
+					errs = append(errs, fmt.Sprintf("line %d has an invalid hostname", i+1))
+					break
+				}
+			}
+		case strings.HasSuffix(name, ".servers"):
+			if !(strings.HasPrefix(trim, "server=/") || strings.HasPrefix(trim, "rev-server=")) {
+				errs = append(errs, fmt.Sprintf("line %d must start with server=/ or rev-server=", i+1))
+				continue
+			}
+			if strings.HasPrefix(trim, "server=/") {
+				parts := strings.Split(trim, "/")
+				if len(parts) < 3 || parts[0] != "server=" || !validServer(parts[len(parts)-1]) {
+					errs = append(errs, fmt.Sprintf("line %d must be server=/domain/upstream", i+1))
+					continue
+				}
+				for _, domain := range parts[1 : len(parts)-1] {
+					if domain == "" && len(parts) == 3 {
+						continue
+					}
+					if !domainRe.MatchString(domain) {
+						errs = append(errs, fmt.Sprintf("line %d has an invalid domain", i+1))
+						break
+					}
+				}
+			} else {
+				parts := strings.Split(strings.TrimPrefix(trim, "rev-server="), ",")
+				if len(parts) != 2 {
+					errs = append(errs, fmt.Sprintf("line %d must be rev-server=CIDR,upstream", i+1))
+					continue
+				}
+				if _, err := netip.ParsePrefix(parts[0]); err != nil || !validServer(parts[1]) {
+					errs = append(errs, fmt.Sprintf("line %d must be rev-server=CIDR,upstream", i+1))
+				}
+			}
+		}
+		if len(errs) >= 10 {
+			return errs[:10]
+		}
+	}
+	return errs
+}
+
+func apiDNSFiles(r apiReq) apiResp {
+	var in struct {
+		File, Content string
+		Save          bool
+	}
+	if strings.TrimSpace(string(r.body)) != "" {
+		if err := json.Unmarshal(r.body, &in); err != nil {
+			return errResp(400, "invalid JSON")
+		}
+	}
+	if in.File == "" {
+		files := []map[string]any{}
+		ents, _ := os.ReadDir(dnsListDir)
+		for _, e := range ents {
+			if !e.Type().IsRegular() || !reDNSListFile.MatchString(e.Name()) {
+				continue
+			}
+			fi, err := e.Info()
+			if err != nil {
+				continue
+			}
+			files = append(files, map[string]any{"name": e.Name(), "path": filepath.Join(dnsListDir, e.Name()), "size": fi.Size()})
+		}
+		return apiResp{body: map[string]any{"dir": dnsListDir, "files": files}}
+	}
+	path, ok := dnsListPath(filepath.Base(in.File))
+	if !ok || filepath.Base(in.File) != in.File {
+		return errResp(400, "file name: letters, digits, _ - with .domains, .hosts, .servers or .ips")
+	}
+	fi, err := os.Lstat(path)
+	exists := err == nil
+	if exists && !fi.Mode().IsRegular() {
+		return errResp(400, "%s is not a regular file", path)
+	}
+	var old []byte
+	if exists {
+		old, err = os.ReadFile(path)
+		if err != nil {
+			return errResp(500, "%v", err)
+		}
+	}
+	if !in.Save {
+		content := ""
+		if exists {
+			b, er := os.ReadFile(path)
+			if er != nil {
+				return errResp(500, "%v", er)
+			}
+			content = string(b)
+		}
+		return apiResp{body: map[string]any{"file": in.File, "path": path, "exists": exists, "content": content}}
+	}
+	if r.method != "POST" {
+		return errResp(405, "POST required")
+	}
+	if len(in.Content) > dnsListMax {
+		return errResp(413, "file is too large (maximum 1 MiB)")
+	}
+	if errs := dnsListContentErrors(in.File, in.Content); len(errs) > 0 {
+		return errResp(400, "%s", errs[0])
+	}
+	if err := os.MkdirAll(dnsListDir, 0755); err != nil {
+		return errResp(500, "%v", err)
+	}
+	data := strings.TrimRight(strings.ReplaceAll(in.Content, "\r", ""), "\n") + "\n"
+	if err := writeAtomic(path, []byte(data), 0644); err != nil {
+		return errResp(500, "%v", err)
+	}
+	if strings.HasSuffix(in.File, ".hosts") || strings.HasSuffix(in.File, ".servers") {
+		if err := validateAndReloadDNSList(path, old, exists); err != nil {
+			return errResp(500, "%v", err)
+		}
+	}
+	appendChangeLog("webui: dns list " + in.File + " saved")
+	return apiResp{body: map[string]any{"ok": true, "path": path}}
+}
+
 func apiDNSList(r apiReq) apiResp {
 	var in struct {
 		Name    string `json:"name"`
@@ -485,6 +708,13 @@ func apiDNSList(r apiReq) apiResp {
 	json.Unmarshal(r.body, &in)
 	path, ok := splitFile(in.Name)
 	if !ok {
+		// Keep the historical dnslist action useful for a newly-created split
+		// list: the basename is still constrained to the managed DNS directory.
+		if reDNSListFile.MatchString(in.Name) {
+			b, _ := json.Marshal(map[string]any{"file": in.Name, "content": in.Content, "save": in.Save})
+			r.body = b
+			return apiDNSFiles(r)
+		}
 		return errResp(404, "no split list %q", in.Name)
 	}
 	if !in.Save {
@@ -583,6 +813,7 @@ func init() {
 		TokenScope: map[string]string{"dns.stats": "read", "dns.leases": "read", "dns.release": "operate", "dns.adblock": "operate"},
 		API: map[string]func(r apiReq) apiResp{
 			"dnslist":      apiDNSList,
+			"dns.files":    apiDNSFiles,
 			"dns.stats":    apiDNSStats,
 			"dns.leases":   apiDNSLeases,
 			"dns.release":  apiDNSRelease,

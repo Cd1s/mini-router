@@ -36,9 +36,10 @@ func mustValid(t *testing.T, c *Config) {
 func tempState(t *testing.T) string {
 	t.Helper()
 	d := t.TempDir()
-	a, b, c := wanRunDir, wanStateFile, resolvConf
+	a, b, c, g, rp := wanRunDir, wanStateFile, resolvConf, gatewayConflictFile, requirePublicFile
 	wanRunDir, wanStateFile, resolvConf = filepath.Join(d, "wan"), filepath.Join(d, "wan-state.json"), filepath.Join(d, "resolv.conf")
-	t.Cleanup(func() { wanRunDir, wanStateFile, resolvConf = a, b, c })
+	gatewayConflictFile, requirePublicFile = filepath.Join(d, "gateway-conflicts.json"), filepath.Join(d, "require-public-ip.json")
+	t.Cleanup(func() { wanRunDir, wanStateFile, resolvConf, gatewayConflictFile, requirePublicFile = a, b, c, g, rp })
 	return d
 }
 

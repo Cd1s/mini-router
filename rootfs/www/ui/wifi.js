@@ -12,6 +12,11 @@ const bandName = b => b==="2g" ? "2.4 GHz" : b==="5g" ? "5 GHz" : b==="6g" ? "6 
 const apIfs = r => (r.ssids||[]).map((_,i)=> i ? r.phy+"-ap0-"+i : r.phy+"-ap0");
 const netOpts = ()=>[["","lan（主网络）"], ...(S.cfg.networks||[]).map(n=>[n.name, n.name+(n.zone==="lan"?"（内网）":"（访客：仅上网）")])];
 const guestNet = ()=>((S.cfg.networks||[]).find(n=>(n.zone||"guest")==="guest")||{}).name;
+const htModes = r=>{
+  if (r.profile!=="generic") return r.band==="2g" ? [["HE20","20 MHz"],["HE40","40 MHz"]] : [["HE20","20 MHz"],["HE40","40 MHz"],["HE80","80 MHz"],["HE160","160 MHz"]];
+  return r.band==="2g" ? [["HT20","20 MHz (HT)"],["HT40","40 MHz (HT)"],["HE20","20 MHz (HE)"],["HE40","40 MHz (HE)"]] :
+    [["HT20","20 MHz (HT)"],["HT40","40 MHz (HT)"],["VHT20","20 MHz (VHT)"],["VHT40","40 MHz (VHT)"],["VHT80","80 MHz (VHT)"],["VHT160","160 MHz (VHT)"],["HE20","20 MHz (HE)"],["HE40","40 MHz (HE)"],["HE80","80 MHz (HE)"],["HE160","160 MHz (HE)"]];
+};
 // a secret name no SSID uses yet: a reused name would silently give the new SSID another SSID's password
 const freeKey = r=>{ const used = new Set(S.cfg.wifi.radios.flatMap(x=>(x.ssids||[]).map(s=>s.key_secret)));
   let n = (r.ssids||[]).length; while (used.has("wifi_key_"+r.phy+"_"+n)) n++; return "wifi_key_"+r.phy+"_"+n; };
@@ -58,10 +63,27 @@ registerPage("wireless", "wifi", "无线设置", 10, async ()=>{
   const c = S.cfg; c.wifi ||= {}; c.wifi.radios ||= [];
   let live = {}; // ifname -> live BSS state (clients, radio state)
   try { for (const w of await api("wifi.status")) live[w.ifname]=w; } catch(e){}
+  let defaults = [], defaultsError = false;
+  try { defaults = (await api("wifi.defaults")).radios||[]; } catch(e){ defaultsError = true; }
   const dl = h("datalist",{id:"wifi-cc"}, COUNTRIES.map(x=>h("option",{value:x})));
   const glob = card("全局", form(...field("国家码", inText(c.wifi,"country",{list:"wifi-cc",maxlength:2,style:"max-width:100px",placeholder:"PA"}), "两位大写字母")));
-  if (!c.wifi.radios.length) return h("div",{}, dl, glob, card("射频", h("div",{class:"mut"},"router.yaml 中没有配置射频。")));
-  return h("div",{}, dl, glob, tuneCard(c.wifi), tabs(c.wifi.radios.map(r=>[r.phy, bandName(r.band)+" · "+r.phy, ()=>radioTab(r, live)])));
+  const addRadio = band=>{
+    const used = new Set(c.wifi.radios.map(r=>r.phy));
+    const p = (defaults||[]).find(x=>x.band===band && !used.has(x.phy));
+    if (!p) return;
+    const r = clone(p); r.channels ||= ""; r.beacon_int ||= 100; r.dtim_period ||= 2;
+    (r.ssids||[]).forEach(s=>{ s.network ||= "lan"; });
+    c.wifi.radios.push(r);
+    touch(); show(S.page);
+  };
+  if (!c.wifi.radios.length) {
+    const message = defaultsError ? "此固件版本暂不能自动探测，请在 系统 › router.yaml 原文 添加 wifi.radios。" : defaults.length ? "出厂配置还没有启用无线。按硬件探测结果添加频段，保存并应用后即可广播 WiFi。" : "未检测到可用无线硬件。";
+    return h("div",{}, dl, glob, card("射频", [h("div",{class:"mut"},message),
+      h("div",{class:"row",style:"margin-top:12px"}, h("button",{class:"btn p",disabled:!defaults.some(x=>x.band==="2g"),onclick:()=>addRadio("2g")},"+ 启用 2.4G"), h("button",{class:"btn p",disabled:!defaults.some(x=>x.band==="5g"),onclick:()=>addRadio("5g")},"+ 启用 5G"))]));
+  }
+  const missing = ["2g","5g"].filter(b=>!c.wifi.radios.some(r=>r.band===b) && defaults.some(x=>x.band===b));
+  return h("div",{}, dl, glob, tuneCard(c.wifi), missing.length ? card("添加射频", h("div",{class:"row"}, missing.map(b=>h("button",{class:"btn p",onclick:()=>addRadio(b)},"+ 启用 "+bandName(b))))) : null,
+    tabs(c.wifi.radios.map(r=>[r.phy, bandName(r.band)+" · "+r.phy, ()=>radioTab(r, live)])));
 });
 
 // 自动调优（#41）：频段引导 + 射频自愈，都由每分钟一次的 `mr wifi tick`（crond）完成，没有常驻进程
@@ -89,15 +111,18 @@ function radioTab(r, live){
   const box = h("div");
   const draw = ()=>{
     const w = live[r.phy+"-ap0"];
+    const remove = h("button",{class:"btn sm d",onclick:()=>{ if(!confirm("删除射频 "+r.phy+"？")) return; const i=S.cfg.wifi.radios.indexOf(r); if(i>=0) S.cfg.wifi.radios.splice(i,1); touch(); show(S.page); }},"删除射频");
+    const profileChanged = v=>{ r.profile=v; if (!htModes(r).some(x=>x[0]===r.htmode)) r.htmode=r.band==="2g"?"HE40":"HE80"; touch(); draw(); };
     const radio = card(h("span",{}, "射频 · "+bandName(r.band)+" ", h("span",{class:"wifi-sub mono"}, r.phy+"-ap0")), form(
+      ...field("硬件 profile", inSel(r,"profile",[["","mt7986"],["mt7986","mt7986"],["generic","generic"]],profileChanged), "仅非 MT7986 网卡选 generic"),
       ...field("信道", inSel(r,"channel", r.band==="2g"?CH2:CH5)),
       ...field("自动选频范围", inText(r,"channels",{placeholder:r.band==="2g"?"1-11":"36-48 149-165"}), "仅信道为 auto 时使用"),
-      ...field("频宽", inSel(r,"htmode", r.band==="2g" ? [["HE20","20 MHz"],["HE40","40 MHz"]] : [["HE20","20 MHz"],["HE40","40 MHz"],["HE80","80 MHz"],["HE160","160 MHz"]])),
+      ...field("频宽", inSel(r,"htmode", htModes(r))),
       ...field("发射功率 (dBm)", inNum(r,"txpower",{min:0,max:40}), "0 = 驱动默认"),
       ...field("Beacon 间隔 (TU)", inNum(r,"beacon_int",{min:10,max:10000,placeholder:"100"}), "默认 100（约 102 ms）"),
       ...field("DTIM 周期", inNum(r,"dtim_period",{min:1,max:255,placeholder:"2"}), "默认 2；越大终端越省电，组播/广播延迟越高"),
       ...(r.band==="2g" ? field("允许 802.11b 速率", inBool(r,"legacy_rates"), "只有很老的设备需要；开启会拖慢整个 2.4G 频段") : [])),
-      w ? h("span",{class:"row"}, stateTag(w.state, w.cac_left), w.channel ? h("span",{class:"tag"}, "信道 "+w.channel+" · "+w.htmode) : null) : null);
+      h("span",{class:"row"}, w ? h("span",{class:"row"}, stateTag(w.state, w.cac_left), w.channel ? h("span",{class:"tag"}, "信道 "+w.channel+" · "+w.htmode) : null) : null, remove));
     const full = r.ssids.length >= MAX_SSIDS, g = guestNet();
     const add = guest=>{
       r.ssids.push(guest
