@@ -43,8 +43,23 @@ type WAN struct {
 	Metric   int      `yaml:"metric"` // default-route metric: lower = preferred (failover order)
 	PeerDNS  bool     `yaml:"peerdns"`
 	IPv6     bool     `yaml:"ipv6"`
-	IPv6PD   bool     `yaml:"ipv6_pd"`       // request a delegated prefix and put it on the LAN
-	SrcRoute bool     `yaml:"ipv6_srcroute"` // IPv6 traffic sourced from this WAN's prefix leaves via this WAN
+	IPv6PD   bool     `yaml:"ipv6_pd"`         // request a delegated prefix and put it on the LAN
+	SrcRoute bool     `yaml:"ipv6_srcroute"`   // IPv6 traffic sourced from this WAN's prefix leaves via this WAN
+	Modem    Modem    `yaml:"modem,omitempty"` // optional modem management address on the physical WAN link
+}
+
+// Modem is the upstream modem/router address reachable on the WAN's Ethernet segment.
+// The renderer chooses a free address in the same subnet for the WAN-side alias.
+type Modem struct {
+	Address string `yaml:"address"`
+}
+
+func normalizedModemAddress(w WAN) string {
+	ip := net.ParseIP(w.Modem.Address)
+	if ip == nil || ip.To4() == nil || strings.Contains(w.Modem.Address, ":") || strings.TrimSpace(w.Modem.Address) != w.Modem.Address {
+		return ""
+	}
+	return ip.To4().String()
 }
 
 // LinkDev is the ethernet-level netdev of the WAN: Device, or its 802.1Q subinterface.
@@ -258,7 +273,7 @@ func init() {
 		Managed: append([]string{"igmpproxy", "mr-wanmon", "dhcpcd"}, initInstances("mr-udhcpc.")...), // dhcpcd: Alpine's service, replaced by mr-dhcpcd
 		Restart: func(path string) string {
 			switch {
-			case strings.HasPrefix(path, "/etc/ppp/peers/"):
+			case strings.HasPrefix(path, pppPeersDir+"/"):
 				return "mr-pppoe." + filepath.Base(path)
 			case strings.HasPrefix(path, "/etc/init.d/mr-pppoe."):
 				return "-" // wrapper only depends on the name; the peers file carries the settings
@@ -605,6 +620,11 @@ func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
 			if !isIPv4Literal(w.Gateway) || (sn != nil && !sn.Contains(g)) || g.Equal(ip) {
 				v.Add("%s.gateway: IPv4 inside %s, got %q", p, w.IPv4, w.Gateway)
 			}
+			for _, ln := range c.LANNets() {
+				if _, lnet, e := net.ParseCIDR(ln.IPv4); e == nil && sn != nil && (lnet.Contains(sn.IP) || sn.Contains(lnet.IP)) {
+					v.Add("%s.ipv4: overlaps LAN %s (%s); choose a different LAN or WAN subnet", p, ln.Name, lnet)
+				}
+			}
 		default:
 			v.Add("%s.proto: pppoe|dhcp|static, got %q", p, w.Proto)
 		}
@@ -617,6 +637,24 @@ func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
 		for _, d := range w.DNS {
 			if net.ParseIP(d) == nil {
 				v.Add("%s.dns: invalid address %q", p, d)
+			}
+		}
+		if w.Modem.Address != "" {
+			ip := net.ParseIP(w.Modem.Address)
+			if w.Proto != "pppoe" {
+				v.Add("%s.modem: only supported on pppoe WANs (the DHCP client replaces link addresses)", p)
+			} else if ip == nil || ip.To4() == nil || strings.Contains(w.Modem.Address, ":") || strings.TrimSpace(w.Modem.Address) != w.Modem.Address {
+				v.Add("%s.modem.address: IPv4 address required, got %q", p, w.Modem.Address)
+			} else if !ip.IsPrivate() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsMulticast() {
+				v.Add("%s.modem.address: private unicast address required, got %q", p, w.Modem.Address)
+			} else if ip.Equal(net.ParseIP(strings.SplitN(c.LAN.IPv4, "/", 2)[0])) {
+				v.Add("%s.modem.address: cannot be the router LAN address, got %q", p, w.Modem.Address)
+			} else {
+				for _, ln := range c.LANNets() {
+					if routerIP := net.ParseIP(strings.SplitN(ln.IPv4, "/", 2)[0]); routerIP != nil && ip.Equal(routerIP) {
+						v.Add("%s.modem.address: cannot be a router LAN address, got %q", p, w.Modem.Address)
+					}
+				}
 			}
 		}
 	}

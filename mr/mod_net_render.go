@@ -44,7 +44,7 @@ func netRender(c *Config, out *Out) error {
 			if err != nil {
 				return err
 			}
-			out.Add("/etc/ppp/peers/"+w.Name, 0600, renderPeer(w, wanNic(c, w), pw, len(dialEarlier(c.MultiWAN, w.Name)) == 0))
+			out.Add(pppPeersDir+"/"+w.Name, 0600, renderPeer(w, wanNic(c, w), pw, len(dialEarlier(c.MultiWAN, w.Name)) == 0))
 			out.Add("/etc/init.d/mr-pppoe."+w.Name, 0755, renderInstance("mr-pppoe", w, ""))
 		case "dhcp":
 			out.Add("/etc/init.d/mr-udhcpc."+w.Name, 0755, renderInstance("mr-udhcpc", w, w.Ifname()))
@@ -175,7 +175,7 @@ func wanDNSFromPeers(c *Config) bool {
 			return true
 		}
 	}
-	return false
+	return len(c.DNS.Fallback) > 0
 }
 
 // The net hooks keep resolvConf = nameservers of every WAN that is up (healthy first); the dns
@@ -266,6 +266,8 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 				fmt.Fprintf(b, "for a in $(ip -4 -o addr show dev %s | awk '{print $4}'); do [ \"$a\" = %s ] || ip addr del \"$a\" dev %s; done\n", w.LinkDev(), w.IPv4, w.LinkDev())
 			}
 		}
+		wanVLANCleanupSh(c, b)
+		wanMACRestoreSh(c, b)
 		wanIPv6OffSh(c, b)
 		macvlanSh(c, b, need)
 		snoop := 0
@@ -334,9 +336,149 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 			fmt.Fprintf(b, "%s 2>/dev/null\n", strings.Join(args, " "))
 		}
 	case "tail":
+		modemSh(c, b)
 		b.WriteString(perfScript)
 	}
 	modeNetSh(c, phase, b)
+}
+
+// modemAlias returns a usable host address in the modem's subnet for the optional management alias.
+func modemAlias(c *Config, w WAN) string {
+	_, lanNet, _ := net.ParseCIDR(c.LAN.IPv4)
+	target := net.ParseIP(w.Modem.Address).To4()
+	if lanNet == nil || target == nil {
+		return ""
+	}
+	mask := net.CIDRMask(24, 32)
+	n := &net.IPNet{IP: target.Mask(mask), Mask: mask}
+	reserved := map[string]bool{net.ParseIP(w.Modem.Address).String(): true}
+	for _, ln := range c.LANNets() {
+		if ip, _, err := net.ParseCIDR(ln.IPv4); err == nil {
+			reserved[ip.String()] = true
+		}
+	}
+	for _, x := range c.WAN {
+		if ip := net.ParseIP(strings.SplitN(x.IPv4, "/", 2)[0]).To4(); ip != nil {
+			reserved[ip.String()] = true
+		}
+	}
+	ip := append(net.IP(nil), n.IP...)
+	for i := 0; i < 1<<16; i++ {
+		ip[len(ip)-1]++
+		if !n.Contains(ip) {
+			break
+		}
+		if !reserved[ip.String()] {
+			return fmt.Sprintf("%s/32", ip)
+		}
+	}
+	return ""
+}
+
+func modemSh(c *Config, b *strings.Builder) {
+	b.WriteString("if [ -r /run/mini-router/modem-aliases ]; then while read -r d a t; do ip addr del \"$a\" dev \"$d\" 2>/dev/null || true; ip route del \"$t/32\" dev \"$d\" 2>/dev/null || true; done < /run/mini-router/modem-aliases; fi\n: > /run/mini-router/modem-aliases\n")
+	b.WriteString("if [ -r /run/mini-router/modem-neigh ]; then while read -r ip d; do ip neigh del proxy \"$ip\" dev \"$d\" 2>/dev/null || true; done < /run/mini-router/modem-neigh; fi\n: > /run/mini-router/modem-neigh\n")
+	for _, w := range c.WAN {
+		address := normalizedModemAddress(w)
+		if address == "" || w.Proto != "pppoe" {
+			continue
+		}
+		alias := modemAlias(c, w)
+		if alias == "" {
+			continue
+		}
+		fmt.Fprintf(b, "ip addr replace %s dev %s\n", alias, w.LinkDev())
+		fmt.Fprintf(b, "ip route replace %s/32 dev %s src %s\n", address, w.LinkDev(), strings.TrimSuffix(alias, "/32"))
+		fmt.Fprintf(b, "echo %s %s %s >> /run/mini-router/modem-aliases\n", w.LinkDev(), alias, address)
+		for _, ln := range c.LANNets() {
+			if ln.Zone != "lan" {
+				continue
+			}
+			if _, n, err := net.ParseCIDR(ln.IPv4); err == nil && n.Contains(net.ParseIP(address)) {
+				fmt.Fprintf(b, "ip neigh replace proxy %s dev %s 2>/dev/null || true\n", address, ln.Bridge)
+				fmt.Fprintf(b, "echo %s %s >> /run/mini-router/modem-neigh\n", address, ln.Bridge)
+			}
+		}
+	}
+}
+
+// wanVLANCleanupSh removes VLAN links left by a previous WAN configuration.  The
+// generated config only knows links it currently needs; scanning each configured
+// parent catches a changed/cancelled VID while keeping unrelated parent links out
+// of the cleanup.
+func wanVLANCleanupSh(c *Config, b *strings.Builder) {
+	parents := map[string]bool{}
+	keep := map[string]bool{}
+	keepName := func(name string) {
+		if name != "" {
+			keep[name] = true
+		}
+	}
+	for _, w := range c.WAN {
+		parents[w.Device] = true
+		keepName(w.Device)
+		keepName(w.LinkDev())
+		if w.VLAN > 0 {
+			keep[w.LinkDev()] = true
+		}
+	}
+	for _, p := range c.LAN.Ports {
+		parents[p] = true
+		keepName(p)
+	}
+	for _, n := range c.Networks {
+		for _, p := range n.Ports {
+			parents[p] = true
+			keepName(p)
+		}
+		for _, p := range n.Trunk {
+			parents[p] = true
+			keepName(p)
+			if n.VLAN > 0 {
+				keepName(fmt.Sprintf("%s.%d", p, n.VLAN))
+			}
+		}
+	}
+	var kept []string
+	for k := range keep {
+		kept = append(kept, k)
+	}
+	sort.Strings(kept)
+	caseList := strings.Join(kept, " ")
+	var ps []string
+	for p := range parents {
+		ps = append(ps, p)
+	}
+	sort.Strings(ps)
+	for _, p := range ps {
+		fmt.Fprintf(b, "for d in /sys/class/net/%s.*; do [ -e \"$d\" ] || continue; n=${d##*/}; case \" %s \" in *\" $n \"*) continue;; esac; case \"$(ip -o link show dev \"$n\" 2>/dev/null)\" in *\" alias mini-router\"*) ip link del \"$n\" 2>/dev/null;; esac; done\n", p, caseList)
+	}
+}
+
+// wanMACRestoreSh restores the permanent hardware address after a cloned WAN
+// MAC is cleared.  ethtool reads the address burned into the NIC, so this also
+// works when the previous value is not present in the current configuration.
+func wanMACRestoreSh(c *Config, b *strings.Builder) {
+	devs := map[string]bool{}
+	protected := map[string]bool{}
+	for _, w := range c.WAN {
+		if w.MAC != "" && wanMacvlan(c, w) == "" {
+			protected[w.Device] = true
+		}
+	}
+	for _, w := range c.WAN {
+		if w.MAC == "" && wanMacvlan(c, w) == "" && !protected[w.Device] {
+			devs[w.Device] = true
+		}
+	}
+	var xs []string
+	for d := range devs {
+		xs = append(xs, d)
+	}
+	sort.Strings(xs)
+	for _, d := range xs {
+		fmt.Fprintf(b, "was_up=0; case \"$(ip -o link show dev %s 2>/dev/null)\" in *\"<\"*UP*) was_up=1;; esac; perm=$(ethtool -P %s 2>/dev/null | awk '$1==\"Permanent\" && $2==\"address:\" && $3 ~ /^[[:xdigit:]][02468aceACE](:[[:xdigit:]][[:xdigit:]]){5}$/ {m=tolower($3); if (m !~ /^00:00:00:00:00:00$/) print m}'); if [ -n \"$perm\" ] && [ \"$(cat /sys/class/net/%s/address 2>/dev/null)\" != \"$perm\" ]; then ip link set %s down; ip link set dev %s address \"$perm\" 2>/dev/null || :; [ \"$was_up\" = 1 ] && ip link set %s up; fi\n", d, d, d, d, d, d)
+	}
 }
 
 // wanIPv6OffSh: a WAN link device that no IPv6-enabled DHCP / static WAN uses as its interface takes no
@@ -362,7 +504,8 @@ func wanIPv6OffSh(c *Config, b *strings.Builder) {
 }
 
 func vlanLink(b *strings.Builder, dev string, vid int) {
-	fmt.Fprintf(b, "ip link show %s.%d >/dev/null 2>&1 || ip link add link %s name %s.%d type vlan id %d\n", dev, vid, dev, dev, vid, vid)
+	sub := fmt.Sprintf("%s.%d", dev, vid)
+	fmt.Fprintf(b, "if ! ip link show %s >/dev/null 2>&1; then ip link add link %s name %s type vlan id %d && ip link set dev %s alias mini-router; fi\n", sub, dev, sub, vid, sub)
 }
 
 // nftIfnames renders one interface name or an anonymous set of them.
@@ -632,6 +775,12 @@ func netNft(c *Config, hook string, n *Nft) {
 		for _, r := range lanGatewayRouteNAT(c) {
 			n.W("%s", r)
 		}
+		for _, r := range wanGatewayNATRules(c) {
+			n.W("%s", r)
+		}
+		for _, r := range modemNATRules(c) {
+			n.W("%s", r)
+		}
 	case "forward_first":
 		for _, r := range policyFallbackRules(c) {
 			n.W("%s", r)
@@ -665,6 +814,57 @@ func netNft(c *Config, hook string, n *Nft) {
 			}
 		}
 	}
+}
+
+func modemNATRules(c *Config) []string {
+	var out []string
+	for _, w := range c.WAN {
+		address := normalizedModemAddress(w)
+		if address == "" || w.Proto != "pppoe" {
+			continue
+		}
+		ip := net.ParseIP(address)
+		if ip == nil || ip.To4() == nil {
+			continue
+		}
+		for _, ln := range c.LANNets() {
+			if ln.Zone != "lan" {
+				continue
+			}
+			_, n, err := net.ParseCIDR(ln.IPv4)
+			if err != nil {
+				continue
+			}
+			out = append(out, fmt.Sprintf("iifname %q oifname %q ip daddr %s ip saddr %s masquerade comment \"modem:%s\"", ln.Bridge, w.LinkDev(), ip, n, w.Name))
+		}
+	}
+	return out
+}
+
+// wanGatewayNATRules keeps LAN clients' packets to an overlapping DHCP/static gateway on the WAN.
+// The lease is runtime state, so fwLoad after a WAN hook picks up changes without config edits.
+func wanGatewayNATRules(c *Config) []string {
+	var out []string
+	for _, w := range c.WAN {
+		l, ok := readLease(w.Name)
+		if !ok || l.Gateway == "" || l.Dev == "" {
+			continue
+		}
+		gw := net.ParseIP(l.Gateway)
+		if gw == nil || gw.To4() == nil {
+			continue
+		}
+		for _, ln := range c.LANNets() {
+			if ln.Zone != "lan" {
+				continue
+			}
+			_, n, err := net.ParseCIDR(ln.IPv4)
+			if err == nil && n.Contains(gw) {
+				out = append(out, fmt.Sprintf("iifname %q oifname %q ip daddr %s ip saddr %s masquerade comment \"wan-gateway:%s\"", ln.Bridge, l.Dev, gw, n, w.Name))
+			}
+		}
+	}
+	return out
 }
 
 // sortedWANs returns WAN names ordered by preference: healthy first, then metric, then config order.

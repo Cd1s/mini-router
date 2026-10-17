@@ -47,6 +47,11 @@ grep -q '^nic-wan.500$' "$L/etc/ppp/peers/isp3" || fail "isp3: PPPoE on VLAN"
 for s in mr-udhcpc.iptv mr-pppoe.isp3 mr-wanmon igmpproxy; do
 	grep -qx "$s" "$L/etc/mini-router/gen/services" || fail "lab services: $s"
 done
+grep -q 'ip addr replace 192.168.1.2/32 dev wan' "$L/etc/mini-router/gen/network.sh" || fail "modem alias is not /32"
+grep -q 'ip route replace 192.168.1.1/32 dev wan src 192.168.1.2' "$L/etc/mini-router/gen/network.sh" || fail "modem host route"
+al=$(grep -n 'ip addr replace 192.168.1.2/32 dev wan' "$L/etc/mini-router/gen/network.sh" | cut -d: -f1)
+lan=$(grep -n 'ip addr replace 192.168.1.6/24 dev br-lan' "$L/etc/mini-router/gen/network.sh" | cut -d: -f1)
+[ "$al" -gt "$lan" ] || fail "modem alias runs before br-lan address"
 if grep -q 'mr-udhcpc\|mr-wanmon' "$OUT/home/etc/mini-router/gen/services"; then fail "home: unexpected services"; fi
 
 step "functional: DHCP + static WAN, health checker, failover, balance (network namespaces)"
@@ -55,11 +60,11 @@ rm -rf "$T" && mkdir -p "$T/bin"
 mkdir -p /run/mini-router && mount -t tmpfs tmpfs /run/mini-router
 S=mrnet$$s C=mrnet$$c
 DS=mrdom$$s DC=mrdom$$c DL=mrdom$$l # policy route by domain (3.)
-RR=mrra$$r RC=mrra$$c MVN=mrmv$$    # PPPoE MTU / RFC 9096 / macvlan (4.)
+RR=mrra$$r RC=mrra$$c MVN=mrmv$$ MN=mrmodem$$ # PPPoE MTU / RFC 9096 / modem / macvlan (4.)
 cleanup() {
 	[ -f "$T/dnsmasq.pid" ] && kill "$(cat "$T/dnsmasq.pid")" 2> /dev/null
 	[ -f "$T/ra-dnsmasq.pid" ] && kill "$(cat "$T/ra-dnsmasq.pid")" 2> /dev/null
-	for n in "$S" "$C" "$DS" "$DC" "$DL" "$RR" "$RC" "$MVN"; do
+	for n in "$S" "$C" "$DS" "$DC" "$DL" "$RR" "$RC" "$MVN" "$MN"; do
 		for p in $(ip netns pids "$n" 2> /dev/null); do kill "$p" 2> /dev/null; done
 		ip netns del "$n" 2> /dev/null
 	done
@@ -213,6 +218,21 @@ has "event: failover back" "$ev" '"type":"failover","sev":"info","key":"wan2","m
 has "event: lease lost" "$ev" '"type":"wan_down","sev":"warn","key":"wan","msg":"wan lost its connection (dhcp on wan)"'
 has "event: lease again" "$ev" '"type":"wan_up","sev":"info","key":"wan","msg":"wan is connected again after [0-9]*s down"'
 [ "$(printf '%s\n' "$ev" | grep -c '"type":"wan_up"')" = 1 ] || fail "event: a renewal counted as a recovery: $ev"
+
+# upstream router overlaps LAN: the DHCP hook must pin the gateway to WAN, proxy-ARP it on LAN,
+# and install a /32 masquerade rule rather than treating the whole LAN subnet as upstream.
+inC env interface=wan ip=192.168.1.2 mask=24 router=192.168.1.1 dns=192.168.1.1 mr wan dhcp bound
+has "overlap: main host route" "$(ip -n "$C" route show)" "192.168.1.1 dev wan"
+has "overlap: WAN table host route" "$(ip -n "$C" route show table 200)" "192.168.1.1 dev wan"
+has "overlap: proxy ARP" "$(ip -n "$C" neigh show proxy)" "192.168.1.1 dev br-lan"
+has "overlap: gateway NAT" "$(inC nft list table inet mr)" 'ip daddr 192.168.1.1 ip saddr 192.168.1.0/24 masquerade comment "wan-gateway:wan"'
+hasnt "overlap: guest NAT" "$(inC nft list table inet mr)" 'comment "modem:'
+inC env interface=wan mr wan dhcp deconfig 2> /dev/null
+hasnt "overlap: deconfig proxy" "$(ip -n "$C" neigh show proxy)" "192.168.1.1 dev br-lan"
+hasnt "overlap: deconfig route" "$(ip -n "$C" route show)" "192.168.1.1 dev wan"
+# restore the ordinary lease for the following stale-WAN cleanup assertion
+inC env interface=wan ip=10.99.0.78 mask=24 router=10.99.0.1 dns=10.99.0.53 mr wan dhcp bound
+
 
 # the DHCP WAN leaves router.yaml (back home after travelling): its client's deconfig no longer finds
 # the interface, so `mr routes` (run by every apply) removes the address and default route left on it
@@ -464,7 +484,7 @@ cat > "$M4/router.yaml" << 'EOF'
 system: {hostname: mtutest}
 lan: {bridge: br-lan, ports: [lan2], ipv4: 192.168.1.6/24, ipv6_ra: true}
 wan:
-  - {name: wan, device: wan, proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, mtu: 1500, metric: 10}
+  - {name: wan, device: wan, proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, mtu: 1500, metric: 10, peerdns: true, modem: {address: 192.168.1.1}}
   - {name: tv, device: wan, vlan: 20, proto: dhcp, metric: 20}
 firewall: {offload: software}
 dhcp: {start: 100, end: 200, lease: 12h, domain: lan, ipv6: {mode: slaac, lease: 1d}}
@@ -479,6 +499,14 @@ grep -E '^ip link set dev [a-z0-9.]+ mtu [0-9]+$|type vlan id' "$M4/r/etc/mini-r
 ip netns exec "$RR" sh -e "$M4/links.sh"
 [ "$(ip netns exec "$RR" cat /sys/class/net/wan/mtu)" = 1508 ] || fail "wan MTU $(ip netns exec "$RR" cat /sys/class/net/wan/mtu), want 1508"
 [ "$(ip netns exec "$RR" cat /sys/class/net/wan.20/mtu)" = 1500 ] || fail "wan.20 MTU $(ip netns exec "$RR" cat /sys/class/net/wan.20/mtu), want 1500"
+ip netns add "$MN"
+ip -n "$MN" link add wan type dummy
+ip -n "$MN" link set wan up
+ip -n "$MN" link add lan2 type dummy
+ip netns exec "$MN" sh "$M4/r/etc/mini-router/gen/network.sh" 2> "$M4/network.err" || { cat "$M4/network.err"; fail "network.sh modem path"; }
+has "modem route" "$(ip -n "$MN" route get 192.168.1.1)" "dev wan"
+has "LAN route survives modem alias" "$(ip -n "$MN" route get 192.168.1.50)" "dev br-lan"
+has "modem proxy" "$(ip -n "$MN" neigh show proxy)" "192.168.1.1 dev br-lan"
 echo "net: PPPoE port 1508, DHCP VLAN 1500"
 
 step "multi-dial on one port (#114): the rendered macvlan lines in the real kernel"
@@ -488,8 +516,8 @@ cat > "$MV/router.yaml" << 'EOF'
 system: {hostname: mvtest}
 lan: {bridge: br-lan, ports: [lan2], ipv4: 192.168.1.6/24}
 wan:
-  - {name: wan, device: wan, mac: "02:00:00:00:00:01", proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, metric: 10}
-  - {name: wan2, device: wan, mac: "02:94:9a:e3:fb:78", proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, metric: 20}
+  - {name: wan, device: wan, mac: "02:00:00:00:00:01", proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, metric: 10, peerdns: true}
+  - {name: wan2, device: wan, mac: "02:94:9a:e3:fb:78", proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, metric: 20, peerdns: true}
 firewall: {offload: software}
 dhcp: {start: 100, end: 200, lease: 12h, domain: lan}
 EOF
