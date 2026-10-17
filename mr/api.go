@@ -738,9 +738,11 @@ func apiApply(r apiReq) apiResp {
 		}
 	}
 	if err := writeAtomic(CandidateYAML, y, 0600); err != nil {
+		os.Remove(confirmTokenFile)
 		return errResp(500, "%v", err)
 	}
 	if err := writeSecrets(CandidateSec, sec); err != nil {
+		os.Remove(confirmTokenFile)
 		return errResp(500, "%v", err)
 	}
 	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: via, From: r.remote, Comment: in.Comment, BaseRev: base})
@@ -761,9 +763,13 @@ func runApplyJob(confirmSecs int) error {
 	j0 := readJob()
 	j0.Pid = os.Getpid()
 	writeJob(j0)
-	tokenBytes, _ := os.ReadFile(confirmTokenFile)
+	token := ""
+	if j0.Via == "" || j0.Via == "web UI" {
+		tokenBytes, _ := os.ReadFile(confirmTokenFile)
+		token = strings.TrimSpace(string(tokenBytes))
+	}
 	os.Remove(confirmTokenFile)
-	o := applyOpts{Via: j0.Via, From: j0.From, Comment: j0.Comment, BaseRev: j0.BaseRev, ConfirmToken: strings.TrimSpace(string(tokenBytes))}
+	o := applyOpts{Via: j0.Via, From: j0.From, Comment: j0.Comment, BaseRev: j0.BaseRev, ConfirmToken: token}
 	if o.Via == "" {
 		o.Via = "web UI"
 	}

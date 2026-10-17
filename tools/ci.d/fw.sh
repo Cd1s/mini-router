@@ -255,7 +255,9 @@ ip -n "$L2" -6 route replace default via 2001:db8:1::1
 ok "$W" 203.0.113.1 4443 "WAN -> open port 4443 (IPv4)"
 ok "$W" 2001:db8:ffff::1 4443 "WAN -> open port 4443 (IPv6)"
 blocked "$W" 203.0.113.1 22 "WAN -> router SSH dropped" "" "TimeoutError"
-blocked "$W" 203.0.113.1 80 "WAN -> router web UI dropped"
+blocked "$W" 203.0.113.1 80 "PPPoE WAN -> router web UI dropped (IPv4)"
+blocked "$W" 2001:db8:ffff::1 80 "PPPoE WAN -> router web UI dropped (IPv6)"
+blocked "$W" 198.51.100.1 80 "WAN2 -> router web UI dropped"
 blocked "$W" 198.51.100.1 53 "WAN2 -> router DNS dropped"
 # port forwards
 ok "$W" 203.0.113.1 7443 "forward 7443 -> desktop:9999" "" "ok from 203.0.113.2"

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -26,6 +27,9 @@ func TestLANConfirmTokenIsScopedAndHashed(t *testing.T) {
 	if err := setPending(pendingApply{Snapshot: "/tmp/snap", State: statePending, Deadline: time.Now().Unix() + 60, ConfirmHash: hex.EncodeToString(h[:])}); err != nil {
 		t.Fatal(err)
 	}
+	if marker, err := os.ReadFile(ConfirmFile); err != nil || bytes.Contains(marker, []byte(token)) {
+		t.Fatalf("pending marker contains plaintext token: %q", marker)
+	}
 	if got := confirmWithToken(token+"x", "192.168.2.44"); got.status != 401 {
 		t.Fatalf("wrong token status = %d, want 401", got.status)
 	}
@@ -38,6 +42,30 @@ func TestLANConfirmTokenIsScopedAndHashed(t *testing.T) {
 	}
 	if got := confirmWithToken(token, "192.168.2.44"); got.status != 409 {
 		t.Fatalf("applying token status = %d, want 409", got.status)
+	}
+}
+
+func TestLANConfirmTokenSuccessIsOneShotAndLANOnly(t *testing.T) {
+	_, _, _ = confirmEnv(t)
+	oldLoad := loadLANConfig
+	t.Cleanup(func() { loadLANConfig = oldLoad })
+	loadLANConfig = func() (*Config, error) { return &Config{LAN: LAN{IPv4: "192.168.2.1/24"}}, nil }
+	token := newConfirmToken()
+	h := sha256.Sum256([]byte(token))
+	if err := setPending(pendingApply{Snapshot: "/tmp/snap", State: statePending, Deadline: time.Now().Unix() + 60, ConfirmHash: hex.EncodeToString(h[:])}); err != nil {
+		t.Fatal(err)
+	}
+	if got := confirmWithToken(token, "192.168.2.44"); got.status != 0 {
+		t.Fatalf("valid LAN token status = %d, want success", got.status)
+	}
+	if got := confirmWithToken(token, "192.168.2.44"); got.status != 409 {
+		t.Fatalf("reused token status = %d, want 409", got.status)
+	}
+	if err := setPending(pendingApply{Snapshot: "/tmp/snap", State: statePending, Deadline: time.Now().Unix() + 60, ConfirmHash: hex.EncodeToString(h[:])}); err != nil {
+		t.Fatal(err)
+	}
+	if got := confirmWithToken(token, "192.168.9.44"); got.status != 403 {
+		t.Fatalf("non-LAN token status = %d, want 403", got.status)
 	}
 }
 

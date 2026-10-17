@@ -72,13 +72,15 @@ const clone = o => JSON.parse(JSON.stringify(o));
 
 // ---------- API ----------
 async function api(action, body){
-  const opt = {method: body===undefined?"GET":"POST", headers:{"X-MR":"1"}, credentials:"same-origin"};
+  const ctl = new AbortController(), timer = setTimeout(()=>ctl.abort(), body===undefined?5000:10000);
+  const opt = {method: body===undefined?"GET":"POST", headers:{"X-MR":"1"}, credentials:"same-origin", signal:ctl.signal};
   if (body!==undefined){ opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
-  const r = await fetch("/cgi-bin/api?a="+action, opt);
+  let r;
+  try { r = await fetch("/cgi-bin/api?a="+action, opt); } finally { clearTimeout(timer); }
   pendingFrom(r);
   let j = {}; try { j = await r.json(); } catch(e) {}
-  if (r.status===401 && action!=="login"){ S.auth=false; renderLogin(); throw new Error("未登录"); }
-  if (!r.ok) { const e=new Error(j.error || (j.errors||[]).join("; ") || ("HTTP "+r.status)); e.data=j; throw e; }
+  if (r.status===401 && action!=="login" && !(action==="confirm" && body&&body.token)){ S.auth=false; renderLogin(); throw new Error("未登录"); }
+  if (!r.ok) { const e=new Error(j.error || (j.errors||[]).join("; ") || ("HTTP "+r.status)); e.data=j; e.status=r.status; throw e; }
   return j;
 }
 
@@ -586,7 +588,7 @@ async function runJob(start, auto){
     let j;
     try { j = await api("job"); fails = 0; } catch(e){
       fails++;
-      if (handoff && handoff.confirm_token && handoff.confirm_ip && fails === 1) {
+      if (handoff && handoff.confirm_token && handoff.confirm_ip && fails >= 2) {
         stateEl.textContent = tr("LAN 地址已切换，正在打开新地址并自动确认…");
         const port = location.port ? ":"+location.port : "";
         const target = location.protocol+"//"+handoff.confirm_ip+port+"/#confirm="+encodeURIComponent(handoff.confirm_token);
@@ -632,13 +634,14 @@ async function runJob(start, auto){
 // response supplies a one-time token; the new origin accepts it only for POST /confirm.
 async function settleHandoff(token){
   if (!token) return false;
+  const root=$("#root"); if(root) root.replaceChildren(h("div",{class:"login"},h("div",{class:"mut"},"正在确认 LAN 变更…")));
   for (let i=0; i<125; i++) {
     try {
       await api("confirm", {token});
       history.replaceState(null, "", location.pathname+location.search+"#overview");
       return true;
     } catch(e) {
-      if (e.data && e.data.error && /invalid|only allowed|no matching/.test(e.data.error)) break;
+      if (e.status===401 || e.status===403 || e.status===409) break;
       await new Promise(resolve=>setTimeout(resolve, 1000));
     }
   }

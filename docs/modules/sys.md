@@ -151,7 +151,7 @@ Validation (the security boundary — everything below ends up in a file, a cron
 | `/etc/conf.d/ntpd` | `NTPD_OPTS="-N -S /usr/libexec/mr/clock-save -p … [-l]"`（`clock-save` 每小时最多一次把已同步的时间记到闪存，开机时 `mr-clock` 从它恢复——板子没有 RTC） | restart `ntpd` |
 | `/etc/conf.d/dropbear` (ssh on) | `DROPBEAR_OPTS="-p [addr:]port … -K 300 [-s -g]"` | restart `dropbear` |
 | `/etc/conf.d/tailscale` (on) | `TS_PORT=` (read by `/etc/init.d/tailscale`) | restart `tailscale` |
-| `/etc/conf.d/mr-panel` (on) | `PANEL_ADDR=` main LAN address (was a `sed` on router.yaml) | restart `mr-panel` |
+| `/etc/conf.d/mr-panel` (on) | `PANEL_ADDR=0.0.0.0` so both old/new LAN origins remain reachable during confirmation; nftables still restricts WAN input | restart `mr-panel` |
 | `/etc/conf.d/crond` (schedules) | `CRON_OPTS`, `export TZ=…` | restart `crond` |
 | `/etc/crontabs/root` | managed block between markers (schedules; DDNS on with an interval adds `*/N * * * * /usr/sbin/mr ddns sync --cron`; the reverse proxy adds `M H * * * /usr/sbin/mr edge renew --cron`, M and H fixed per router, H 2–5; dns.adblock adds `M * * * * /usr/sbin/mr dns adblock update --cron`; `wan[].require_public_ip` adds `* * * * * /usr/sbin/mr wan public-check --cron`; wifi.steering / wifi.self_heal add `* * * * * /usr/sbin/mr wifi tick`); Alpine's periodic lines and anything else kept | — (crond rescans the directory) |
 | `/etc/mini-router/gen/edge.json` (edge on) | port, WAN port, certificate directory, routes (host, target, certificate name, allow) — nothing secret, 0644 | restart `mr-edge` |
@@ -683,7 +683,7 @@ warn); issued and failed certificates are events of type `cert`.
 
 * New files: `/etc/localtime` (+08), `/etc/modules-load.d/mr-sys.conf`, `/etc/conf.d/sysctl`,
   `/etc/conf.d/tailscale` (`TS_PORT=41641`, same as the old hard-coded port), `/etc/conf.d/mr-panel`
-  (`PANEL_ADDR=192.168.1.6`, what the old `sed` found). The first apply after the update therefore
+  (`PANEL_ADDR=0.0.0.0`; `mr-panel` requires the nftables firewall before it starts). The first apply after the update therefore
   restarts `syslog`, `tailscale` and `mr-panel` once.
 * `conf.d/ntpd`, `conf.d/dropbear`, `90-mini-router.conf`, `hostname`, `tz.sh`: byte-identical.
 * No crontab, no authorized_keys change (no schedules, no managed keys), crond stays off.

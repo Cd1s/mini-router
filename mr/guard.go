@@ -74,6 +74,15 @@ func guardValidate(c *Config, v *Validator) {
 				}
 			}
 		}
+		for _, r := range c.Firewall.Rules {
+			if r.Dest == "router" && r.Action == "accept" {
+				for _, p := range ports {
+					if r.DestPort != "" && portIn(r.DestPort, p) {
+						v.Add("guard.never_expose: firewall.rules[%s] accepts port %d (%s) towards the router", r.Name, p, s)
+					}
+				}
+			}
+		}
 		// the HTTPS reverse proxy: a WAN-reachable route to one of these ports on the router itself
 		edgeGuard(c, v, s, ports)
 	}

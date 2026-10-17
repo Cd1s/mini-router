@@ -125,15 +125,15 @@ func TestNetGeneratedLinkCleanupOnce(t *testing.T) {
 func TestLANNetworkScriptRemovesOldBridgeAddressesAndRenewsClients(t *testing.T) {
 	c := testConfig(t)
 	sh := renderMap(t, c)[GenDir+"/network.sh"]
-	if !strings.Contains(sh, "ip addr del \"$a\" dev br-lan") {
-		t.Fatalf("network.sh does not remove stale br-lan IPv4 addresses:\n%s", sh)
+	if !strings.Contains(sh, "promote_secondaries") || !strings.Contains(sh, "ip addr del \"$a\" dev br-lan") {
+		t.Fatalf("network.sh does not safely remove stale br-lan IPv4 addresses:\n%s", sh)
 	}
 	if !strings.Contains(sh, "ip link set lan2 down") || !strings.Contains(sh, "ip link set lan2 up") {
 		t.Fatalf("network.sh does not flap LAN ports after a renumber:\n%s", sh)
 	}
 	if len(c.Networks) > 0 {
 		bridge := c.Networks[0].BridgeName()
-		if !strings.Contains(sh, "ip addr del \"$a\" dev "+bridge) {
+		if !strings.Contains(sh, "net-addresses/"+bridge) || !strings.Contains(sh, "ip addr del \"$a\" dev "+bridge) {
 			t.Fatalf("network.sh does not clean extra network bridge addresses:\n%s", sh)
 		}
 	}
