@@ -401,12 +401,13 @@ func docProbeName(c *Config) string {
 }
 
 func docDNS(c *Config, e *docEnv) []docFinding {
-	if len(docWANsUp(c, e)) == 0 {
-		if c.DNS.Upstream == "isp" && len(c.DNS.Fallback) == 0 {
-			return []docFinding{{Sev: "risk", Title: "DNS", Detail: "dns.upstream isp has no active WAN DNS source and no fallback configured",
-				Fix: "set dns.fallback to one or more resolver IPs, or restore WAN peerdns/static DNS"}}
-		}
+	up := docWANsUp(c, e)
+	if len(up) == 0 {
 		return []docFinding{{Sev: "skip", Title: "DNS", Detail: "no WAN is up"}}
+	}
+	if c.DNS.Upstream == "isp" && len(c.DNS.Fallback) == 0 && !wanDNSFromPeers(c) {
+		return []docFinding{{Sev: "warn", Title: "DNS", Detail: "WAN is online but dns.upstream isp has no configured DNS source",
+			Fix: "enable WAN peerdns, configure static WAN DNS, or set dns.fallback"}}
 	}
 	name := docProbeName(c)
 	if err := e.resolve(name); err != nil {

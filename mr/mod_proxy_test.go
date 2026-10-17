@@ -44,8 +44,8 @@ func TestProxyOffLeavesEverythingElseAlone(t *testing.T) {
 			t.Errorf("%s rendered while proxy is absent", p)
 		}
 	}
-	if strings.Contains(got[GenDir+"/network.sh"], "proxy") || strings.Contains(got[GenDir+"/services"], "mr-proxy") {
-		t.Error("proxy leaked into network.sh / services")
+	if strings.Contains(got[GenDir+"/services"], "mr-proxy") {
+		t.Error("proxy service leaked while proxy is off")
 	}
 	if strings.Contains(renderNft(c, func(string) bool { return true }), "proxy") {
 		t.Error("proxy chains rendered while proxy is absent")

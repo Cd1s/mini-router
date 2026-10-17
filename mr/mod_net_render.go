@@ -375,7 +375,7 @@ func modemAlias(c *Config, w WAN) string {
 
 func modemSh(c *Config, b *strings.Builder) {
 	b.WriteString("if [ -r /run/mini-router/modem-aliases ]; then while read -r d a t; do ip addr del \"$a\" dev \"$d\" 2>/dev/null || true; ip route del \"$t/32\" dev \"$d\" 2>/dev/null || true; done < /run/mini-router/modem-aliases; fi\n: > /run/mini-router/modem-aliases\n")
-	b.WriteString("_mr_neigh_mode=pro; _mr_neigh_mode=${_mr_neigh_mode}xy\nif [ -r /run/mini-router/modem-neigh ]; then while read -r ip d; do ip neigh del \"$_mr_neigh_mode\" \"$ip\" dev \"$d\" 2>/dev/null || true; done < /run/mini-router/modem-neigh; fi\n: > /run/mini-router/modem-neigh\n")
+	b.WriteString("if [ -r /run/mini-router/modem-neigh ]; then while read -r ip d; do ip neigh del proxy \"$ip\" dev \"$d\" 2>/dev/null || true; done < /run/mini-router/modem-neigh; fi\n: > /run/mini-router/modem-neigh\n")
 	for _, w := range c.WAN {
 		address := normalizedModemAddress(w)
 		if address == "" || w.Proto != "pppoe" {
@@ -393,7 +393,7 @@ func modemSh(c *Config, b *strings.Builder) {
 				continue
 			}
 			if _, n, err := net.ParseCIDR(ln.IPv4); err == nil && n.Contains(net.ParseIP(address)) {
-				fmt.Fprintf(b, "ip neigh replace \"$_mr_neigh_mode\" %s dev %s 2>/dev/null || true\n", address, ln.Bridge)
+				fmt.Fprintf(b, "ip neigh replace proxy %s dev %s 2>/dev/null || true\n", address, ln.Bridge)
 				fmt.Fprintf(b, "echo %s %s >> /run/mini-router/modem-neigh\n", address, ln.Bridge)
 			}
 		}

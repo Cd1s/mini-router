@@ -123,6 +123,16 @@ func TestF3GatewayRouteCommands(t *testing.T) {
 	}
 }
 
+func TestF3GatewayRouteTablesOnlyMatchesLiveRoutes(t *testing.T) {
+	routes := "192.168.1.1 dev wan src 192.168.1.2 metric 0 table 200\n" +
+		"192.168.1.1 dev wan table 103\n192.168.1.1 dev wan2 table 204\n" +
+		"192.168.1.2 dev wan table 200\n"
+	got := gatewayRouteTables(routes, "192.168.1.1", "wan")
+	if strings.Join(got, ",") != "200,103" {
+		t.Fatalf("tables=%v", got)
+	}
+}
+
 func TestF3DHCPv6RuleUsesWANAndPorts(t *testing.T) {
 	c := testConfig(t)
 	c.WAN[0].IPv6 = true

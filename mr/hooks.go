@@ -218,9 +218,14 @@ func wanUp(c *Config, w *WAN, ifname, local, gw string) {
 			if lanHostUsesIP(c, gw) {
 				eventAdd(c, "doctor", "risk", "wan."+w.Name, fmt.Sprintf("LAN host already uses upstream gateway %s; proxy ARP was not installed", gw), false)
 			} else {
+				newProxy := !proxyNeighborExists(gw, ln.Bridge)
 				must("ip", "neigh", "replace", "proxy", gw, "dev", ln.Bridge)
-				eventAdd(c, "doctor", "risk", "wan."+w.Name, fmt.Sprintf("upstream gateway %s is in LAN subnet %s; upstream and LAN share a subnet, consider changing LAN to another range", gw, ln.IPv4), false)
+				if newProxy {
+					eventAdd(c, "doctor", "risk", "wan."+w.Name, fmt.Sprintf("upstream gateway %s is in LAN subnet %s; upstream and LAN share a subnet, consider changing LAN to another range", gw, ln.IPv4), false)
+				}
 			}
+		} else if gw != "" {
+			deleteProxyNeighbors(c, gw)
 		}
 	}
 	if w.Proto == "pppoe" {
@@ -361,15 +366,42 @@ func removeGatewayArtifacts(c *Config, l wanLease) {
 		return
 	}
 	run("ip", "route", "del", l.Gateway+"/32", "dev", l.Dev)
-	// A removed WAN no longer has a name from which to recover its old table number. Remove
-	// the host route from the dynamically allocated WAN tables as well; connected LAN routes
-	// are unaffected and a later refresh re-adds the live WAN's own entry.
-	for table := 200; table <= 250; table++ {
-		run("ip", "route", "del", l.Gateway+"/32", "dev", l.Dev, "table", fmt.Sprint(table))
+	if l.Prefix > 0 { // PPPoE's peer route has no IPv4 prefix and never uses this gateway path.
+		if out, err := run("ip", "-4", "route", "show", "table", "all"); err == nil {
+			for _, table := range gatewayRouteTables(out, l.Gateway, l.Dev) {
+				run("ip", "route", "del", l.Gateway+"/32", "dev", l.Dev, "table", table)
+			}
+		}
 	}
 	if ln := lanForIP(c, l.Gateway); ln != nil && !sameIP(l.Gateway, lanAddress(ln.IPv4)) {
 		run("ip", "neigh", "del", "proxy", l.Gateway, "dev", ln.Bridge)
 	}
+}
+
+func gatewayRouteTables(routes, gateway, dev string) []string {
+	want, bare := gateway+"/32", gateway
+	seen := map[string]bool{}
+	var out []string
+	for _, line := range strings.Split(routes, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 3 || (f[0] != want && f[0] != bare) {
+			continue
+		}
+		matchDev, table := false, ""
+		for i := 1; i+1 < len(f); i++ {
+			switch f[i] {
+			case "dev":
+				matchDev = f[i+1] == dev
+			case "table":
+				table = f[i+1]
+			}
+		}
+		if matchDev && table != "" && !seen[table] {
+			seen[table] = true
+			out = append(out, table)
+		}
+	}
+	return out
 }
 
 // gatewayRouteCommands installs a gateway host route in both the main and WAN policy tables.
@@ -412,7 +444,31 @@ func lanHostUsesIP(c *Config, ip string) bool {
 			return true
 		}
 	}
+	for _, ln := range c.LANNets() {
+		if ln.Zone != "lan" {
+			continue
+		}
+		out, _ := run("ip", "-4", "neigh", "show", "dev", ln.Bridge)
+		for _, line := range strings.Split(out, "\n") {
+			if f := strings.Fields(line); len(f) > 0 && sameIP(f[0], ip) {
+				return true
+			}
+		}
+	}
 	return false
+}
+
+func proxyNeighborExists(ip, dev string) bool {
+	out, _ := run("ip", "neigh", "show", "proxy", ip, "dev", dev)
+	return strings.TrimSpace(out) != ""
+}
+
+func deleteProxyNeighbors(c *Config, ip string) {
+	for _, ln := range c.LANNets() {
+		if ln.Zone == "lan" {
+			run("ip", "neigh", "del", "proxy", ip, "dev", ln.Bridge)
+		}
+	}
 }
 
 // dropStaleWANs removes what a WAN that left router.yaml (or moved to another interface: renamed,
