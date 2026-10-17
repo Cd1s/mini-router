@@ -166,6 +166,8 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
         }
       }
       delete w.modem;
+      delete w.require_public_ip;
+      delete w.require_public_ip_gap;
     } else if (!w.password_secret) {
       w.password_secret = "pppoe_password";
     }
@@ -219,6 +221,9 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
         touch();
       }});
       rows.push(...field("光猫管理页", h("span",{class:"row"},modemToggle,modemInput), "启用后，局域网设备可访问桥接光猫的管理页（例如 192.168.1.1）；地址必须是上级私网 IPv4。"));
+      rows.push(
+        ...field("要求公网 IPv4", inBool(w,"require_public_ip"), "拿到内网或 CGNAT 地址时自动重拨这一条线路；连续 5 次仍拿不到公网地址后停止并告警。"),
+        ...field("公网地址重拨冷却（秒）", inNum(w,"require_public_ip_gap",{min:1,max:86400,placeholder:"180",value:w.require_public_ip_gap||""}), "留空使用默认 180 秒；只在 PPPoE 且开启上面的开关时生效。"));
     }
     if (p==="static") rows.push(
       ...field("IPv4 地址 / 掩码", inText(w,"ipv4",{placeholder:"203.0.113.10/24"})),

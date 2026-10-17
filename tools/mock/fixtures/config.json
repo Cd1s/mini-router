@@ -157,6 +157,8 @@
     "password_secret": "pppoe_password",
     "peerdns": true,
     "proto": "pppoe",
+    "require_public_ip": true,
+    "require_public_ip_gap": 300,
     "username": "user@example-isp"
    },
    {
