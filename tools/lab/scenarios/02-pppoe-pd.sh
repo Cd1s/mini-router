@@ -1,42 +1,16 @@
 #!/bin/sh
-# PPPoE WAN with IPv6 prefix delegation. Called by lab.sh run <id> 02-pppoe-pd.
-set -u
-
-ID=${1:?usage: 02-pppoe-pd.sh <lab-id>}
-SELF_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-LAB_SH=${LAB_SH:-"$SELF_DIR/../lab.sh"}
-LOG=${LAB_SCENARIO_LOG:-/tmp/mrlab${ID}-02-pppoe-pd.log}
-: > "$LOG"
-
-run() {
-	printf '+ %s\n' "$*" >> "$LOG"
-	"$@" >> "$LOG" 2>&1
-}
-
-ok=0
-fail=0
-check() {
-	name=$1; shift
-	if "$@" >> "$LOG" 2>&1; then
-		ok=$((ok + 1)); printf 'ok %s - %s\n' "$ok" "$name"
-	else
-		fail=$((fail + 1)); printf 'not ok %s - %s\n' "$((ok + fail))" "$name"
-		printf '# evidence: %s\n' "$(tail -8 "$LOG" | tr '\n' ' ')"
-	fi
-}
-
-run "$LAB_SH" reset "$ID" || true
-run "$LAB_SH" up "$ID" || true
-run "$LAB_SH" isp "$ID" 1 pppoe v6=pd || true
-run "$LAB_SH" install "$ID" --wan-proto pppoe || true
-check "LAN client obtains IPv4/IPv6 leases" "$LAB_SH" lan "$ID" dhcp
-
-# The client check must verify a global address and an IPv6 path. Keep a direct probe as an
-# additional assertion when the helper exposes only a summary line.
-check "LAN client has a global IPv6 address" "$LAB_SH" lan "$ID" exec sh -c 'ip -6 addr show scope global | grep -q "scope global"'
-check "IPv6 prefix delegation reaches the LAN client" "$LAB_SH" lan "$ID" check
-check "client can ping the ISP IPv6 test address" "$LAB_SH" lan "$ID" exec ping6 -c 2 -W 3 "2001:db8:${ID}::1"
-
-printf '# log: %s\n' "$LOG"
-[ "$fail" -eq 0 ]
-
+# A fresh Alpine machine on PPPoE with DHCPv6 prefix delegation (/60 from 2001:db8:<id>:100::/56).
+NAME=02-pppoe-pd
+# shellcheck source=lib.sh
+. "$(dirname "$0")/lib.sh"
+step lab reset "$ID"
+step lab isp "$ID" 1 pppoe v6=pd
+check "install.sh completes on a fresh Alpine (PPPoE WAN)" lab install "$ID" --wan-proto pppoe
+check "router's PPPoE session is up" lab console "$ID" 'ip -4 addr show pppoe-wan | grep -q "inet 203.0.113."'
+check "router receives a delegated prefix" retry 90 lab console "$ID" 'ip -6 addr show dev br-lan scope global | grep -q "2001:db8:'"$ID"':1"'
+check "LAN client gets a DHCP lease" lab lan "$ID" dhcp
+check "LAN client reaches the IPv4 internet over PPPoE" lab lan "$ID" exec 'curl -4 -fsS -o /dev/null --max-time 10 http://example.com/'
+check "LAN client resolves names" lab lan "$ID" exec 'getent hosts example.com'
+check "LAN client gets a global IPv6 address from the delegated prefix" retry 60 lab lan "$ID" exec 'ip -6 addr show scope global -tentative | grep -q "inet6 2001:db8:'"$ID"':1"'
+check "LAN client pings the ISP over IPv6" lab lan "$ID" exec "ping6 -c 2 -W 3 2001:db8:$ID:1::1"
+finish

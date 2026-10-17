@@ -2,181 +2,141 @@
 
 ## Quick reference for test agents
 
+Run as root on IN from the repository root. IDs 1–8 are independent labs and may run at the same
+time. Every command checks the host's `/etc/resolv.conf`, `/etc/hosts` and `/etc/ppp/**` before
+and after and fails loudly if anything changed.
+
 ```sh
 L=tools/lab/lab.sh; ID=1
-$L reset $ID
-$L isp $ID 1 dhcp
-$L install $ID --wan-proto dhcp       # --no-apply leaves config unapplied
-$L lan $ID dhcp; $L lan $ID check
-$L api $ID GET status                  # logs in with labpass1 and keeps a cookie jar
-$L lan $ID exec curl -fsS http://192.168.1.1/
-$L run $ID 01-fresh-dhcp
+trap '$L down $ID' EXIT                         # always clean up
+
+# 1. a new router: never-booted Alpine 3.24 + the real install.sh (2–3 min)
+$L reset $ID                                    # empty lab: namespaces + a fresh disk
+$L isp $ID 1 dhcp                               # what the "ISP" offers (see ISP modes)
+$L install $ID --wan-proto dhcp                 # ok / the install.sh error; LAN 192.168.1.1, admin labpass1
+#   --wan-proto pppoe|static   --lan-ip 10.0.0.1/24   --no-apply (MR_APPLY=0)
+#   --tree /path/to/checkout   test another branch (also MR_LAB_TREE=...)
+#   --release vX.Y.Z           a published release instead of the working tree
+
+# 2. change the ISP under the running router
+$L isp $ID 1 pppoe v6=pd                        # PPPoE (lab/labpass) + DHCPv6-PD /60
+$L isp $ID 1 dhcp --subnet 192.168.1.0/24       # a modem on the router's own LAN subnet
+$L isp $ID 1 down                               # cable pulled
+
+# 3. check from the LAN client (a netns behind the router's LAN port)
+$L lan $ID dhcp                                 # {"dhcp":"ok","addr":...} or exit 1
+$L lan $ID check                                # {"ipv4","ipv6","dns","panel"}; exit 1 without IPv4+DNS
+$L lan $ID exec 'curl -fsS http://example.com/ >/dev/null && ping6 -c2 2001:db8:1:1::1'
+
+# 4. settings through the web UI API (logs in with labpass1, keeps the session cookie)
+$L api $ID GET status
+$L change $ID '[{"op":"set","path":"system.hostname","value":"r1"}]'           # apply + confirm
+$L change $ID '[{"op":"set","path":"dhcp.lease","value":"1h"}]' --no-confirm   # leave it pending
+
+# 5. inside the router, power
+$L console $ID 'mr status; tail -20 /var/log/messages'   # root shell, works with the network down
+$L reboot $ID; $L powercut $ID                  # clean reboot / kill -9 QEMU and boot again
+
+# 6. clean up
 $L down $ID
+ip -br link | grep -c mrlab                     # must print 0
 ```
 
-Use IDs 1–8 concurrently. `isp` accepts `dhcp`, `pppoe`, `static`, `down`; PPPoE variants are
-`--badpass`, `nopado`, `--cgnat`, and `v6=pd`. `ssh`, `console`, `reboot`, `powercut`, and
-`status` are recovery commands. Scenarios 01–05 emit TAP `ok`/`not ok` lines and leave logs in
-`/tmp/mrlab<ID>-*.log`. If the guest DHCP service is not ready, `lan dhcp` reports
-`fallback-static` explicitly so a test never mistakes the fallback for a real lease. Always run
-`down` in a trap when writing a test agent.
+Scenarios (TAP output, log in `/tmp/mrlab<ID>-<name>.log`): `$L run $ID 01-fresh-dhcp`,
+`02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`.
+Each starts with `reset`, so give every parallel scenario its own ID.
 
-`tools/lab/lab.sh` builds isolated Alpine/QEMU router laboratories. Each lab has its own
-network namespaces, bridge, tap devices, QEMU process, ISP simulator and LAN client namespace.
-The host's network namespace, routes and firewall are not modified.
-
-## Dependencies
-
-Run the commands as root on the IN build host. The lab needs:
+## What a lab is
 
 ```text
-qemu-system-x86_64 qemu-img ip (iproute2) ip netns
-slirp4netns ppp pppoe dnsmasq curl jq ssh ssh-keygen
-kea-dhcp6-server or radvd ndisc6 socat cloud-image-utils (or genisoimage)
+                      slirp4netns (user-mode NAT to the internet; no host route or rule)
+                         |                                 |
+               mrlab<ID>-isp1 netns                 mrlab<ID>-isp2 netns   (second WAN, unused yet)
+   DHCP / PPPoE / static, DNS, radvd, kea (PD)
+                         |
+               mrlab<ID>-sw netns: br-wan1, br-wan2, br-lan, QEMU taps
+                         | eth0 (WAN)
+             +-----------+-----------------------+
+             | QEMU: Alpine 3.24, 512 MiB, 1 vCPU|  console: ttyS0 -> state/mrlab<ID>/console.log
+             |                                   |  lab agent: virtio-serial "mrlab.agent"
+             +-----------+-----------------------+
+                         | eth1 (LAN)
+               mrlab<ID>-lan netns: the user's computer (udhcpc, SLAAC, curl, ping6)
 ```
 
-The helper installs no packages itself. Alpine 3.24 x86_64 is used for the base image. QEMU
-may use KVM when available; each guest is capped at one vCPU and 512 MiB RAM. Base and overlay
-images live in `/root/build/mr-lab-images/` and should stay below the 5 GiB disk budget.
+- **Guest**: the official Alpine 3.24 cloud image, booted once offline to add `linux-lts`
+  (`alpine-3.24-x86_64-lts.qcow2`, built automatically). `MR_LAB_KERNEL=virt` uses the cloud
+  image's `linux-virt` kernel instead — that kernel has no PPPoE (see "Known product findings").
+  `install` gives the lab a new disk over the read-only base, so every install is a first boot.
+- **Install**: cloud-init only sets the root password (`labpass1`) and a lab SSH key, points apk at
+  the seeded mirror and starts the unmodified `install.sh` after OpenRC finished booting
+  (`guest/setup.sh`, `guest/install-run.sh`), with `MR_YES=1 MR_LOCAL=... MR_WAN=eth0
+  MR_LAN_PORTS=eth1`. Its output is on the serial console; the last line is
+  `MRLAB-INSTALL-RC=<n>`. Nothing in the guest is faked: no apk stub, no fallback DHCP or web server.
+- **Packages**: `/root/build/mr-lab-images/apk-mirror` holds the official signed APKINDEX of
+  main and community plus every package `install.sh` installs (found by installing the base
+  image's world and install.sh's list into a scratch root; rebuilt when the list in `install.sh`
+  changes). The guest therefore needs no internet during the install, in every ISP mode.
+- **Release**: `tools/release.sh` of the chosen tree, cached in `mr-lab-images/release-<hash>`.
+- **Console**: `lab.sh console` talks to a root shell on a virtio-serial port (`guest/agent.sh`,
+  started at every boot from `/etc/local.d`). A serial UART was not reliable for this. Use it when
+  the router's network is down; `ssh` (LAN side, lab key) works when it is up.
 
-The install path builds release assets from the current tree using `tools/release.sh`, then calls
-the repository `install.sh` in unattended mode. A local asset directory must contain
-`mr-linux-amd64` and `mini-router-rootfs.tar.gz`; a tagged release can instead be selected with
-`--release`.
+## ISP modes
 
-## Host safety
+| `isp <id> <wan> ...` | ISP side | router WAN |
+| --- | --- | --- |
+| `dhcp [--subnet 192.168.1.0/24]` | dnsmasq DHCP + DNS on `10.<id>.<wan>.1/24`; with `--subnet 192.168.1.0/24` it also serves a modem page on 192.168.1.1 | DHCP |
+| `static` | `10.<id>.<wan>.1/24` + DNS; `install --wan-proto static` uses `.2/24` | static |
+| `pppoe [v6=slaac\|pd] [--badpass] [nopado] [--cgnat]` | pppoe-server, CHAP `lab`/`labpass` (`--badpass`: the server expects another password; `nopado`: no server at all; `--cgnat`: 100.64.<id>.x). After IPv6CP the ISP end is `2001:db8:<id>:<wan>::1/64`; `v6=slaac` adds RAs for that /64, `v6=pd` also kea DHCPv6 delegating /60s from `2001:db8:<id>:<wan>00::/56` | PPPoE |
+| `down` | link down | — |
 
-Every lab namespace gets an `/etc/netns/mrlab<ID>-*/resolv.conf` before any `ip netns exec` call.
-`lab.sh lan ... dhcp` uses a private `udhcpc -s` hook whose lease DNS is written under that lab's
-`tools/lab/state/` directory and then copied to the namespace resolv bind file. It never uses the
-BusyBox default script, which can overwrite the host `/etc/resolv.conf` when the namespace bind
-file is missing. ISP dnsmasq lease, pid and log files, PPP/PPPoE pid/log files, radvd files and
-Kea state are likewise directed into the lab state directory. `down` removes the namespace bind
-files. Each `lab.sh` invocation hashes `/etc/resolv.conf`, `/etc/hosts`, and every file under
-`/etc/ppp` before and after the command; any difference prints a unified diff and fails the command.
-After all scenarios, verify `/etc/resolv.conf` has the same SHA256 as before the run.
-
-## Topology
-
-Every name below is prefixed by `mrlab<ID>`, so labs 1 through 8 can run at the same time:
-
-```text
-                         slirp4netns (host internet)
-                                  |
-             +--------------------+--------------------+
-             |                                         |
-     mrlab<ID>-isp1 netns                       mrlab<ID>-isp2 netns
-       DHCP/PPPoE/static                        optional second WAN
-             |                                         |
-       mrlab<ID>-sw netns (bridge)                 (WAN2)
-             | eth0 WAN1      eth2 WAN2 (optional)
-          +--+---------------------------------------+
-          | QEMU mini-router VM (512 MiB, 1 vCPU)    |
-          +--+---------------------------------------+
-             | eth1 LAN
-             |
-       mrlab<ID>-lan netns (client, DHCP/IPv6 checks)
-```
-
-The switch namespace owns the bridge and QEMU taps. ISP and LAN namespaces are connected with
-veth pairs. `slirp4netns` provides upstream access from each ISP namespace without a host bridge,
-host route, nftables rule, sysctl change or other host network mutation.
+The ISP's own resolver files (`/etc/resolv.conf`, `/etc/ppp`) are per-namespace copies under
+`/etc/netns/mrlab<ID>-*`; kea runs under the host's AppArmor profile in a private mount namespace
+whose `/etc/kea`, `/run/kea`, `/run/lock/kea` and `/var/lib/kea` are lab directories. Its NAT
+is an nftables table inside the ISP namespace only.
 
 ## Commands
 
-All commands are run from the repository root or with an absolute path to `lab.sh`:
-
-```sh
-tools/lab/lab.sh up <id>                  # create namespaces, taps and start the guest
-tools/lab/lab.sh down <id>                # stop guest and remove only this lab's namespaces
-tools/lab/lab.sh status <id>              # JSON-ish process/link/namespace status
-tools/lab/lab.sh reset <id>               # restore a fresh Alpine overlay
-tools/lab/lab.sh install <id> [options]   # build/copy mr and run unattended install.sh
-tools/lab/lab.sh isp <id> <wan> <mode> [v6=none|slaac|pd|slaac+pd] [options]
-tools/lab/lab.sh lan <id> dhcp            # renew the client IPv4/IPv6 leases
-tools/lab/lab.sh lan <id> check           # report IPv4, DNS, IPv6 and panel checks
-tools/lab/lab.sh lan <id> exec <command>  # execute in the LAN client namespace
-tools/lab/lab.sh ssh <id> <command>       # LAN-side SSH command to the router
-tools/lab/lab.sh console <id> <command>   # serial command with an end marker
-tools/lab/lab.sh reboot <id>               # guest reboot
-tools/lab/lab.sh powercut <id>             # kill -9 QEMU and start it again
-tools/lab/lab.sh api <id> GET|POST <path> [json]
-tools/lab/lab.sh run <id> <scenario>      # run scenarios/NN-name.sh
+```text
+up|down|reset|status <id>          lab lifecycle (down removes only mrlab<ID>* objects and state)
+isp <id> <wan> <mode> [opts]       ISP simulator (table above)
+install <id> [opts]                fresh disk + real install.sh; exit 1 with the installer's last lines
+lan <id> dhcp|static [a/len [gw]]|check|exec <cmd>
+console <id> <cmd>                 MRLAB_TIMEOUT=<s> (default 60)
+ssh <id> <cmd>                     LAN-side SSH with the lab key (only when sshd runs)
+api <id> GET|POST <action> [json]  docs/api.md; MR_TOKEN=<token> uses a Bearer token instead
+change <id> <patch> [--no-confirm] [--secrets json]
+reboot|powercut <id>
+run <id> <scenario>
+mirror [tree]                      (re)build the apk mirror for that tree's install.sh
 ```
 
-`isp` modes are `dhcp`, `pppoe`, `static` and `down`. DHCP accepts `--subnet CIDR` for a
-same-subnet optical modem and serves its management page at `192.168.1.1`; PPPoE accepts
-`--cgnat`, `--badpass` and `nopado`. The fixed lab credentials are `lab` / `labpass`.
+State lives in `tools/lab/state/mrlab<ID>/` (`console.log`, `agent.out`, `install/`, `isp1/`
+with the dnsmasq/pppd/radvd/kea logs). Images and caches are in `/root/build/mr-lab-images/`
+(about 1.5 GiB).
 
-The unattended install uses `MR_YES=1 MR_LOCAL=... MR_WAN=eth0 MR_LAN_PORTS=eth1` and the
-requested `MR_WAN_PROTO`. `--no-apply` maps to `MR_APPLY=0`, which leaves the first-boot setup
-available for a scenario to exercise. `lab.sh api` follows `docs/api.md`: it obtains/uses the lab
-apply token, sends `Authorization: Bearer`, reads `rev`, applies a patch, polls `job`, and confirms
-the pending change.
+## Host safety
 
-## Scenarios
+- No host bridge, route, nftables rule or sysctl is created; all addresses and daemons are inside
+  `mrlab<ID>-*` namespaces. slirp4netns gives the ISP namespace internet as a user-mode stack.
+- Each namespace has its own `/etc/netns/<ns>/resolv.conf`; the LAN client's DHCP uses a private
+  `udhcpc -s` script that writes lab state only (the BusyBox default script would overwrite the
+  host's `/etc/resolv.conf`).
+- pppd reads `/etc/netns/<isp>/ppp` (bind-mounted over `/etc/ppp` by `ip netns exec`), never the
+  host's `/etc/ppp` scripts. The first PPPoE run loads the host's `ppp_generic` module (via
+  `/dev/ppp`), which is the only host-kernel side effect.
+- After a run: `sha256sum /etc/resolv.conf` unchanged and `ip -br link | grep -c mrlab` = 0.
 
-The scripts in `scenarios/` are self-contained TAP-style checks. They accept a lab ID when called
-directly and are normally invoked with `lab.sh run`:
+Never point the lab at a real LAN or a household device.
 
-```sh
-tools/lab/lab.sh run 1 01-fresh-dhcp
-tools/lab/lab.sh run 1 02-pppoe-pd
-tools/lab/lab.sh run 1 03-move-dhcp-samesubnet
-```
+## Known product findings
 
-`01-fresh-dhcp` resets and installs DHCP, then checks a LAN lease, IPv4 reachability, DNS and the
-panel. `02-pppoe-pd` resets and installs PPPoE, switches the ISP to IPv6 prefix delegation,
-renews the LAN lease and checks a global IPv6 address plus an ISP-side IPv6 target. `03` starts
-from PPPoE and changes only the WAN protocol through the panel API to DHCP on `192.168.1.0/24`;
-it records both successful and failed checks because the same-subnet move is expected to expose a
-real product failure in some configurations. Its patch also removes the obsolete PPPoE
-`password_secret`; the API token guard permits removing a credential reference but refuses to
-change a still-secret-bearing WAN.
+See the latest report (`report-A1c-lab.md` in the fleet share) for details and reproduction.
 
-## Parallel labs and cleanup
-
-Use distinct IDs and separate terminals or CI jobs:
-
-```sh
-tools/lab/lab.sh up 1
-tools/lab/lab.sh up 2
-tools/lab/lab.sh install 1 --wan-proto dhcp
-tools/lab/lab.sh install 2 --wan-proto dhcp
-```
-
-Do not reuse an ID while another job is running. At the end, run `down` for every ID and compare
-the host state captured before the run:
-
-```sh
-ip netns list > /tmp/mrlab-netns.before
-ip link show > /tmp/mrlab-links.before
-ip route show > /tmp/mrlab-route.before
-nft list ruleset | md5sum > /tmp/mrlab-nft.before
-# ... run labs ...
-tools/lab/lab.sh down 1
-tools/lab/lab.sh down 2
-ip netns list > /tmp/mrlab-netns.after
-ip link show > /tmp/mrlab-links.after
-ip route show > /tmp/mrlab-route.after
-nft list ruleset | md5sum > /tmp/mrlab-nft.after
-diff -u /tmp/mrlab-netns.before /tmp/mrlab-netns.after || true
-diff -u /tmp/mrlab-links.before /tmp/mrlab-links.after || true
-diff -u /tmp/mrlab-route.before /tmp/mrlab-route.after || true
-diff -u /tmp/mrlab-nft.before /tmp/mrlab-nft.after || true
-```
-
-`down` removes only names beginning `mrlab`; it must not touch existing namespaces, links,
-containers, routes or firewall rules. `reset` removes a lab overlay and recreates it from the
-read-only Alpine base image. To reclaim all lab disk space after all labs are down, remove only
-`/root/build/mr-lab-images/mrlab*` after checking the directory contents.
-
-The VM's serial console is the recovery path when networking is broken. Use `console` or
-`status` before attempting a reset. Never connect this lab to a household router or use a real
-LAN address as an external target.
-
-The namespace/QEMU plumbing is usable without a guest install and is safe to run in parallel. The
-current harness stages the local release and records the unattended install request; completing
-the guest-side Alpine cloud-init handoff and a real PPPoE/DHCPv6-PD daemon is a follow-up item.
-Those gaps are surfaced by scenario logs rather than hidden as passing checks.
-
+- `install.sh` rolled back on every machine without WiFi (`mr-hostapd` restarted): fixed by PR
+  #143. Until it is merged, run with `MR_LAB_TREE=/path/to/fix/install-fresh-alpine` or every
+  scenario stops at the install.
+- Alpine's `linux-virt` kernel has no PPPoE: `install.sh` with `MR_WAN_PROTO=pppoe` on a VM using
+  it ends in "PPPoE did not come up within 90s" and a rollback, without saying why
+  (`MR_LAB_KERNEL=virt` reproduces it).

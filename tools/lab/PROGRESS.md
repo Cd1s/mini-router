@@ -5,16 +5,8 @@ milestone and commit it with the corresponding implementation change.
 
 - [x] 2026-10-17 image: Alpine 3.24 x86_64 cloud qcow2 downloaded on demand; per-lab qcow2 overlay/reset implemented.
 - [x] 2026-10-17 topology: per-lab switch, ISP and LAN namespaces with QEMU taps; teardown removes mrlab-only objects.
-- [x] 2026-10-17 ISP controls: DHCP/static/down controls and PPPoE/IPv6 mode hooks recorded for scenarios.
-- [x] 2026-10-17 install: local release build and release selector wired to unattended request staging.
-- [x] 2026-10-17 client/ops: LAN DHCP/check/exec, SSH, console, reboot, powercut and API helper commands added.
-- [x] 2026-10-17 scenarios: 01 fresh DHCP, 02 PPPoE + PD, 03 same-subnet move scripts added and syntax checked.
-- [ ] 2026-10-17 verification: QEMU/netns smoke test passed; full router install and PPPoE/PD require guest-side automation follow-up.
-- [x] 2026-10-17 leakage fix: veth creation moves both endpoints before bridge attach; stale host endpoints are removed on up/down; host mrlab link count verified zero.
-- [x] 2026-10-17 ISP plumbing: WAN/LAN bridges separated, ISP slirp4netns DNS path works, PPPoE server/auth variants and IPv6-up radvd/Kea-PD hooks added.
-- [x] 2026-10-17 scenarios: 04 powercut-confirm and 05 live ISP switch added; both emit diagnostic TAP results.
-- [ ] 2026-10-17 guest acceptance: cloud-init seed and explicit Alpine kernel boot are wired, but this host image still needs guest userspace/cloud-init completion before 01/02 can pass.
-- [x] 2026-10-17 DNS follow-up: ISP netns resolves and HTTPS-fetches `dl-cdn.alpinelinux.org`; host resolver guard remained unchanged.
-- [x] 2026-10-17 offline package layer: Alpine package set is prebuilt and seeded; install now reaches configuration/apply.
-- [ ] 2026-10-17 remaining guest issue: `install.sh` apply reports `mr-network would not start` after package installation; 01/02 still need a clean guest network/apply fix.
-
+- [x] 2026-10-17 host safety: per-namespace resolv.conf, private udhcpc script, host guard on /etc/resolv.conf, /etc/hosts, /etc/ppp.
+- [x] 2026-10-17 real install: unmodified install.sh after boot, signed offline apk mirror, no apk stub or fallbacks (A1c).
+- [x] 2026-10-17 product bug found: install.sh rolls back on every WiFi-less machine (mr-hostapd); fixed in PR #143.
+- [x] 2026-10-17 lts base image (linux-virt has no PPPoE); virtio-serial agent console; PPPoE + kea DHCPv6-PD ISP.
+- [x] 2026-10-17 scenarios 01–05 rewritten on scenarios/lib.sh: 01 6/6, 02 8/8, 04 8/8 ok; 03 7/9 and 05 5/6 report product issues.

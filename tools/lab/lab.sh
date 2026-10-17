@@ -7,9 +7,21 @@ ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 LABDIR=$ROOT/tools/lab
 IMGDIR=${MR_LAB_IMAGE_DIR:-/root/build/mr-lab-images}
 RUNDIR=$LABDIR/state
-BASE=$IMGDIR/alpine-3.24-x86_64.qcow2
-KERNEL=$IMGDIR/vmlinuz-virt
-INITRD=$IMGDIR/initramfs-virt
+CLOUD=$IMGDIR/alpine-3.24-x86_64.qcow2
+# lts (default): the kernel setup-alpine installs on a mini PC. virt: the cloud image's own kernel,
+# which has no PPPoE (CONFIG_PPPOE is not set) — use it to reproduce what a VM user gets.
+# A lab keeps the flavor it was created with (state/mrlab<ID>/flavor).
+use_flavor(){
+  FLAVOR=$1
+  case $FLAVOR in
+    lts) BASE=$IMGDIR/alpine-3.24-x86_64-lts.qcow2;;
+    virt) BASE=$CLOUD;;
+    *) echo "lab: MR_LAB_KERNEL must be lts or virt" >&2; exit 1;;
+  esac
+  KERNEL=$IMGDIR/vmlinuz-$FLAVOR
+  INITRD=$IMGDIR/initramfs-$FLAVOR
+}
+use_flavor "${MR_LAB_KERNEL:-lts}"
 MIRROR=$IMGDIR/apk-mirror
 ALPINE=v3.24
 ADMIN_PASS=labpass1
@@ -59,36 +71,66 @@ ns_etc_setup(){
 ns_etc_remove(){ case $1 in mrlab[1-8]-*) rm -rf "/etc/netns/$1";; esac; }
 
 alpine_pkgs(){
-  # the package list of install.sh step 1, plus what it adds afterwards
-  sed -n '/^PKGS="/,/"$/p' "$ROOT/install.sh" | tr -d '"' | sed 's/^PKGS=//' | tr '\n' ' '
+  # the lts kernel of the lab base image, the package list of install.sh step 1, then what it adds
+  # afterwards (the last word: a separate step)
+  echo linux-lts linux-firmware-none
+  sed -n '/^PKGS="/,/"$/p' "$1/install.sh" | tr -d '"' | sed 's/^PKGS=//' | tr '\n' ' '
   echo dnsmasq-dnssec-nftset
 }
-ensure_base(){
-  [ -s "$BASE" ] && return 0
+ensure_cloud(){
+  [ -s "$CLOUD" ] && return 0
   need curl; need qemu-img
-  tmp=$BASE.part
   echo "Downloading Alpine 3.24 cloud image..."
-  curl -fL --retry 3 -o "$tmp" "https://dl-cdn.alpinelinux.org/alpine/$ALPINE/releases/cloud/generic_alpine-3.24.1-x86_64-bios-cloudinit-r0.qcow2"
-  mv "$tmp" "$BASE"
-  qemu-img info "$BASE" >/dev/null || die "invalid Alpine image"
+  curl -fL --retry 3 -o "$CLOUD.part" "https://dl-cdn.alpinelinux.org/alpine/$ALPINE/releases/cloud/generic_alpine-3.24.1-x86_64-bios-cloudinit-r0.qcow2"
+  mv "$CLOUD.part" "$CLOUD"
+  qemu-img info "$CLOUD" >/dev/null || die "invalid Alpine image"
 }
-ensure_boot_files(){
-  [ -s "$KERNEL" ] && [ -s "$INITRD" ] && return 0
-  raw=$IMGDIR/alpine-3.24-x86_64.raw
-  [ -s "$raw" ] || qemu-img convert -O raw "$BASE" "$raw"
+# copies /boot/vmlinuz-<flavor> and initramfs-<flavor> out of a qcow2 image
+extract_boot(){
+  img=$1; fl=$2; raw=${img%.qcow2}.raw
+  [ -s "$raw" ] || qemu-img convert -O raw "$img" "$raw"
   mnt=$IMGDIR/.mnt; mkdir -p "$mnt"
-  mount -o loop,ro "$raw" "$mnt" 2>/dev/null || die "cannot mount Alpine base image"
-  cp "$mnt/boot/vmlinuz-virt" "$KERNEL"; cp "$mnt/boot/initramfs-virt" "$INITRD"
+  mount -o loop,ro "$raw" "$mnt" 2>/dev/null || die "cannot mount $raw"
+  cp "$mnt/boot/vmlinuz-$fl" "$IMGDIR/vmlinuz-$fl"; cp "$mnt/boot/initramfs-$fl" "$IMGDIR/initramfs-$fl"
   umount "$mnt"; rmdir "$mnt" 2>/dev/null || true
+}
+# The lts base: the cloud image booted once, offline, with linux-lts installed from the mirror and
+# cloud-init's state cleaned, so every lab still starts as a never-booted machine.
+ensure_lts_base(){
+  lb=$IMGDIR/alpine-3.24-x86_64-lts.qcow2
+  [ -s "$lb" ] && [ -s "$IMGDIR/vmlinuz-lts" ] && [ -s "$IMGDIR/initramfs-lts" ] && return 0
+  ensure_mirror "$ROOT"
+  [ -s "$IMGDIR/vmlinuz-virt" ] || extract_boot "$CLOUD" virt
+  pd=$IMGDIR/.prep; rm -rf "$pd"; mkdir -p "$pd/seed"
+  qemu-img create -f qcow2 -F qcow2 -b "$CLOUD" "$pd/disk.qcow2" >/dev/null; qemu-img resize "$pd/disk.qcow2" 1G >/dev/null
+  cp "$LABDIR/guest/prep-lts.yaml" "$pd/seed/user-data"
+  printf 'instance-id: mrlab-prep\n' > "$pd/seed/meta-data"
+  genisoimage -quiet -r -J -volid cidata -o "$pd/seed.iso" -graft-points user-data="$pd/seed/user-data" meta-data="$pd/seed/meta-data" apk-mirror="$MIRROR"
+  echo "lab: preparing the lts base image (one offline boot)..." >&2
+  accel=tcg; [ -e /dev/kvm ] && accel=kvm
+  timeout 900 qemu-system-x86_64 -accel "$accel" -m 512 -smp 1 -kernel "$IMGDIR/vmlinuz-virt" -initrd "$IMGDIR/initramfs-virt" \
+    -append "root=LABEL=/ rootflags=rw rw modules=sd-mod,usb-storage,virtio_blk,ext4 init=/sbin/init console=ttyS0,115200n8" \
+    -drive "file=$pd/disk.qcow2,if=virtio,format=qcow2" -drive "file=$pd/seed.iso,if=virtio,format=raw,readonly=on" \
+    -nic none -serial "file:$pd/console.log" -display none -no-reboot </dev/null >/dev/null 2>&1 || true
+  grep -q MRLAB-PREP-OK "$pd/console.log" || die "lts base preparation failed (see $pd/console.log)"
+  rm -f "${lb%.qcow2}.raw"
+  qemu-img convert -O qcow2 "$pd/disk.qcow2" "$lb"
+  extract_boot "$lb" lts
+  rm -rf "$pd" "${lb%.qcow2}.raw"
+}
+ensure_base(){
+  ensure_cloud
+  if [ "$FLAVOR" = lts ]; then ensure_lts_base; elif [ ! -s "$KERNEL" ] || [ ! -s "$INITRD" ]; then extract_boot "$CLOUD" virt; fi
 }
 # Offline Alpine repository for the guest: the official signed APKINDEX of main and community plus
 # every package the guest's `apk add` will want. That set is found by installing the base image's
 # world and install.sh's packages into a scratch root inside an Alpine chroot (apk fetch -R would
 # miss install_if packages such as nftables-openrc), minus what the base image already has.
 ensure_mirror(){
-  pkgs=$(alpine_pkgs)
+  pkgs=$(alpine_pkgs "${1:-$ROOT}")
   [ -s "$MIRROR/$ALPINE/main/x86_64/APKINDEX.tar.gz" ] && [ "$(cat "$MIRROR/.pkgs" 2>/dev/null)" = "$pkgs" ] && return 0
-  need curl; ensure_boot_files
+  need curl; ensure_cloud
+  [ -s "$IMGDIR/alpine-3.24-x86_64.raw" ] || qemu-img convert -O raw "$CLOUD" "$IMGDIR/alpine-3.24-x86_64.raw"
   cr=$IMGDIR/pkgbuild
   if [ ! -x "$cr/sbin/apk" ]; then
     mkdir -p "$cr"
@@ -105,7 +147,7 @@ ensure_mirror(){
   rm -rf "$MIRROR.new" "$cr/tmp/fetch" "$cr/tmp/sim"; mkdir -p "$cr/tmp/fetch" "$cr/tmp/sim"
   chroot "$cr" /sbin/apk update -q
   : > "$cr/tmp/needed"
-  # in the same steps as install.sh: dnsmasq first, then dnsmasq-dnssec-nftset replaces it
+  # in the same steps as install.sh (and the lts base): dnsmasq first, then dnsmasq-dnssec-nftset
   for step in "$(cat "$cr/tmp/base-world") ${pkgs% *}" "${pkgs##* }"; do
     # shellcheck disable=SC2086
     chroot "$cr" /sbin/apk add -q --root /tmp/sim --initdb --keys-dir /etc/apk/keys --repositories-file /etc/apk/repositories \
@@ -176,7 +218,9 @@ EOF
 }
 
 up(){
-  id=$1; valid_id "$id"; ensure_base; ensure_boot_files; d=$(state "$id"); mkdir -p "$d"
+  id=$1; valid_id "$id"; d=$(state "$id"); mkdir -p "$d"
+  if [ -s "$d/flavor" ] && [ -e "$d/overlay.qcow2" ]; then use_flavor "$(cat "$d/flavor")"; else echo "$FLAVOR" > "$d/flavor"; fi
+  ensure_base
   [ -e "$d/overlay.qcow2" ] || { qemu-img create -f qcow2 -F qcow2 -b "$BASE" "$d/overlay.qcow2" >/dev/null; qemu-img resize "$d/overlay.qcow2" 1G >/dev/null; }
   for n in "$(sw "$id")" "$(isp "$id" 1)" "$(isp "$id" 2)" "$(lan "$id")"; do [ -e "/run/netns/$n" ] || ip netns add "$n"; done
   ns_etc_setup "$(sw "$id")" 127.0.0.1
@@ -303,14 +347,21 @@ EOF
 # pppd: \$1 = interface. The ISP's end of the link gets 2001:db8:$id:$wan::1 and announces that /64.
 dev=\$1
 ip -6 addr add 2001:db8:$id:$wan::1/64 dev "\$dev"
+# kea binds the IFA_ADDRESS of a link-local, which is the peer's on a point-to-point link: the same
+# local link-local again without the peer (\$4 = local, \$5 = remote link-local)
+ip -6 addr del "\$4/128" peer "\$5/128" dev "\$dev" 2>/dev/null && ip -6 addr add "\$4/64" dev "\$dev" nodad
 [ "$v6" = none ] && exit 0
 printf 'interface %s { AdvSendAdvert on; MinRtrAdvInterval 3; MaxRtrAdvInterval 10; AdvManagedFlag %s; AdvOtherConfigFlag %s; prefix 2001:db8:$id:$wan::/64 { AdvOnLink on; AdvAutonomous on; }; };\n' "\$dev" "$([ "$v6" = pd ] && echo on || echo off)" "$([ "$v6" = pd ] && echo on || echo off)" > $d/radvd.conf
-radvd -C $d/radvd.conf -p $d/radvd.pid -m logfile -l $d/radvd.log
+$(command -v radvd) -C $d/radvd.conf -p $d/radvd.pid -m logfile -l $d/radvd.log
 [ "$v6" = pd ] || exit 0
 # one subscriber per lab: the whole delegation pool is routed down this session
 ip -6 route add 2001:db8:$id:${wan}00::/56 dev "\$dev" proto static
-sed "s/@DEV@/\$dev/" $d/kea6.conf.in > $d/kea6.conf
-KEA_PIDFILE_DIR=$d KEA_LOCKFILE_DIR=$d setsid kea-dhcp6 -c $d/kea6.conf > $d/kea.log 2>&1 &
+# the host's AppArmor profile lets kea use only /etc/kea, /run/kea, /run/lock/kea and /var/lib/kea:
+# a private mount namespace puts lab directories there
+k=$d/kea; mkdir -p \$k/etc \$k/run \$k/lock \$k/lib
+sed "s/@DEV@/\$dev/" $d/kea6.conf.in > \$k/etc/kea-dhcp6.conf
+setsid $(command -v unshare) -m --propagation private sh -c 'mount --bind "\$1/etc" /etc/kea && mount --bind "\$1/run" /run/kea &&
+  mount --bind "\$1/lock" /run/lock/kea && mount --bind "\$1/lib" /var/lib/kea && KEA_LOCKFILE_DIR=/run/lock/kea exec "\$2" -c /etc/kea/kea-dhcp6.conf' sh \$k $(command -v kea-dhcp6) > $d/kea.log 2>&1 &
 echo \$! > $d/kea.pid
 EOF
       chmod +x "$d/ipv6-up.sh"
@@ -339,14 +390,17 @@ EOF
 # ---------------------------------------------------------------- guest install
 install_cmd(){
   id=$1; shift; valid_id "$id"
-  proto=dhcp; apply=1; lanip=192.168.1.1/24; release=; tree=$ROOT; runinst=1; wait=600
+  proto=dhcp; apply=1; lanip=192.168.1.1/24; release=; tree=${MR_LAB_TREE:-$ROOT}; runinst=1; wait=600
   while [ $# -gt 0 ]; do case $1 in
     --wan-proto) proto=$2; shift 2;; --no-apply) apply=0; shift;; --lan-ip) lanip=$2; shift 2;;
     --release) release=$2; shift 2;; --tree) tree=$(cd "$2" && pwd); shift 2;;
     --no-install) runinst=0; shift;; --timeout) wait=$2; shift 2;;
     *) die "install: unknown option $1";; esac; done
   case $proto in dhcp|pppoe|static) ;; *) die "install: --wan-proto dhcp|pppoe|static";; esac
-  need genisoimage; ensure_mirror
+  need genisoimage
+  # labs installing at the same time share the image directory: one mirror / release build at a time
+  exec 9>"$IMGDIR/.build.lock"; flock 9
+  ensure_mirror "$tree"
   d=$(state "$id"); out=$d/install; rm -rf "$out"; mkdir -p "$out/release" "$out/lab"
   if [ -n "$release" ]; then
     curl -fsSL --retry 2 -o "$out/release/install.sh" "https://raw.githubusercontent.com/Cd1s/mini-router/$release/install.sh"
@@ -378,11 +432,13 @@ EOF
   printf 'instance-id: mrlab%s-%s\nlocal-hostname: mrlab%s\n' "$id" "$(date +%s)" "$id" > "$out/meta-data"
   # what a VM provider (or setup-alpine) gives a fresh machine: DHCP on the first NIC
   printf 'version: 2\nethernets:\n  eth0: {dhcp4: true}\n' > "$out/network-config"
-  genisoimage -quiet -r -J -volid cidata -o "$d/seed.iso" -graft-points \
+  # kernels are in the base image already: the seed carries only what install.sh may add
+  genisoimage -quiet -r -J -volid cidata -o "$d/seed.iso" -m 'linux-lts-*' -m 'linux-virt-*' -m 'linux-firmware-*' -graft-points \
     user-data="$out/user-data" meta-data="$out/meta-data" network-config="$out/network-config" \
     release="$out/release" lab="$out/lab" apk-mirror="$MIRROR"
+  flock -u 9
   # a fresh machine: new overlay over the pristine Alpine image
-  kill_qemu "$id"; rm -f "$d/overlay.qcow2" "$d/api.cookies"
+  kill_qemu "$id"; rm -f "$d/overlay.qcow2" "$d/api.cookies" "$d/flavor"
   printf '%s\n' "${lanip%/*}" > "$d/lan.ip"
   start=$(wc -c < "$d/console.log" 2>/dev/null || echo 0)
   up "$id" >/dev/null
@@ -498,16 +554,36 @@ api_cmd(){
   case $method in GET) run_ns "$n" curl -sS --fail-with-body --max-time 30 -b "$jar" -c "$jar" -H X-MR:1 "$url";;
     *) run_ns "$n" curl -sS --fail-with-body --max-time 60 -b "$jar" -c "$jar" -H X-MR:1 -H 'Content-Type: application/json' -d "$body" "$url";; esac
 }
+# One settings change through the web UI API, the way the panel does it: read rev, apply the patch,
+# wait for the job, then confirm (default) or leave the change pending (--no-confirm).
+change_cmd(){
+  id=$1; patch=$2; shift 2; valid_id "$id"; confirm=1; secrets='{}'
+  while [ $# -gt 0 ]; do case $1 in --no-confirm) confirm=0;; --secrets) secrets=$2; shift;; *) die "change: unknown option $1";; esac; shift; done
+  need jq
+  rev=$(api_cmd "$id" GET config | jq -r .rev) || die "change: cannot read config"
+  body=$(jq -cn --arg rev "$rev" --argjson patch "$patch" --argjson sec "$secrets" '{base_rev: $rev, patch: $patch, secrets: $sec, confirm: 120, comment: "lab change"}')
+  api_cmd "$id" POST apply "$body" >/dev/null || die "change: apply refused"
+  i=0; st=running
+  while [ "$st" = running ] && [ "$i" -lt 180 ]; do
+    sleep 2; i=$((i + 2))
+    # the router may be unreachable for a while when the change moves its own network
+    st=$(api_cmd "$id" GET job 2>/dev/null | jq -r '.job.state // "running"' 2>/dev/null) || st=running
+  done
+  echo "{\"job\":\"$st\"}"
+  [ "$st" = ok ] || { api_cmd "$id" GET job 2>/dev/null | jq -r '.job.output // empty' | tail -8 >&2; return 1; }
+  [ "$confirm" = 1 ] && { api_cmd "$id" POST confirm '{}' >/dev/null || die "change: confirm failed"; echo '{"confirmed":true}'; }
+  return 0
+}
 run_cmd(){ id=$1; scen=$2; valid_id "$id"; case $scen in */*) f=$scen;; *) f="$LABDIR/scenarios/$scen.sh";; esac; [ -x "$f" ] || die "scenario not found: $f"; LAB_SH="$LABDIR/lab.sh" "$f" "$id"; }
 reboot_cmd(){ id=$1; valid_id "$id"; agent_exec "$id" 10 'sync; (sleep 1; reboot) &' >/dev/null || true; sleep 8; wait_agent "$id" 180 && echo "rebooted $id"; }
 powercut_cmd(){ id=$1; valid_id "$id"; kill -9 "$(cat "$(pidfile "$id")")" 2>/dev/null || true; kill_qemu "$id"; up "$id" >/dev/null; wait_agent "$id" 180 && echo "power restored $id"; }
 
-usage(){ die "usage: lab.sh up|down|reset|status <id> | isp <id> <wan> dhcp|pppoe|static|down [opts] | install <id> [opts] | lan <id> dhcp|static|check|exec | console|ssh <id> <cmd> | api <id> GET|POST <action> [json] | reboot|powercut <id> | run <id> <scenario>"; }
+usage(){ die "usage: lab.sh up|down|reset|status <id> | isp <id> <wan> dhcp|pppoe|static|down [opts] | install <id> [opts] | lan <id> dhcp|static|check|exec | console|ssh <id> <cmd> | api <id> GET|POST <action> [json] | change <id> <patch-json> [--no-confirm] | reboot|powercut <id> | run <id> <scenario>"; }
 cmd=${1:-}; shift || true
 case $cmd in
   up) up "$@";; down) down "$@";; status) status "$@";; reset) reset "$@";;
   isp) isp_cmd "$@";; install) install_cmd "$@";; lan) lan_cmd "$@";;
-  ssh) ssh_cmd "$@";; console) console "$@";; api) api_cmd "$@";; run) run_cmd "$@";;
-  reboot) reboot_cmd "$@";; powercut) powercut_cmd "$@";; mirror) ensure_mirror; echo "$MIRROR";;
+  ssh) ssh_cmd "$@";; console) console "$@";; api) api_cmd "$@";; change) change_cmd "$@";; run) run_cmd "$@";;
+  reboot) reboot_cmd "$@";; powercut) powercut_cmd "$@";; mirror) ensure_mirror "${1:-$ROOT}"; echo "$MIRROR";;
   *) usage;;
 esac

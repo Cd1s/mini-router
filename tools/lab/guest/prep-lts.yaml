@@ -1,0 +1,15 @@
+#cloud-config
+# lab.sh ensure_lts_base: one offline boot of the cloud image that adds the linux-lts kernel from the
+# seeded mirror, then leaves the image as if it had never booted.
+runcmd:
+  - |
+    mkdir -p /media/prep && mount -t iso9660 -o ro /dev/vdb /media/prep
+    cp /etc/apk/repositories /etc/apk/repositories.orig
+    printf '%s\n' /media/prep/apk-mirror/v3.24/main /media/prep/apk-mirror/v3.24/community > /etc/apk/repositories
+    apk add linux-lts linux-firmware-none && echo MRLAB-PREP-OK > /dev/ttyS0
+    mv /etc/apk/repositories.orig /etc/apk/repositories
+    umount /media/prep
+    cloud-init clean --logs
+    rm -f /etc/ssh/ssh_host_*
+    sync
+    poweroff

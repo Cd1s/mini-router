@@ -1,43 +1,15 @@
 #!/bin/sh
-# Fresh Alpine install with a DHCP WAN. Called by lab.sh run <id> 01-fresh-dhcp.
-set -u
-
-ID=${1:?usage: 01-fresh-dhcp.sh <lab-id>}
-SELF_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-LAB_SH=${LAB_SH:-"$SELF_DIR/../lab.sh"}
-LOG=${LAB_SCENARIO_LOG:-/tmp/mrlab${ID}-01-fresh-dhcp.log}
-: > "$LOG"
-
-run() {
-	printf '+ %s\n' "$*" >> "$LOG"
-	"$@" >> "$LOG" 2>&1
-}
-
-ok=0
-fail=0
-check() {
-	name=$1; shift
-	if "$@" >> "$LOG" 2>&1; then
-		ok=$((ok + 1)); printf 'ok %s - %s\n' "$ok" "$name"
-	else
-		fail=$((fail + 1)); printf 'not ok %s - %s\n' "$((ok + fail))" "$name"
-		printf '# evidence: %s\n' "$(tail -8 "$LOG" | tr '\n' ' ')"
-	fi
-}
-
-run "$LAB_SH" reset "$ID" || true
-run "$LAB_SH" up "$ID" || true
-run "$LAB_SH" isp "$ID" 1 dhcp || true
-run "$LAB_SH" install "$ID" --wan-proto dhcp || true
-check "LAN client obtains a DHCP lease" "$LAB_SH" lan "$ID" dhcp
-check "LAN client reaches the IPv4 internet" "$LAB_SH" lan "$ID" exec curl -4 -fsS --max-time 8 http://example.com/
-check "LAN client resolves a public DNS name" "$LAB_SH" lan "$ID" exec getent hosts example.com
-check "LAN client opens the router panel" "$LAB_SH" lan "$ID" exec curl -fsS --max-time 8 http://192.168.1.1/
-
-if [ "$fail" -eq 0 ]; then
-	printf '# log: %s\n' "$LOG"
-	exit 0
-fi
-printf '# log: %s\n' "$LOG"
-exit 1
-
+# A fresh Alpine machine behind a DHCP modem: install.sh, then everything a LAN user expects.
+NAME=01-fresh-dhcp
+# shellcheck source=lib.sh
+. "$(dirname "$0")/lib.sh"
+step lab reset "$ID"
+step lab isp "$ID" 1 dhcp
+check "install.sh completes on a fresh Alpine (DHCP WAN)" lab install "$ID" --wan-proto dhcp
+check "LAN client gets a DHCP lease from the router" lab lan "$ID" dhcp
+check "LAN client resolves a public name" lab lan "$ID" exec 'getent hosts example.com'
+check "LAN client reaches the IPv4 internet" lab lan "$ID" exec 'curl -4 -fsS -o /dev/null --max-time 10 http://example.com/'
+# shellcheck disable=SC2016
+check "panel answers 200 on http://192.168.1.1/" lab lan "$ID" exec 'test "$(curl -s -o /dev/null -w %{http_code} --max-time 5 http://192.168.1.1/)" = 200'
+check "panel API: login and status" sh -c "\"$LAB_SH\" api $ID GET status | grep -q '\"wan\"'"
+finish

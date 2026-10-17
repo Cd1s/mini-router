@@ -1,12 +1,24 @@
 #!/bin/sh
-# Change only the simulated ISP while leaving router configuration untouched.
-set -u
-ID=${1:?usage: 05-isp-switch-live.sh <lab-id>}
-DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd); LAB_SH=${LAB_SH:-"$DIR/../lab.sh"}; LOG=${LAB_SCENARIO_LOG:-/tmp/mrlab${ID}-05-isp-switch-live.log}; : > "$LOG"
-run(){ printf '+ %s\n' "$*" >> "$LOG"; "$@" >> "$LOG" 2>&1; }
-run "$LAB_SH" reset "$ID" || true; run "$LAB_SH" isp "$ID" 1 pppoe || true; run "$LAB_SH" install "$ID" --wan-proto pppoe || true
-printf 'ok 1 - PPPoE ISP started without changing router config\n'
-run "$LAB_SH" isp "$ID" 1 dhcp || true
-run "$LAB_SH" console "$ID" 'mr doctor --json || mr doctor; mr status --json || mr status' || true
-if "$LAB_SH" lan "$ID" check >>"$LOG" 2>&1; then printf 'ok 2 - live ISP switch remains reachable\n'; else printf 'not ok 2 - live ISP switch reports loss; inspect doctor/status output\n'; fi
-printf '# log: %s\n' "$LOG"; tail -12 "$LOG" | sed 's/^/# /'; exit 0
+# The ISP changes under a running router (the router config stays PPPoE): outage, recovery, and an
+# ISP that silently moves to DHCP. Diagnostic: what the router reports and whether it recovers.
+NAME=05-isp-switch-live
+# shellcheck source=lib.sh
+. "$(dirname "$0")/lib.sh"
+online() { lab lan "$ID" exec 'curl -4 -fsS -o /dev/null --max-time 6 http://example.com/'; }
+step lab reset "$ID"
+step lab isp "$ID" 1 pppoe
+check "install.sh completes (PPPoE WAN)" lab install "$ID" --wan-proto pppoe
+step lab lan "$ID" dhcp
+check "baseline: LAN client online" online
+step lab isp "$ID" 1 down
+sleep 25
+check "outage: mr doctor reports the WAN as a risk" retry 30 lab console "$ID" 'mr doctor 2>&1 | grep -q "^RISK  wan.wan"'
+step lab isp "$ID" 1 pppoe
+check "ISP back: PPPoE redials and the LAN client is online within 90 s" retry 90 online
+step lab isp "$ID" 1 dhcp
+sleep 30
+step lab console "$ID" 'mr doctor 2>&1 | tail -25; mr status 2>&1 | head -25'
+check "ISP moved to DHCP: mr doctor names the cause (no PPPoE server / DHCP on the line)" lab console "$ID" 'mr doctor 2>&1 | grep -iE "pado|no pppoe server|access concentrator|dhcp (offer|server)|改成 dhcp"'
+step lab isp "$ID" 1 pppoe
+check "ISP back to PPPoE: LAN client online again within 90 s" retry 90 online
+finish

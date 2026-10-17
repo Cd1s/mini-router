@@ -1,20 +1,19 @@
 #!/bin/sh
-# Apply a reversible change, cut power before confirm, and verify the old revision returns.
-set -u
-ID=${1:?usage: 04-powercut-confirm.sh <lab-id>}
-DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd); LAB_SH=${LAB_SH:-"$DIR/../lab.sh"}; LOG=${LAB_SCENARIO_LOG:-/tmp/mrlab${ID}-04-powercut-confirm.log}; : > "$LOG"
-run(){ printf '+ %s\n' "$*" >> "$LOG"; "$@" >> "$LOG" 2>&1; }
-run "$LAB_SH" up "$ID" || true; run "$LAB_SH" install "$ID" --wan-proto dhcp || true
-before=$LOG.before; after=$LOG.after
-if "$LAB_SH" api "$ID" GET config >"$before" 2>>"$LOG"; then
-  rev=$(jq -r '.rev // empty' "$before" 2>>"$LOG" || true)
-  body=$(jq -cn --arg rev "$rev" '{base_rev:$rev,patch:[{op:"set",path:"system.hostname",value:"mrlab-powercut"}],confirm:120,comment:"powercut rollback"}')
-  run "$LAB_SH" api "$ID" POST apply "$body" || true
-  run "$LAB_SH" powercut "$ID" || true
-  sleep 8
-  if "$LAB_SH" api "$ID" GET config >"$after" 2>>"$LOG"; then
-    got=$(jq -r '.config.system.hostname // empty' "$after" 2>>"$LOG" || true)
-    if [ "$got" = mrlab-powercut ]; then printf 'not ok 1 - power cut left unconfirmed hostname applied\n'; else printf 'ok 1 - unconfirmed apply rolled back (hostname=%s)\n' "$got"; fi
-  else printf 'not ok 1 - router API unavailable after power cut\n'; fi
-else printf 'not ok 1 - baseline config API unavailable\n'; fi
-printf '# log: %s\n' "$LOG"; grep -E 'rollback|confirm|error|not ok' "$LOG" | tail -8 | sed 's/^/# /'; exit 0
+# Power cut inside the confirm window: an unconfirmed change must be gone after the reboot, a
+# confirmed one must stay.
+NAME=04-powercut-confirm
+# shellcheck source=lib.sh
+. "$(dirname "$0")/lib.sh"
+step lab reset "$ID"
+step lab isp "$ID" 1 dhcp
+check "install.sh completes (DHCP WAN)" lab install "$ID" --wan-proto dhcp
+step lab lan "$ID" dhcp
+hostname_is() { lab api "$ID" GET config | jq -e --arg h "$1" '.config.system.hostname == $h' >/dev/null; }
+check "unconfirmed change is applied (hostname lab-pending)" lab change "$ID" '[{"op":"set","path":"system.hostname","value":"lab-pending"}]' --no-confirm
+check "power cut and boot" lab powercut "$ID"
+check "after the power cut the unconfirmed hostname is rolled back" retry 90 hostname_is mini-router
+check "confirmed change is applied (hostname lab-kept)" lab change "$ID" '[{"op":"set","path":"system.hostname","value":"lab-kept"}]'
+check "power cut and boot" lab powercut "$ID"
+check "after the power cut the confirmed hostname stays" retry 90 hostname_is lab-kept
+check "LAN client is online after both power cuts" retry 60 sh -c "\"$LAB_SH\" lan $ID dhcp && \"$LAB_SH\" lan $ID exec 'curl -4 -fsS -o /dev/null --max-time 10 http://example.com/'"
+finish
