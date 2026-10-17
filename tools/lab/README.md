@@ -150,9 +150,9 @@ Never point the lab at a real LAN or a household device.
 
 - `install.sh` rolled back on every machine without WiFi (`mr-hostapd` restarted) — fixed in #143.
 - Since #138 the first apply of `install.sh` rolls back on every fresh machine: `network.sh` writes
-  `/run/mini-router/modem-aliases` before `mr-network` ever created the directory — fix/netsh-run-dir.
+  `/run/mini-router/modem-aliases` before `mr-network` ever created the directory — PR #147.
   Until it is merged run the lab with `MR_LAB_TREE=<checkout of that branch>`.
 - Alpine's `linux-virt` kernel has no PPPoE: without a check `install.sh` waited 90 s and rolled
-  back — fix/install-kernel-check (`MR_LAB_KERNEL=virt` reproduces it).
+  back — PR #148 (`MR_LAB_KERNEL=virt` reproduces it).
 - `05-isp-switch-live` check 5: when the line moves from PPPoE to DHCP, `mr doctor` only reports
   "no IPv4 address on pppoe-wan" (no "no PPPoE server answers" / "DHCP answers on this port").
