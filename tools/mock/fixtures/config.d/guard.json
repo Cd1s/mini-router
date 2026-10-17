@@ -1,0 +1,10 @@
+{
+ "config": {
+  "guard": {
+   "never_expose": ["ssh", "panel", "dns"],
+   "always_bypass": ["desktop"],
+   "offload": "hardware",
+   "ssh_lan_only": true
+  }
+ }
+}

@@ -681,6 +681,9 @@ func TestSysFirmwareUpload(t *testing.T) {
 
 // API input checks that must reject before anything runs (no command is executed here).
 func TestSysAPIRejects(t *testing.T) {
+	if st := apiSysTSLogin(apiReq{method: "GET"}).status; st != 405 {
+		t.Errorf("GET sys.tslogin: %d", st)
+	}
 	post := func(f func(apiReq) apiResp, body string) int {
 		return f(apiReq{method: "POST", body: []byte(body)}).status
 	}

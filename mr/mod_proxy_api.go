@@ -244,9 +244,11 @@ type clashConn struct {
 	Rule     string    `json:"rule"`
 }
 
+var proxyConfigPath, proxySecretsPath = ConfigPath, SecretsPath
+
 // proxyLive loads the live config for API handlers.
 func proxyLive() (*Config, *apiResp) {
-	c, err := loadConfig(ConfigPath, SecretsPath)
+	c, err := loadConfig(proxyConfigPath, proxySecretsPath)
 	if err != nil {
 		r := errResp(500, "%v", err)
 		return nil, &r
@@ -262,6 +264,22 @@ func apiProxyStatus(r apiReq) apiResp {
 		return *bad
 	}
 	return apiResp{body: proxyStatus(c)}
+}
+
+// apiProxyCheck runs the same safe local probes as `mr proxy check`.
+func apiProxyCheck(r apiReq) apiResp {
+	if r.method != "POST" {
+		return errResp(405, "POST required")
+	}
+	c, bad := proxyLive()
+	if bad != nil {
+		return *bad
+	}
+	errs := proxyCheck(c)
+	if len(errs) > 0 {
+		return apiResp{status: 409, body: map[string]any{"ok": false, "errors": errs}}
+	}
+	return apiResp{body: map[string]any{"ok": true}}
 }
 
 func proxyStatus(c *Config) map[string]any {

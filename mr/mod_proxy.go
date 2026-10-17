@@ -143,11 +143,8 @@ type ProxyGlobal struct {
 
 // proxyGlobalMACs: the MACs of a global entry (lowercase).
 func proxyGlobalMACs(c *Config, g ProxyGlobal) []string {
-	if d := c.device(g.Device); d != nil {
-		return lowerAll(d.MACs)
-	}
 	if g.Device != "" {
-		return nil
+		return lowerAll(devMACs(c, []string{g.Device}))
 	}
 	return []string{strings.ToLower(g.MAC)}
 }
@@ -250,9 +247,10 @@ func init() {
 		},
 		RestartOrder: []string{"mr-proxy", "mr-proxy-dns"},
 		Verify:       proxyVerify,
-		TokenScope:   map[string]string{"proxy.status": "read", "proxy.routes": "read", "proxy.delay": "operate", "proxy.select": "operate"},
+		TokenScope:   map[string]string{"proxy.status": "read", "proxy.routes": "read", "proxy.delay": "operate", "proxy.select": "operate", "proxy.check": "operate"},
 		API: map[string]func(r apiReq) apiResp{
 			"proxy.status": apiProxyStatus,
+			"proxy.check":  apiProxyCheck,
 			"proxy.delay":  apiProxyDelay,
 			"proxy.select": apiProxySelect,
 			"proxy.lists":  apiProxyLists,
@@ -497,8 +495,8 @@ func proxyValidate(c *Config, v *Validator) {
 			v.Add("%s: set mac or device (one)", path)
 			continue
 		}
-		if g.Device != "" && c.device(g.Device) == nil {
-			v.Add("%s.device: unknown device %q (devices:; groups are not allowed)", path, g.Device)
+		if g.Device != "" {
+			devCheckRefs(c, v, path+".device", []string{g.Device})
 			continue
 		}
 		if g.MAC != "" && !reMAC.MatchString(g.MAC) {

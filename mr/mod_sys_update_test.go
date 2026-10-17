@@ -45,6 +45,10 @@ func TestUpdateCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	result, err := updateCheckResult(c, srv.Client())
+	if err != nil || result["current"] != "v0.2.0" || result["latest"] != tag || result["newer"] != true || result["checked"] == nil {
+		t.Errorf("update result: %#v, %v", result, err)
+	}
 	if ev := eventsRead(0, 0); len(ev) != 1 || ev[0].Type != "update" || !strings.Contains(ev[0].Msg, "v0.3.0") {
 		t.Fatalf("events: %+v", ev)
 	}
