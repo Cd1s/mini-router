@@ -89,6 +89,35 @@ type apiResp struct {
 	authed bool // answered to an API token: carries X-MR-Pending like a session
 }
 
+// normalizeRemoteAddr converts BusyBox httpd's REMOTE_ADDR forms to the address shape used by
+// every API, risk and login-throttle consumer. httpd brackets IPv6 (including IPv4-mapped IPv6)
+// when listening on an IPv6 socket and appends a zone to link-local addresses.
+func normalizeRemoteAddr(raw string) string {
+	s := strings.TrimSpace(raw)
+	if strings.HasPrefix(s, "[") {
+		if end := strings.LastIndexByte(s, ']'); end > 0 {
+			s = s[1:end] + s[end+1:]
+		}
+	}
+	zone := ""
+	if i := strings.LastIndexByte(s, '%'); i >= 0 {
+		zone = s[i:]
+		s = s[:i]
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return s + zone
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return ip.String() + zone
+}
+
+func normalizedRemoteIP(remote string) net.IP {
+	return net.ParseIP(strings.SplitN(normalizeRemoteAddr(remote), "%", 2)[0])
+}
+
 func runAPI() error {
 	r := apiReq{
 		method: os.Getenv("REQUEST_METHOD"),
@@ -128,6 +157,7 @@ func errResp(code int, msg string, a ...any) apiResp {
 }
 
 func handleAPI(r apiReq) apiResp {
+	r.remote = normalizeRemoteAddr(r.remote)
 	if r.auth != "" { // API token: the header alone authenticates (no cookie, so no CSRF)
 		return handleToken(r)
 	}
@@ -301,6 +331,7 @@ func apiLogin(r apiReq, secrets map[string]string) apiResp {
 }
 
 func fromLAN(remote string) (bool, error) {
+	remote = normalizeRemoteAddr(remote)
 	c, err := loadLANConfig()
 	if err != nil {
 		return false, err
@@ -310,9 +341,6 @@ func fromLAN(remote string) (bool, error) {
 		return false, nil
 	}
 	if ip.To4() != nil {
-		if strings.Contains(remote, ":") { // IPv4-mapped IPv6 is not a LAN IPv4 source.
-			return false, nil
-		}
 		_, n, err := net.ParseCIDR(c.LAN.IPv4)
 		return err == nil && n.Contains(ip), nil
 	}
@@ -358,7 +386,7 @@ func apiSetup(r apiReq, secrets map[string]string) apiResp {
 	}
 	if ok, err := fromLAN(r.remote); err != nil {
 		logf("webui setup: cannot load router.yaml: %v", err)
-		return errResp(500, "配置文件缺失或无效，请按复位键恢复出厂设置，或通过串口修复")
+		return errResp(500, "配置文件缺失或无效，请通过串口执行 /usr/libexec/mr/factory-reset，或重新刷写固件")
 	} else if !ok {
 		return errResp(403, "first-time setup is only allowed from the LAN")
 	}

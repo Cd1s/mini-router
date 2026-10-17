@@ -41,7 +41,7 @@ type loginRec struct {
 
 // loginKey: the source an attempt counts against.
 func loginKey(remote string) string {
-	ip := net.ParseIP(remote)
+	ip := normalizedRemoteIP(remote)
 	switch {
 	case ip == nil:
 		return "unknown"

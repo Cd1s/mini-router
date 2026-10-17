@@ -9,6 +9,21 @@ import (
 	"testing"
 )
 
+func TestNormalizeRemoteAddrBusyboxFormats(t *testing.T) {
+	for _, tc := range []struct {
+		raw, want string
+	}{
+		{"192.168.1.5", "192.168.1.5"},
+		{"[::ffff:192.168.1.5]", "192.168.1.5"},
+		{"[fd00:1::5]", "fd00:1::5"},
+		{"[fe80::8857:6eff:fe5a:947a%br-lan]", "fe80::8857:6eff:fe5a:947a%br-lan"},
+	} {
+		if got := normalizeRemoteAddr(tc.raw); got != tc.want {
+			t.Errorf("normalizeRemoteAddr(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
 func TestSetupReportsInvalidConfigSeparatelyFromLANAccess(t *testing.T) {
 	oldLoad := loadLANConfig
 	t.Cleanup(func() { loadLANConfig = oldLoad })
@@ -27,25 +42,25 @@ func TestFromLANAcceptsIPv6OnLANBridge(t *testing.T) {
 		return &Config{LAN: LAN{Bridge: "br-lan", IPv4: "192.168.1.1/24"}}, nil
 	}
 	lanBridgeAddrs = func(string) ([]net.Addr, error) {
-		return []net.Addr{&net.IPNet{IP: net.ParseIP("fe80::1"), Mask: net.CIDRMask(64, 128)}, &net.IPNet{IP: net.ParseIP("2001:db8:1::1"), Mask: net.CIDRMask(64, 128)}}, nil
+		return []net.Addr{&net.IPNet{IP: net.ParseIP("fe80::1"), Mask: net.CIDRMask(64, 128)}, &net.IPNet{IP: net.ParseIP("fd00:1::1"), Mask: net.CIDRMask(64, 128)}}, nil
 	}
 	lanIPv6Source = func(remote, bridge string) bool {
-		return bridge == "br-lan" && (remote == "fe80::abcd%br-lan" || remote == "2001:db8:1::abcd")
+		return bridge == "br-lan" && (remote == "fe80::abcd%br-lan" || remote == "fd00:1::abcd")
 	}
-	for _, remote := range []string{"fe80::abcd%br-lan", "2001:db8:1::abcd"} {
+	for _, remote := range []string{"[fe80::abcd%br-lan]", "[fd00:1::abcd]"} {
 		ok, err := fromLAN(remote)
 		if err != nil || !ok {
 			t.Errorf("%s: fromLAN=%v err=%v", remote, ok, err)
 		}
 	}
-	if ok, err := fromLAN("2001:db8:2::abcd"); err != nil || ok {
+	if ok, err := fromLAN("[fd00:2::abcd]"); err != nil || ok {
 		t.Errorf("outside LAN IPv6 accepted: %v %v", ok, err)
 	}
-	if ok, err := fromLAN("fe80::bad%wan"); err != nil || ok {
+	if ok, err := fromLAN("[fe80::bad%wan]"); err != nil || ok {
 		t.Errorf("WAN link-local IPv6 accepted: %v %v", ok, err)
 	}
-	if ok, err := fromLAN("::ffff:192.168.1.20"); err != nil || ok {
-		t.Errorf("IPv4-mapped IPv6 accepted: %v %v", ok, err)
+	if ok, err := fromLAN("[::ffff:192.168.1.20]"); err != nil || !ok {
+		t.Errorf("IPv4-mapped IPv6 was not normalized to LAN IPv4: %v %v", ok, err)
 	}
 }
 

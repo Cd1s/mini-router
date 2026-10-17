@@ -241,23 +241,24 @@ sync
 reboot -f
 PROBE
 	mksquashfs /t/sq-tree /t/test.squashfs -comp gzip -noappend -no-xattrs -quiet -no-progress > /dev/null
+	rm -rf /t/sq-norom
+	cp -a /t/sq-tree /t/sq-norom
+	rm -f /t/sq-norom/etc/mini-router/router.yaml
+	mksquashfs /t/sq-norom /t/test-norom.squashfs -comp gzip -noappend -no-xattrs -quiet -no-progress > /dev/null
 	boot() { # boot NAME: run /sbin/init of the test squashfs as PID 1; results in /t/res/NAME
 		rm -rf "/t/res/$1" && mkdir -p "/t/res/$1" /sq
+		image=/t/test.squashfs
+		[ "${2:-}" = norom ] && image=/t/test-norom.squashfs
 		lo=$(losetup -f) # the container's /dev predates new loop devices: make the node
 		[ -b "$lo" ] || mknod "$lo" b 7 "${lo#/dev/loop}"
-		losetup "$lo" /t/test.squashfs
+		losetup "$lo" "$image"
 		mount -t squashfs -o ro "$lo" /sq
 		mount --bind "/t/res/$1" /sq/srv
-		if [ "${2:-}" = norom ]; then
-			mkdir -p /t/no-rom
-			mount --bind /t/no-rom /sq/rom
-		fi
 		# preinit logs to /dev/kmsg, i.e. the host's kernel log: take the lines after t0 (never cleared)
 		t0=$(cut -d' ' -f1 /proc/uptime)
 		timeout 300 unshare -p -f -m --propagation private chroot /sq /sbin/init > /dev/null 2>&1 || :
 		dmesg | awk -v t0="$t0" '{ t = $0; sub(/^\[ */, "", t); sub(/\].*/, "", t) } t + 0 >= t0 - 1 && /mr-preinit/' \
 			> "/t/res/$1/kmsg" || :
-		if [ "${2:-}" = norom ]; then umount /sq/rom; fi
 		umount /sq/srv && umount /sq && losetup -d "$lo"
 		[ -f "/t/res/$1/done" ] || fail "$1: the probe did not run (kmsg: $(cat "/t/res/$1/kmsg"))"
 	}

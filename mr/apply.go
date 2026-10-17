@@ -379,6 +379,7 @@ func restore(snap string, stopRemoved ...bool) ([]string, error) {
 	}
 	svc := map[string]bool{}
 	stopped := map[string]bool{}
+	failedStop := map[string]bool{}
 	stopServices := len(stopRemoved) == 0 || stopRemoved[0]
 	for _, p := range covered {
 		if !present[p] {
@@ -387,6 +388,7 @@ func restore(snap string, stopRemoved ...bool) ([]string, error) {
 				if s := removedWANService(p); s != "" && !stopped[s] {
 					if !stopAndDisableService(s) {
 						remove = false
+						failedStop[s] = true
 					} else {
 						stopped[s] = true
 					}
@@ -396,7 +398,7 @@ func restore(snap string, stopRemoved ...bool) ([]string, error) {
 				os.Remove(p)
 			}
 		}
-		if s := serviceFor(p); s != "" {
+		if s := serviceFor(p); s != "" && !failedStop[s] {
 			svc[s] = true
 		}
 	}
@@ -642,7 +644,7 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 // WAN deletion or a protocol change. The service is stopped before its wrapper is removed.
 func cleanupOrphanWANFiles(c *Config) {
 	stopped := map[string]bool{}
-	for _, path := range orphanWANPaths(c) {
+	for _, path := range orphanWANPaths(c, true) {
 		if s := removedWANService(path); s != "" && !stopped[s] {
 			if !stopAndDisableService(s) {
 				continue
@@ -656,7 +658,7 @@ func cleanupOrphanWANFiles(c *Config) {
 	}
 }
 
-func orphanWANPaths(c *Config) []string {
+func orphanWANPaths(c *Config, logUnmanaged ...bool) []string {
 	wantPPP, wantDHCP := map[string]bool{}, map[string]bool{}
 	for _, w := range c.WAN {
 		switch w.Proto {
@@ -675,7 +677,7 @@ func orphanWANPaths(c *Config) []string {
 			path := filepath.Join(pppPeersDir, e.Name())
 			if generatedByMR(path) {
 				paths = append(paths, path)
-			} else {
+			} else if len(logUnmanaged) > 0 && logUnmanaged[0] {
 				logf("keeping unmanaged PPP peer %s", path)
 			}
 		}

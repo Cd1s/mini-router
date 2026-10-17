@@ -195,7 +195,7 @@ func (t *APIToken) fromOK(remote string) bool {
 	if len(t.From) == 0 {
 		return true
 	}
-	ip := net.ParseIP(remote)
+	ip := normalizedRemoteIP(remote)
 	for _, f := range t.From {
 		if n := parseNet(f); n != nil && ip != nil && n.Contains(ip) {
 			return true

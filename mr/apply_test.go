@@ -496,8 +496,12 @@ func TestRestoreKeepsRemovedServiceWhenStopFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.WriteFile(service, []byte("#!/sbin/openrc-run\n"), 0755)
-	if _, err := restore(snap); err != nil {
+	services, err := restore(snap)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(services) != 0 {
+		t.Fatalf("failed-stop service scheduled for restart: %v", services)
 	}
 	if _, err := os.Stat(service); err != nil {
 		t.Fatalf("service removed after stop failure: %v", err)
