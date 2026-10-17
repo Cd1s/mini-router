@@ -23,7 +23,7 @@ func TestF3ModemRendersAliasRouteAndMasquerade(t *testing.T) {
 	mustValid(t, c)
 	f := renderMap(t, c)
 	sh := f[GenDir+"/network.sh"]
-	if !strings.Contains(sh, "ip addr replace 192.168.1.2/24 dev wan") {
+	if !strings.Contains(sh, "ip addr replace 192.168.1.2/32 dev wan") {
 		t.Errorf("modem alias missing:\n%s", sh)
 	}
 	if !strings.Contains(sh, "ip route replace 192.168.1.1/32 dev wan") {
@@ -39,15 +39,16 @@ func TestF3ModemCanBeOutsideCurrentLAN(t *testing.T) {
 	c := &Config{
 		System:   System{Hostname: "modemtest"},
 		LAN:      LAN{Bridge: "br-lan", Ports: []string{"lan2"}, IPv4: "192.168.77.6/24"},
-		WAN:      []WAN{{Name: "wan", Device: "wan", Proto: "static", IPv4: "203.0.113.2/24", Gateway: "203.0.113.1", Metric: 10, Modem: Modem{Address: "192.168.1.1"}}},
+		WAN:      []WAN{{Name: "wan", Device: "wan", Proto: "pppoe", Username: "u", Password: "pw", Metric: 10, Modem: Modem{Address: "192.168.1.1"}}},
 		DNS:      DNS{Upstream: "manual", Servers: []string{"9.9.9.9"}},
 		Firewall: Firewall{Offload: "off"},
 		DHCP:     DHCP{Start: 100, End: 200, Lease: "12h", Domain: "lan"},
 	}
+	c.secrets = map[string]string{"pw": "secret"}
 	c.defaults()
 	mustValid(t, c)
 	f := renderMap(t, c)
-	if !strings.Contains(f[GenDir+"/network.sh"], "ip addr replace 192.168.1.2/24 dev wan") {
+	if !strings.Contains(f[GenDir+"/network.sh"], "ip addr replace 192.168.1.2/32 dev wan") {
 		t.Fatalf("modem alias outside LAN subnet missing:\n%s", f[GenDir+"/network.sh"])
 	}
 	nft := renderNft(c, allExist)
@@ -66,6 +67,44 @@ func TestF3OverlappingGatewayMasqueradesOnlyGateway(t *testing.T) {
 	}
 	if strings.Contains(nft, `ip saddr 192.168.1.0/24 masquerade comment "wan-gateway:wan"`) && strings.Contains(nft, `ip daddr 192.168.1.2 ip saddr 192.168.1.0/24 masquerade comment "wan-gateway:wan"`) {
 		t.Fatal("gateway NAT widened beyond the gateway /32")
+	}
+}
+
+func TestF3DHCPv6ExpiryKeepsIPv4DNS(t *testing.T) {
+	tempState(t)
+	c := testConfig(t)
+	c.defaults()
+	w := c.WANByName("wan")
+	writeLease("wan", wanLease{IP: "203.0.113.2", Gateway: "203.0.113.1", DNS: []string{"203.0.113.53"}, DNS6: []string{"2001:db8::53"}, Dev: w.Ifname()})
+	if !updateDHCP6DNS(w, "EXPIRE6") {
+		t.Fatal("EXPIRE6 did not update DNS6")
+	}
+	l, ok := readLease("wan")
+	if !ok || len(l.DNS) != 1 || l.DNS[0] != "203.0.113.53" || len(l.DNS6) != 0 {
+		t.Fatalf("lease after EXPIRE6: %+v", l)
+	}
+}
+
+func TestF3ModemAddressValidation(t *testing.T) {
+	for _, address := range []string{"192.168.1.1/24", "192.168.1.1\naccept", "8.8.8.8", "127.0.0.1", "224.0.0.1"} {
+		c := testConfig(t)
+		c.WAN[0].Modem = Modem{Address: address}
+		c.defaults()
+		if len(c.Validate()) == 0 {
+			t.Errorf("invalid modem address accepted: %q", address)
+		}
+	}
+}
+
+func TestF3ModemOnlyTrustedLAN(t *testing.T) {
+	c := testConfig(t)
+	c.Networks = []Network{{Name: "guest", IPv4: "192.168.20.1/24", Zone: "guest"}}
+	c.WAN[0].Modem = Modem{Address: "192.168.1.1"}
+	c.defaults()
+	mustValid(t, c)
+	nft := renderNft(c, allExist)
+	if strings.Contains(nft, `iifname "br-guest" oifname "wan" ip daddr 192.168.1.1`) {
+		t.Fatalf("guest modem access rendered:\n%s", nft)
 	}
 }
 

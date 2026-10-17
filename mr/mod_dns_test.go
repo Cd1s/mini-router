@@ -63,6 +63,7 @@ min-cache-ttl=3600
 use-stale-cache=3600
 no-negcache
 edns-packet-max=1232
+resolv-file=/run/ppp/resolv.conf
 resolv-file=/run/mini-router/resolv.conf
 servers-file=` + GenDir + `/dns-split.servers
 local=/use-application-dns.net/

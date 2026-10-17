@@ -54,6 +54,14 @@ type Modem struct {
 	Address string `yaml:"address"`
 }
 
+func normalizedModemAddress(w WAN) string {
+	ip := net.ParseIP(w.Modem.Address)
+	if ip == nil || ip.To4() == nil || strings.TrimSpace(w.Modem.Address) != w.Modem.Address {
+		return ""
+	}
+	return ip.To4().String()
+}
+
 // LinkDev is the ethernet-level netdev of the WAN: Device, or its 802.1Q subinterface.
 func (w WAN) LinkDev() string {
 	if w.VLAN > 0 {
@@ -632,8 +640,21 @@ func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
 			}
 		}
 		if w.Modem.Address != "" {
-			if !isIPv4Literal(w.Modem.Address) {
+			ip := net.ParseIP(w.Modem.Address)
+			if w.Proto != "pppoe" {
+				v.Add("%s.modem: only supported on pppoe WANs (the DHCP client replaces link addresses)", p)
+			} else if ip == nil || ip.To4() == nil || strings.TrimSpace(w.Modem.Address) != w.Modem.Address {
 				v.Add("%s.modem.address: IPv4 address required, got %q", p, w.Modem.Address)
+			} else if !ip.IsPrivate() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsMulticast() {
+				v.Add("%s.modem.address: private unicast address required, got %q", p, w.Modem.Address)
+			} else if ip.Equal(net.ParseIP(strings.SplitN(c.LAN.IPv4, "/", 2)[0])) {
+				v.Add("%s.modem.address: cannot be the router LAN address, got %q", p, w.Modem.Address)
+			} else {
+				for _, ln := range c.LANNets() {
+					if routerIP := net.ParseIP(strings.SplitN(ln.IPv4, "/", 2)[0]); routerIP != nil && ip.Equal(routerIP) {
+						v.Add("%s.modem.address: cannot be a router LAN address, got %q", p, w.Modem.Address)
+					}
+				}
 			}
 		}
 	}

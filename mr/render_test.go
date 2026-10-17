@@ -37,7 +37,7 @@ func TestRender(t *testing.T) {
 	want := map[string][]string{
 		"/etc/ppp/peers/wan":             {"nic-wan", "ifname pppoe-wan", "usepeerdns", "+ipv6", `password "test-pw-not-real"`},
 		"/etc/ppp/peers/wan2":            {"ifname pppoe-wan2", "ipparam wan2"},
-		"/etc/dnsmasq.conf":              {"dhcp-range=set:lan,192.168.1.100,192.168.1.249,255.255.255.0,12h", "dhcp-option=tag:lan,option:router,192.168.1.6", "dhcp-host=02:c3:06:d6:7f:8a,192.168.1.66,desktop", "min-cache-ttl=3600", "resolv-file=" + resolvConf, "use-stale-cache=3600", "servers-file=" + GenDir + "/dns-split.servers", "enable-ra"},
+		"/etc/dnsmasq.conf":              {"dhcp-range=set:lan,192.168.1.100,192.168.1.249,255.255.255.0,12h", "dhcp-option=tag:lan,option:router,192.168.1.6", "dhcp-host=02:c3:06:d6:7f:8a,192.168.1.66,desktop", "min-cache-ttl=3600", "resolv-file=" + ResolvPPP + "\nresolv-file=" + resolvConf, "use-stale-cache=3600", "servers-file=" + GenDir + "/dns-split.servers", "enable-ra"},
 		GenDir + "/dns-split.servers":    {"server=/example-a.com/127.0.0.1#5453", "server=/example-b.net/127.0.0.1#5453", "server=/example-c.org/127.0.0.1#5453"},
 		"/etc/hostapd/hostapd-phy1.conf": {"country_code=PA", "channel=36", "vht_oper_centr_freq_seg0_idx=50", "he_oper_chwidth=2", "[VHT160]", "wpa_key_mgmt=SAE WPA-PSK WPA-PSK-SHA256", "interface=phy1-ap0", "[HT40+]", "he_bss_color="},
 		"/etc/modprobe.d/mt7915e.conf":   {"options mt7915e wed_enable=1"},

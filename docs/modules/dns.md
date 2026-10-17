@@ -216,7 +216,10 @@ Upstream modes:
 
 - `isp` (default): `resolv-file=/run/mini-router/resolv.conf`, maintained from PPPoE peerdns, DHCP option 6,
   and DHCPv6 nameservers. `fallback` (up to three IP addresses) is written only when no active WAN has a source;
-  without it, no upstream is configured and `mr doctor` reports the condition. Follows the router when it travels.
+  `/run/ppp/resolv.conf` remains a short lived PPP bootstrap source. Without a configured fallback and no active
+  WAN source, `mr doctor` reports the condition. Follows the router when it travels.
+  IPv4 and IPv6 nameservers are tracked separately in the WAN lease, so an IPv6 lease expiry cannot remove
+  still-valid IPv4 DNS learned from PPPoE or DHCP.
 - `manual`: `no-resolv` + one `server=` per entry (`ip` or `ip#port`, v4 or v6). Port 53 on
   loopback or on the router's own LAN-side addresses (dnsmasq itself — a forwarding loop) is refused,
   here and in `dns.split` / `dns.dot.bootstrap`.

@@ -265,13 +265,6 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 				fmt.Fprintf(b, "ip addr replace %s dev %s\n", w.IPv4, w.LinkDev())
 				fmt.Fprintf(b, "for a in $(ip -4 -o addr show dev %s | awk '{print $4}'); do [ \"$a\" = %s ] || ip addr del \"$a\" dev %s; done\n", w.LinkDev(), w.IPv4, w.LinkDev())
 			}
-			if w.Modem.Address != "" {
-				alias := modemAlias(c, w)
-				if alias != "" {
-					fmt.Fprintf(b, "ip addr replace %s dev %s\n", alias, w.LinkDev())
-					fmt.Fprintf(b, "ip route replace %s/32 dev %s\n", w.Modem.Address, w.LinkDev())
-				}
-			}
 		}
 		wanIPv6OffSh(c, b)
 		macvlanSh(c, b, need)
@@ -341,6 +334,7 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 			fmt.Fprintf(b, "%s 2>/dev/null\n", strings.Join(args, " "))
 		}
 	case "tail":
+		modemSh(c, b)
 		b.WriteString(perfScript)
 	}
 	modeNetSh(c, phase, b)
@@ -353,11 +347,16 @@ func modemAlias(c *Config, w WAN) string {
 	if lanNet == nil || target == nil {
 		return ""
 	}
-	mask := lanNet.Mask
+	mask := net.CIDRMask(24, 32)
 	n := &net.IPNet{IP: target.Mask(mask), Mask: mask}
 	reserved := map[string]bool{net.ParseIP(w.Modem.Address).String(): true}
 	for _, ln := range c.LANNets() {
 		if ip, _, err := net.ParseCIDR(ln.IPv4); err == nil {
+			reserved[ip.String()] = true
+		}
+	}
+	for _, x := range c.WAN {
+		if ip := net.ParseIP(strings.SplitN(x.IPv4, "/", 2)[0]).To4(); ip != nil {
 			reserved[ip.String()] = true
 		}
 	}
@@ -368,13 +367,38 @@ func modemAlias(c *Config, w WAN) string {
 			break
 		}
 		if !reserved[ip.String()] {
-			return fmt.Sprintf("%s/%d", ip, bitsFor(n))
+			return fmt.Sprintf("%s/32", ip)
 		}
 	}
 	return ""
 }
 
-func bitsFor(n *net.IPNet) int { ones, _ := n.Mask.Size(); return ones }
+func modemSh(c *Config, b *strings.Builder) {
+	b.WriteString("if [ -r /run/mini-router/modem-aliases ]; then while read -r d a t; do ip addr del \"$a\" dev \"$d\" 2>/dev/null || true; ip route del \"$t/32\" dev \"$d\" 2>/dev/null || true; done < /run/mini-router/modem-aliases; fi\n: > /run/mini-router/modem-aliases\n")
+	b.WriteString("_mr_neigh_mode=pro; _mr_neigh_mode=${_mr_neigh_mode}xy\nif [ -r /run/mini-router/modem-neigh ]; then while read -r ip d; do ip neigh del \"$_mr_neigh_mode\" \"$ip\" dev \"$d\" 2>/dev/null || true; done < /run/mini-router/modem-neigh; fi\n: > /run/mini-router/modem-neigh\n")
+	for _, w := range c.WAN {
+		address := normalizedModemAddress(w)
+		if address == "" || w.Proto != "pppoe" {
+			continue
+		}
+		alias := modemAlias(c, w)
+		if alias == "" {
+			continue
+		}
+		fmt.Fprintf(b, "ip addr replace %s dev %s\n", alias, w.LinkDev())
+		fmt.Fprintf(b, "ip route replace %s/32 dev %s src %s\n", address, w.LinkDev(), strings.TrimSuffix(alias, "/32"))
+		fmt.Fprintf(b, "echo %s %s %s >> /run/mini-router/modem-aliases\n", w.LinkDev(), alias, address)
+		for _, ln := range c.LANNets() {
+			if ln.Zone != "lan" {
+				continue
+			}
+			if _, n, err := net.ParseCIDR(ln.IPv4); err == nil && n.Contains(net.ParseIP(address)) {
+				fmt.Fprintf(b, "ip neigh replace \"$_mr_neigh_mode\" %s dev %s 2>/dev/null || true\n", address, ln.Bridge)
+				fmt.Fprintf(b, "echo %s %s >> /run/mini-router/modem-neigh\n", address, ln.Bridge)
+			}
+		}
+	}
+}
 
 // wanIPv6OffSh: a WAN link device that no IPv6-enabled DHCP / static WAN uses as its interface takes no
 // router advertisements and keeps no global IPv6 state. The WAN-up hook sets accept_ra=2 while ipv6 is on,
@@ -713,14 +737,18 @@ func netNft(c *Config, hook string, n *Nft) {
 func modemNATRules(c *Config) []string {
 	var out []string
 	for _, w := range c.WAN {
-		if w.Modem.Address == "" {
+		address := normalizedModemAddress(w)
+		if address == "" || w.Proto != "pppoe" {
 			continue
 		}
-		ip := net.ParseIP(w.Modem.Address)
+		ip := net.ParseIP(address)
 		if ip == nil || ip.To4() == nil {
 			continue
 		}
 		for _, ln := range c.LANNets() {
+			if ln.Zone != "lan" {
+				continue
+			}
 			_, n, err := net.ParseCIDR(ln.IPv4)
 			if err != nil {
 				continue
@@ -745,6 +773,9 @@ func wanGatewayNATRules(c *Config) []string {
 			continue
 		}
 		for _, ln := range c.LANNets() {
+			if ln.Zone != "lan" {
+				continue
+			}
 			_, n, err := net.ParseCIDR(ln.IPv4)
 			if err == nil && n.Contains(gw) {
 				out = append(out, fmt.Sprintf("iifname %q oifname %q ip daddr %s ip saddr %s masquerade comment \"wan-gateway:%s\"", ln.Bridge, l.Dev, gw, n, w.Name))

@@ -256,12 +256,13 @@ func fwNft(c *Config, hook string, n *Nft) {
 			}
 		}
 		for _, w := range c.WAN {
-			if w.Modem.Address == "" {
+			address := normalizedModemAddress(w)
+			if address == "" || w.Proto != "pppoe" {
 				continue
 			}
 			for _, ln := range c.LANNets() {
-				if _, _, err := net.ParseCIDR(ln.IPv4); err == nil {
-					n.W("iifname %q oifname %q ip daddr %s accept comment \"modem:%s\"", ln.Bridge, w.LinkDev(), w.Modem.Address, w.Name)
+				if ln.Zone == "lan" {
+					n.W("iifname %q oifname %q ip daddr %s accept comment \"modem:%s\"", ln.Bridge, w.LinkDev(), address, w.Name)
 				}
 			}
 		}

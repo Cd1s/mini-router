@@ -416,7 +416,7 @@ func wanRuntime(c *Config) wanRuntimeView {
 		if a := ipv4Addrs(r.Dev); len(a) > 0 {
 			r.Up, r.IP, r.MTU = true, strings.SplitN(a[0], "/", 2)[0], atoi(sysRead(r.Dev, "mtu"))
 			if l, ok := readLease(w.Name); ok {
-				r.Gateway, r.DNS, r.Since = l.Gateway, l.DNS, l.Since
+				r.Gateway, r.DNS, r.Since = l.Gateway, append(append([]string{}, l.DNS...), l.DNS6...), l.Since
 				if ln := lanForIP(c, l.Gateway); ln != nil {
 					r.Overlap = fmt.Sprintf("%s (%s)", ln.Name, ln.IPv4)
 				}

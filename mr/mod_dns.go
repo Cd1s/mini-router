@@ -704,8 +704,9 @@ func dnsUpstreamLines(c *Config) []string {
 			}
 		}
 	default:
-		// The net hooks merge PPPoE, DHCP option 6 and DHCPv6 nameservers into one file. Keeping
-		// one source avoids stale /run/ppp/resolv.conf surviving a protocol change or outage.
+		// The merged file follows current leases; pppd's own file remains a transient bootstrap
+		// source while a PPP session is coming up or the merged hook state is being rebuilt.
+		out = append(out, "resolv-file="+ResolvPPP)
 		if wanDNSFromPeers(c) {
 			out = append(out, "resolv-file="+resolvConf)
 		}
@@ -935,15 +936,6 @@ func validUpstream(c *Config, v *Validator) {
 	d := c.DNS
 	switch d.Upstream {
 	case "isp":
-		hasSource := len(c.DNS.Fallback) > 0
-		for _, w := range c.WAN {
-			if (w.Proto == "static" && len(w.DNS) > 0) || (w.Proto != "static" && w.PeerDNS) {
-				hasSource = true
-			}
-		}
-		if !hasSource {
-			v.Add("dns.upstream: isp needs a WAN peerdns/static DNS source or dns.fallback")
-		}
 		if len(c.DNS.Fallback) > 3 {
 			v.Add("dns.fallback: at most 3 servers")
 		}
@@ -955,10 +947,16 @@ func validUpstream(c *Config, v *Validator) {
 			}
 		}
 	case "manual":
+		if len(c.DNS.Fallback) > 0 {
+			v.Add("dns.fallback: only valid with dns.upstream: isp")
+		}
 		if len(d.Servers) == 0 {
 			v.Add("dns.servers: upstream manual needs at least one server")
 		}
 	case "dot":
+		if len(c.DNS.Fallback) > 0 {
+			v.Add("dns.fallback: only valid with dns.upstream: isp")
+		}
 		if !c.Services.Stubby.Enabled {
 			v.Add("dns.upstream: dot needs services.stubby.enabled")
 		}

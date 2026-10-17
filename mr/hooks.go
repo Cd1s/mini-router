@@ -38,6 +38,7 @@ type wanLease struct {
 	Prefix  int      `json:"prefix,omitempty"`
 	Gateway string   `json:"gateway,omitempty"`
 	DNS     []string `json:"dns,omitempty"`
+	DNS6    []string `json:"dns6,omitempty"`
 	Since   int64    `json:"since"`
 	Dev     string   `json:"dev,omitempty"` // L3 interface, so leftovers can be removed once the WAN is gone
 }
@@ -124,7 +125,7 @@ func hookPPP(c *Config, up bool, args []string) error {
 			l.Gateway = args[4]
 		}
 		if w.PeerDNS { // pppd exports the peer's DNS servers to ip-up
-			l.DNS = validIPs(3, os.Getenv("DNS1"), os.Getenv("DNS2"))
+			l.DNS, l.DNS6 = splitDNS(3, os.Getenv("DNS1"), os.Getenv("DNS2"))
 		}
 		writeLease(w.Name, l)
 		wanUp(c, w, ifname, args[3], "")
@@ -155,6 +156,28 @@ func validIPs(max int, xs ...string) []string {
 		}
 	}
 	return out
+}
+
+func splitDNS(max int, xs ...string) (v4, v6 []string) {
+	seen4, seen6 := map[string]bool{}, map[string]bool{}
+	for _, x := range xs {
+		for _, f := range strings.Fields(x) {
+			ip := net.ParseIP(f)
+			if ip == nil || ip.IsUnspecified() {
+				continue
+			}
+			if ip4 := ip.To4(); ip4 != nil {
+				if !seen4[ip4.String()] && len(v4) < max {
+					seen4[ip4.String()] = true
+					v4 = append(v4, ip4.String())
+				}
+			} else if !seen6[ip.String()] && len(v6) < max {
+				seen6[ip.String()] = true
+				v6 = append(v6, ip.String())
+			}
+		}
+	}
+	return v4, v6
 }
 
 // wanUp installs everything routing needs for one WAN that has an address. Idempotent.
@@ -467,7 +490,7 @@ func writeResolv(c *Config) {
 		if !ok {
 			continue
 		}
-		for _, d := range l.DNS {
+		for _, d := range append(append([]string{}, l.DNS...), l.DNS6...) {
 			if !seen[d] && net.ParseIP(d) != nil {
 				seen[d] = true
 				fmt.Fprintf(&b, "nameserver %s\n", d)
@@ -506,19 +529,8 @@ func hookDhcpcd(c *Config) error {
 	if w == nil {
 		return nil
 	}
-	if w.PeerDNS {
-		if l, ok := readLease(w.Name); ok {
-			if ds := validIPs(3, os.Getenv("new_dhcp6_name_servers"), os.Getenv("new_domain_name_servers")); len(ds) > 0 {
-				l.DNS = append(l.DNS, ds...)
-				l.DNS = validIPs(3, strings.Join(l.DNS, " "))
-				writeLease(w.Name, l)
-				defer writeResolv(c)
-			} else if reason := os.Getenv("reason"); reason == "EXPIRE6" || reason == "RELEASE6" || reason == "STOP6" || reason == "NOCARRIER" || reason == "STOPPED" {
-				l.DNS = nil
-				writeLease(w.Name, l)
-				defer writeResolv(c)
-			}
-		}
+	if updateDHCP6DNS(w, reason, os.Getenv("new_dhcp6_name_servers"), os.Getenv("new_domain_name_servers")) {
+		defer writeResolv(c)
 	}
 	switch reason {
 	case "BOUND6", "REBIND6", "RENEW6", "REBOOT6", "INFORM6", "DELEGATED6", "ROUTERADVERT":
@@ -565,6 +577,28 @@ func hookDhcpcd(c *Config) error {
 	}
 	runOnWAN(c, w.Name, "ipv6")
 	return refreshLan6()
+}
+
+func updateDHCP6DNS(w *WAN, reason string, values ...string) bool {
+	if !w.PeerDNS {
+		return false
+	}
+	l, ok := readLease(w.Name)
+	if !ok {
+		return false
+	}
+	_, ds := splitDNS(3, values...)
+	changed := len(ds) > 0
+	if changed {
+		l.DNS6 = ds
+	} else if reason == "EXPIRE6" || reason == "RELEASE6" || reason == "STOP6" || reason == "NOCARRIER" || reason == "STOPPED" {
+		changed = len(l.DNS6) > 0
+		l.DNS6 = nil
+	}
+	if changed {
+		writeLease(w.Name, l)
+	}
+	return changed
 }
 
 // protoSrc6 marks the main-table IPv6 default routes srcDefaults6 installs.
@@ -683,12 +717,14 @@ func hookUdhcpc(c *Config, event string) error {
 	if w == nil || w.Proto != "dhcp" {
 		return fmt.Errorf("udhcpc: %q is not a DHCP WAN", iface)
 	}
+	fwDirty := false
 	switch event {
 	case "deconfig":
 		if _, had := readLease(w.Name); had {
 			logf("wan %s: DHCP lease dropped on %s", w.Name, iface)
 		}
 		wanDown(c, w)
+		fwDirty = true
 		run("ip", "-4", "addr", "flush", "dev", iface)
 		run("ip", "link", "set", iface, "up")
 		runOnWAN(c, w.Name, "down")
@@ -711,6 +747,7 @@ func hookUdhcpc(c *Config, event string) error {
 		}
 		cidr := fmt.Sprintf("%s/%d", ip, prefix)
 		old, had := readLease(w.Name)
+		fwDirty = !had || old.Gateway != gw || old.Dev != iface
 		if had && old.Gateway != "" && old.Gateway != gw {
 			removeGatewayArtifacts(c, old)
 		}
@@ -729,7 +766,7 @@ func hookUdhcpc(c *Config, event string) error {
 		} else {
 			logf("wan %s: DHCP %s gateway %s on %s", w.Name, cidr, gw, iface)
 		}
-		writeLease(w.Name, wanLease{IP: ip.String(), Prefix: prefix, Gateway: gw, DNS: dns, Since: since, Dev: iface})
+		writeLease(w.Name, wanLease{IP: ip.String(), Prefix: prefix, Gateway: gw, DNS: dns, DNS6: old.DNS6, Since: since, Dev: iface})
 		wanUp(c, w, iface, ip.String(), gw)
 		writeResolv(c)
 		runOnWAN(c, w.Name, "up")
@@ -737,6 +774,9 @@ func hookUdhcpc(c *Config, event string) error {
 		logf("wan %s: DHCP %s on %s", w.Name, event, iface)
 	}
 	updateLEDs(c)
+	if fwDirty {
+		return fwLoad(c)
+	}
 	return nil
 }
 
