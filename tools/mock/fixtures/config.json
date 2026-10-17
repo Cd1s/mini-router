@@ -157,6 +157,9 @@
     "password_secret": "pppoe_password",
     "peerdns": true,
     "proto": "pppoe",
+    "modem": {"address": "192.168.2.1"},
+    "require_public_ip": true,
+    "require_public_ip_gap": 300,
     "username": "user@example-isp"
    },
    {

@@ -52,6 +52,8 @@ function wanRefs(c, name, v6){
   });
   for (const s of c.schedules||[]) if (s.action==="reconnect" && s.target===name)
     ref("定时任务 "+s.name, ()=>dropFrom(c.schedules, s));
+  if (m.mode && c.wan.length - 1 < 2)
+    ref("关闭多线路", ()=>{ m.mode = ""; delete m.weights; });
   return out;
 }
 // confirmRefs: asks before `msg`, listing what goes with it; false = cancelled.
@@ -71,6 +73,48 @@ function checks(list, isOn, toggle, disabled){
     onchange:e=>{ toggle(p, e.target.checked); touch(); }}), " "+p)) : h("span",{class:"mut"},"（无）"));
 }
 async function wanRuntime(){ try { return await api("net.wan"); } catch(e){ return {wans:[]}; } }
+
+// Turning IPv6 or delegated prefixes off must remove policy routes that depend on them before apply.
+// The same callback is used by the WAN card and the separate IPv6 page so both entry points behave alike.
+const v6off = (c, w, key, redraw)=>on=>{
+  if (on) return;
+  const refs = wanRefs(c, w.name, true);
+  if (refs.length && !confirmRefs("关闭 "+(key==="ipv6"?"IPv6":"IPv6 前缀")+" ("+w.name+")?", refs)) {
+    w[key] = true;
+    touch();
+    redraw();
+    return;
+  }
+  touch();
+  redraw();
+};
+
+// The DNS module's controlled list editor is backed by dns.files. Policy routes use the same
+// directory and file contract so a domain list can be selected and edited without shell access.
+const netDNSFileSelect = (obj, key, files, onchange)=>{
+  const current = obj[key]||"";
+  const opts = [["","（不使用文件）"], ...(files||[]).filter(f=>f.name.endsWith(".domains")).map(f=>[f.path,f.name])];
+  if (current && !opts.some(x=>x[0]===current)) opts.splice(1,0,[current,current.split("/").pop()+"（当前）"]);
+  return inSel(obj,key,opts,onchange);
+};
+const netManagedDNSFile = p=>{
+  const s=String(p||""), prefix="/etc/mini-router/dns/", name=s.startsWith(prefix)?s.slice(prefix.length):"";
+  return name && !name.includes("/") && /^[A-Za-z0-9_-]{1,64}\.domains$/.test(name) ? name : "";
+};
+const netListFileEditor = (ed,file,after)=>api("dns.files",{file}).then(j=>{
+  const ta=h("textarea",{rows:16,spellcheck:false},j.content||"");
+  ed.replaceChildren(card("列表文件 · "+file,[h("div",{class:"mut",style:"margin-bottom:8px"},(j.path||file)+" — 每行一个域名，# 开头为注释"),ta,
+    h("div",{class:"row",style:"margin-top:10px"},h("button",{class:"btn p",onclick:async()=>{
+      try { await api("dns.files",{file,content:ta.value,save:true}); toast("已保存，点击底部“保存并应用”生效"); S.orig=""; touch(); after&&await after(); }
+      catch(e) { toast("保存失败："+e.message,5000); }
+    }},"保存列表"),h("button",{class:"btn",onclick:()=>ed.replaceChildren()},"关闭"))]));
+}).catch(e=>toast(e.message,4000));
+
+function modemToggle(w, on){
+  if (on) w.modem = {address:""};
+  else delete w.modem;
+  return !!w.modem;
+}
 
 // ---------- 接口状态 ----------
 registerPage("status", "interfaces", "接口状态", 30, async ()=>{
@@ -117,6 +161,22 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
   const box = h("div");
   const setProto = (w, p)=>{
     if (p!=="static"){ delete w.ipv4; delete w.gateway; delete w.dns; }
+    if (p!=="pppoe") {
+      const m = c.multiwan||{};
+      if ((m.dial_order||[]).includes(w.name)) {
+        m.dial_order = m.dial_order.filter(x=>x!==w.name);
+        if (m.dial_order.length < 2) {
+          delete m.dial_order;
+          delete m.dial_wait;
+          delete m.dial_restore;
+        }
+      }
+      delete w.modem;
+      delete w.require_public_ip;
+      delete w.require_public_ip_gap;
+    } else if (!w.password_secret) {
+      w.password_secret = "pppoe_password";
+    }
     if (p==="pppoe" && !w.mtu) w.mtu = 1492;
     if (p!=="pppoe" && w.mtu===1492) w.mtu = 0;
     draw();
@@ -150,10 +210,37 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
       ...field("物理接口", inText(w,"device",{placeholder:"wan", list:"net-portlist"}), "同一个网口可以跑多条 PPPoE（多拨）"),
       ...field("VLAN", inNum(w,"vlan",{min:0,max:4094}), "0 = 不打标签；运营商要求时填（例如 PPPoE 走 VLAN 500）"),
     ];
-    if (p==="pppoe") rows.push(
-      ...field("PPPoE 账号", inText(w,"username")),
-      ...field("密码引用名", inText(w,"password_secret",{placeholder:"pppoe_password"}), "密码保存在 secrets.yaml，多条 WAN 可共用一个"),
-      ...field("PPPoE 密码", inSecret(w,"password_secret")));
+    if (p==="pppoe") {
+      rows.push(
+        ...field("PPPoE 账号", inText(w,"username")),
+        ...field("密码引用名", inText(w,"password_secret",{placeholder:"pppoe_password"}), "密码保存在 secrets.yaml，多条 WAN 可共用一个"),
+        ...field("PPPoE 密码", inSecret(w,"password_secret")));
+      const modemToggleControl = h("label",{class:"sw"}, h("input",{type:"checkbox",checked:!!w.modem,onchange:e=>{
+        if (modemToggle(w,e.target.checked)) {
+          modemInput.disabled=false;
+          modemInput.value="";
+          modemInput.focus();
+        } else {
+          modemInput.disabled=true;
+          modemInput.value="";
+        }
+        touch();
+      }}), h("span"));
+      const modemInput = h("input",{type:"text",value:w.modem?.address||"",placeholder:"192.168.1.1",disabled:!w.modem,oninput:e=>{
+        if (!w.modem) return;
+        w.modem.address = e.target.value;
+        touch();
+      },onblur:e=>{
+        const value=e.target.value.trim();
+        if (!value) return toast("请填写光猫管理地址",4000);
+        const lanIPs=[c.lan?.ipv4,...(c.networks||[]).map(n=>n.ipv4)].map(x=>String(x||"").split("/")[0]);
+        if (lanIPs.includes(value)) toast("光猫地址不能与路由器 LAN 地址相同",5000);
+      }});
+      rows.push(...field("光猫管理页", h("span",{class:"row"},modemToggleControl,modemInput), "启用后，局域网设备可访问桥接光猫的管理页（例如 192.168.1.1）；地址必须是上级私网 IPv4。"));
+      rows.push(
+        ...field("要求公网 IPv4", inBool(w,"require_public_ip"), "拿到内网或 CGNAT 地址时自动重拨这一条线路；连续 5 次仍拿不到公网地址后停止并告警。"),
+        ...field("公网地址重拨冷却（秒）", inNum(w,"require_public_ip_gap",{min:1,max:86400,placeholder:"180",value:w.require_public_ip_gap||""}), "留空使用默认 180 秒；只在 PPPoE 且开启上面的开关时生效。"));
+    }
     if (p==="static") rows.push(
       ...field("IPv4 地址 / 掩码", inText(w,"ipv4",{placeholder:"203.0.113.10/24"})),
       ...field("网关", inText(w,"gateway",{placeholder:"203.0.113.1"})),
@@ -164,19 +251,23 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
       ...field("路由跃点 (metric)", inNum(w,"metric",{min:0,max:9999}), "越小越优先，每条 WAN 各不相同；主线路 0，备用线路更大（多线路按它主备切换）"));
     if (p!=="static") rows.push(...field("使用运营商 DNS", inBool(w,"peerdns")));
     rows.push(
-      ...field("IPv6", inBool(w,"ipv6",v6off(w,"ipv6")), "dhcpcd 获取 IPv6（RA / DHCPv6）"),
-      ...field("请求 IPv6 前缀 (PD)", inBool(w,"ipv6_pd",v6off(w,"ipv6_pd")), "获取的前缀分配到 LAN"),
+      ...field("IPv6", inBool(w,"ipv6",v6off(c,w,"ipv6",draw)), "dhcpcd 获取 IPv6（RA / DHCPv6）"),
+      ...field("请求 IPv6 前缀 (PD)", inBool(w,"ipv6_pd",v6off(c,w,"ipv6_pd",draw)), "获取的前缀分配到 LAN"),
       ...field("IPv6 源地址路由", inBool(w,"ipv6_srcroute"), "来自本线路前缀的 IPv6 流量从本线路出去（多线必开）"));
+    const secondary = p==="pppoe" && c.wan.slice(0,i).some(x=>x.proto==="pppoe" && x.device===w.device && (Number(x.vlan)||0)===(Number(w.vlan)||0));
+    const genMac = secondary ? h("button",{class:"btn sm",onclick:async()=>{
+      if (w.mac && !confirm("这条 WAN 已有克隆 MAC（"+w.mac+"）。覆盖后应用会让该线路重拨，运营商可能按 MAC 认证，确定继续？")) return;
+      try {
+        const j = await api("net.wan_mac",{wan:w.name,device:w.device,vlan:Number(w.vlan)||0});
+        w.mac = j.mac;
+        touch();
+        draw();
+        toast("已生成多拨 MAC："+j.mac,3000);
+      } catch(e) { toast("生成多拨 MAC 失败："+e.message,5000); }
+    }},"生成多拨 MAC") : null;
     return card(h("span",{}, "WAN · "+(w.name||"(未命名)")+" ", h("span",{class:"tag"}, (PROTOS.find(x=>x[0]===p)||[0,p])[1])),
       [status(w), form(...rows)],
-      h("span",{class:"row"}, detect, redial(w), h("button",{class:"btn sm d",onclick:()=>{ if(confirmRefs("删除 WAN "+w.name+"？", wanRefs(c, w.name))){ c.wan.splice(i,1); touch(); draw(); }}},"删除")));
-  };
-  // turning ipv6 / ipv6_pd off: the nat6 policies through this WAN need both
-  const v6off = (w, key)=>on=>{
-    if (on) return;
-    const refs = wanRefs(c, w.name, true);
-    if (refs.length && !confirmRefs("关闭 "+(key==="ipv6"?"IPv6":"IPv6 前缀")+" ("+w.name+")?", refs)) w[key] = true;
-    touch(); draw();
+      h("span",{class:"row"}, detect, redial(w), genMac, h("button",{class:"btn sm d",onclick:()=>{ if(confirmRefs("删除 WAN "+w.name+"？", wanRefs(c, w.name))){ c.wan.splice(i,1); touch(); draw(); }}},"删除")));
   };
   const add = proto=>{
     // every WAN needs its own metric: take the next free one after the largest
@@ -184,6 +275,8 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
     const w = {name:"wan"+n, device:"wan", mac:"", proto, username:"", password_secret:"", mtu:0, metric, peerdns:true, ipv6:false, ipv6_pd:false, ipv6_srcroute:false};
     if (proto==="pppoe") Object.assign(w, {password_secret:"pppoe_password", mtu:1492, ipv6:true, ipv6_pd:true, ipv6_srcroute:true});
     c.wan.push(w); touch(); draw();
+    if (proto==="pppoe" && c.wan.filter(x=>x.proto==="pppoe" && x.device===w.device && (Number(x.vlan)||0)===(Number(w.vlan)||0)).length>1)
+      api("net.wan_mac",{wan:w.name,device:w.device,vlan:Number(w.vlan)||0}).then(j=>{ w.mac=j.mac; touch(); draw(); }).catch(e=>toast("自动生成多拨 MAC 失败："+e.message,5000));
   };
   const draw = ()=>box.replaceChildren(dl, ...c.wan.map(wanCard),
     h("div",{class:"row"}, h("button",{class:"btn p",onclick:()=>add("pppoe")},"+ 添加 PPPoE（多拨）"), h("button",{class:"btn",onclick:()=>add("dhcp")},"+ 添加 DHCP / 静态 WAN")));
@@ -216,6 +309,28 @@ registerPage("network", "multiwan", "多线路", 15, async ()=>{
   const drawWt = ()=>wtRows.replaceChildren(m.mode!=="balance" ? h("div",{class:"mut"},"仅“负载均衡”模式使用。") :
     form(...c.wan.flatMap(w=>field(w.name, h("input",{type:"number",min:0,max:100,value:wt[w.name],oninput:e=>{ wt[w.name]=e.target.value===""?0:Number(e.target.value); m.weights=Object.assign({},wt); touch(); }}), "0 = 不参与分流，只在其它线路故障时接管"))));
   drawWt();
+  const restore = {mode:m.dial_restore==="now"?"now":m.dial_restore && m.dial_restore!=="off"?"time":"off", time:m.dial_restore && /^\d{2}:\d{2}$/.test(m.dial_restore)?m.dial_restore:"04:30"};
+  const restoreControl = h("span",{class:"row"});
+  const applyRestore = ()=>{ m.dial_restore = restore.mode==="time" ? restore.time : restore.mode; touch(); };
+  const drawRestore = ()=>restoreControl.replaceChildren(
+    inSel(restore,"mode",[["off","关闭自动恢复"],["now","线路上线后立即恢复"],["time","每天定时恢复"]],()=>{ applyRestore(); drawRestore(); }),
+    h("input",{type:"time",value:restore.time,disabled:restore.mode!=="time",title:"本地时间 HH:MM",oninput:e=>{ restore.time=e.target.value; if(restore.mode==="time") applyRestore(); }})
+  );
+  drawRestore();
+  const dialNow = h("button",{class:"btn sm p",title:"按已应用的拨号顺序，只重拨乱序或晚到的线路",disabled:(m.dial_order||[]).length<2,onclick:async()=>{
+    try {
+      const j = await api("net.dial_restore",{}), redialled=j.redialled||[], failed=j.failed||[];
+      if (redialled.length || failed.length) {
+        const parts=[];
+        if (redialled.length) parts.push("已按顺序重拨："+redialled.join("、"));
+        if (failed.length) parts.push("失败："+failed.join("、"));
+        toast(parts.join("；"),5000);
+      }
+      else if (j.reason==="order_ok") toast("拨号顺序正常，无需重拨",4000);
+      else if (j.reason==="already_running") toast("已有一次顺序恢复正在进行",4000);
+      else toast("没有可执行的顺序恢复",4000);
+    } catch(e) { toast("重拨失败："+e.message,5000); }
+  }},"立即按顺序重拨");
   return h("div",{},
     card("线路状态", stat, when, true),
     card("健康检测与切换", form(
@@ -226,6 +341,10 @@ registerPage("network", "multiwan", "多线路", 15, async ()=>{
       ...field("超时（秒）", inNum(m,"timeout",{min:1,max:10,placeholder:"2",value:m.timeout||""})),
       ...field("连续失败几次判定故障", inNum(m,"fall",{min:1,max:20,placeholder:"3",value:m.fall||""})),
       ...field("连续成功几次判定恢复", inNum(m,"rise",{min:1,max:20,placeholder:"2",value:m.rise||""})))),
+    card("拨号顺序", form(
+      ...field("PPPoE 顺序", inList(m,"dial_order",{placeholder:"wan, wan2, wan3"}), "同一物理口的多条 PPPoE 按从前到后拨号；至少两条 PPPoE 才能启用。"),
+      ...field("等待前一条（秒）", inNum(m,"dial_wait",{min:1,max:120,placeholder:"30",value:m.dial_wait||""}), "后一条最多等待前面的线路上线；留空使用默认 30 秒。"),
+      ...field("顺序乱了时", restoreControl, "只重拨乱序 / 晚到的线路；可选关闭、线路上线后立即恢复或每天定时恢复。")), dialNow),
     card("负载均衡权重", wtRows),
     card("说明", h("div",{class:"mut"},
       "故障线路的默认路由 metric 加 10000（下一条线路接管），它的策略路由表也暂时不用，按 MAC / 地址指定走它的设备会改走最好的健康线路；恢复后自动切回。",
@@ -357,10 +476,19 @@ registerPage("network", "lan", "LAN 与网络", 20, async ()=>{
 
 // ---------- IPv6 ----------
 registerPage("network", "ipv6", "IPv6", 60, ()=>{
-  const c = S.cfg;
-  return h("div",{}, card("LAN", form(...field("IPv6 RA / SLAAC", inBool(c.lan,"ipv6_ra")))),
-    card("各 WAN 的 IPv6", roTable(["WAN","IPv6","前缀代理 (PD)","源地址路由"], c.wan.map(w=>[w.name, inBool(w,"ipv6"), inBool(w,"ipv6_pd"), inBool(w,"ipv6_srcroute")])), null, true),
-    card("说明", h("div",{class:"mut"},"每条 WAN 用 dhcpcd 请求一个 /64 前缀并加到 LAN；开启源地址路由后，LAN 设备使用哪个前缀的地址就从哪条线路出去，多线 IPv6 互不干扰。多线路健康检测只看 IPv4。")));
+  const c = S.cfg, box = h("div");
+  const draw = ()=>box.replaceChildren(
+    card("LAN", form(...field("IPv6 RA / SLAAC", inBool(c.lan,"ipv6_ra")))),
+    card("各 WAN 的 IPv6", roTable(["WAN","IPv6","前缀代理 (PD)","源地址路由"], c.wan.map(w=>[
+      w.name,
+      inBool(w,"ipv6",v6off(c,w,"ipv6",draw)),
+      inBool(w,"ipv6_pd",v6off(c,w,"ipv6_pd",draw)),
+      inBool(w,"ipv6_srcroute")
+    ])), null, true),
+    card("说明", h("div",{class:"mut"},"每条 WAN 用 dhcpcd 请求一个 /64 前缀并加到 LAN；开启源地址路由后，LAN 设备使用哪个前缀的地址就从哪条线路出去，多线 IPv6 互不干扰。多线路健康检测只看 IPv4。"))
+  );
+  draw();
+  return box;
 });
 
 // ---------- 路由 ----------
@@ -382,17 +510,27 @@ registerPage("routing", "routes", "静态路由", 10, async ()=>{
 
 registerPage("routing", "policy", "策略路由", 20, async ()=>{
   const c = S.cfg;
-  let n = {}; try { n = await api("net.routes"); } catch(e){}
-  return h("div",{}, tableCard("策略路由（指定出口 WAN）", c.policy_routes, [
-      {k:"name",l:"名称"},{k:"mac",l:"设备 MAC",ph:"aa:bb:cc:dd:ee:ff"},{k:"device",l:"或设备 / 分组",ph:"desktop / group:kids"},
-      {k:"src",l:"源地址 / 网段",ph:"192.168.1.66"},{k:"dst",l:"目标地址 / 网段",ph:"1.2.3.0/24"},
-      {k:"domains",l:"目标域名",t:"list",ph:"example.com, video.example"},
-      {k:"via",l:"出口 WAN",t:"sel",o:()=>c.wan.map(w=>w.name)},
-      {k:"fallback",l:"该 WAN 断线时",t:"sel",o:[["","换线"],["drop","断网"]]},
-      {k:"nat6",l:"IPv6 全走该 WAN",t:"bool"},
-      {k:"table",l:"路由表",t:"num",w:"80px",ph:"自动"},{k:"mark",l:"标记",w:"90px",ph:"自动"}],
-      ()=>({name:"",mac:"",src:"",dst:"",via:(c.wan[1]||c.wan[0]||{}).name||"",table:0,mark:""}),
-      "条件同时满足；MAC（或 网络 › 设备 里的设备名 / group:分组）/ 源 / 目标 / 域名至少填一项。没填源 / 目标地址时 IPv4 + IPv6 都生效，填了就只管该地址族。只影响新连接；多条同时命中时，排在前面的那条生效；访问内网、tailscale 和静态路由不受影响。域名含子域名：设备通过路由器 DNS 解析到的地址走该 WAN，连接照常硬件加速（DoH / 自定义 DNS 的设备不生效）。“断网”= 该 WAN 断线或健康检查失败时这些流量直接丢弃，绝不从其他 WAN 出去（该 WAN 没有 IPv6 时，这些设备也就没有 IPv6 外网）。路由表填 0、标记留空 = 自动（200+序号 / 0x200+序号）。"),
+  let n = {}, files = [];
+  try { n = await api("net.routes"); } catch(e){}
+  try { files = (await api("dns.files",{})).files||[]; } catch(e){}
+  const fileEd = h("div"), policyBody = h("div");
+  const policyNote = "条件同时满足；MAC（或 网络 › 设备 里的设备名 / group:分组）/ 源 / 目标 / 域名至少填一项。没填源 / 目标地址时 IPv4 + IPv6 都生效，填了就只管该地址族。只影响新连接；多条同时命中时，排在前面的那条生效；访问内网、tailscale 和静态路由不受影响。域名含子域名：设备通过路由器 DNS 解析到的地址走该 WAN，连接照常硬件加速（DoH / 自定义 DNS 的设备不生效）。“断网”= 该 WAN 断线或健康检查失败时这些流量直接丢弃，绝不从其他 WAN 出去（该 WAN 没有 IPv6 时，这些设备也就没有 IPv6 外网）。路由表填 0、标记留空 = 自动（200+序号 / 0x200+序号）。";
+  const blankPolicy = ()=>({name:"",mac:"",device:"",src:"",dst:"",domains:[],domains_file:"",via:(c.wan[1]||c.wan[0]||{}).name||"",fallback:"",nat6:false,table:0,mark:""});
+  function drawPolicy(){
+    const cols=["名称","设备 MAC","设备 / 分组","源地址 / 网段","目标地址 / 网段","目标域名","域名列表文件","出口 WAN","断线时","IPv6 全走","表","标记","操作"];
+    const rows=c.policy_routes.map((p,i)=>h("tr",{},
+      h("td",{},inText(p,"name")), h("td",{},inText(p,"mac",{placeholder:"aa:bb:cc:dd:ee:ff"})),
+      h("td",{},inText(p,"device",{placeholder:"desktop / group:kids"})), h("td",{},inText(p,"src",{placeholder:"192.168.1.66"})),
+      h("td",{},inText(p,"dst",{placeholder:"1.2.3.0/24"})), h("td",{},inList(p,"domains",{placeholder:"example.com, video.example"})),
+      h("td",{},h("span",{class:"row"},netDNSFileSelect(p,"domains_file",files,()=>{ touch(); drawPolicy(); }),h("button",{class:"btn sm",disabled:!netManagedDNSFile(p.domains_file),title:!netManagedDNSFile(p.domains_file)?"只有受控目录中的文件可编辑":"",onclick:()=>netListFileEditor(fileEd,netManagedDNSFile(p.domains_file),async()=>{ files=(await api("dns.files",{})).files||[]; drawPolicy(); })},"编辑列表"))),
+      h("td",{},inSel(p,"via",c.wan.map(w=>w.name))), h("td",{},inSel(p,"fallback",[["","换线"],["drop","断网"]])),
+      h("td",{},inBool(p,"nat6")), h("td",{},inNum(p,"table",{placeholder:"自动"})), h("td",{},inText(p,"mark",{placeholder:"自动"})),
+      h("td",{style:"width:1%;white-space:nowrap"},h("button",{class:"btn sm",title:"上移",disabled:i===0,onclick:()=>{[c.policy_routes[i-1],c.policy_routes[i]]=[c.policy_routes[i],c.policy_routes[i-1]];touch();drawPolicy();}},"↑")," ",h("button",{class:"btn sm d",onclick:()=>{c.policy_routes.splice(i,1);touch();drawPolicy();}},"删除"))));
+    policyBody.replaceChildren(h("div",{class:"tw"},h("table",{},h("thead",{},h("tr",{},cols.map(x=>h("th",{},x)))),h("tbody",{},rows.length?rows:h("tr",{},h("td",{colspan:cols.length,class:"mut"},"（空）"))))));
+  }
+  const addPolicy=h("button",{class:"btn sm p",onclick:()=>{c.policy_routes.push(blankPolicy());touch();drawPolicy();}},"+ 添加");
+  drawPolicy();
+  return h("div",{}, card("策略路由（指定出口 WAN）", [h("div",{class:"mut",style:"padding:10px 16px 0"},policyNote),policyBody], addPolicy, true), fileEd,
     Object.keys(n.learned||{}).length ? card("域名策略已学到的地址", roTable(["策略","IPv4","IPv6"],
       Object.entries(n.learned).map(([k,v])=>[k, String(v.v4??"-"), String(v.v6??"-")])), null, true) : null,
     tabs([["p4","IPv4 策略规则", ()=>card("ip -4 rule", roTable(RULE_COLS, (n.rules4||[]).map(fmtRule)), null, true)],

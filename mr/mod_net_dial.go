@@ -248,28 +248,50 @@ func dialDue(late []string, st map[string]int64, now int64) []string {
 
 // dialRestore is `mr wan dial-restore` (detached from the ppp-up hook, or crond): redials the late WANs
 // in dial order, each after the previous one has its new session (or dial_wait passed).
-func dialRestore(c *Config) error {
+type dialRestoreResult struct {
+	Redialled []string
+	Failed    []string
+	Reason    string
+}
+
+// dialRestoreWithOptions restores only WANs that arrived out of order. Manual requests force a
+// one-shot run even when the scheduled dial_restore setting is off and bypass the automatic cooldown.
+func dialRestoreWithOptions(c *Config, force bool) (dialRestoreResult, error) {
+	var result dialRestoreResult
 	m := c.MultiWAN
-	if !dialRestoreOn(m) {
-		return nil
+	if !force && !dialRestoreOn(m) {
+		result.Reason = "disabled"
+		return result, nil
 	}
 	lk := flock(dialLockFile, false)
 	if lk == nil {
-		return nil // a restore is running
+		result.Reason = "already_running"
+		return result, nil // a restore is running
 	}
 	defer lk.Close()
 	late := dialLate(c)
 	if len(late) == 0 {
-		return nil
+		result.Reason = "order_ok"
+		return result, nil
 	}
 	st := map[string]int64{}
 	readJSONFile(dialStateFile, &st)
-	due := dialDue(late, st, eventNow().Unix())
+	due := late
+	if !force {
+		due = dialDue(late, st, eventNow().Unix())
+	}
 	if len(due) < len(late) {
 		logf("dial order: broken (%s), redialling only %d of them (at most once per %d minutes each)", strings.Join(late, ", "), len(due), dialRestoreGap/60)
 	}
 	if len(due) == 0 {
-		return nil
+		result.Reason = "rate_limited"
+		return result, nil
+	}
+	if force {
+		now := eventNow().Unix()
+		for _, n := range due {
+			st[n] = now
+		}
 	}
 	b, _ := json.Marshal(st)
 	writeAtomic(dialStateFile, b, 0644)
@@ -279,8 +301,21 @@ func dialRestore(c *Config) error {
 		eventAdd(c, "dial", "info", n, fmt.Sprintf("%s redialled to restore the dial order %s", n, strings.Join(m.DialOrder, " → ")), true)
 		t0 := eventNow().Unix()
 		if dialRestart(svc) == nil {
+			result.Redialled = append(result.Redialled, n)
 			dialWaitUp(c, []string{n}, t0, eventNow().Add(m.dialWait()))
+		} else {
+			result.Failed = append(result.Failed, n)
 		}
 	}
-	return nil
+	if len(result.Redialled) > 0 {
+		result.Reason = "redialled"
+	} else {
+		result.Reason = "failed"
+	}
+	return result, nil
+}
+
+func dialRestore(c *Config) error {
+	_, err := dialRestoreWithOptions(c, false)
+	return err
 }

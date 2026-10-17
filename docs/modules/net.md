@@ -375,6 +375,8 @@ conntrack 会把后续包当作 invalid 丢掉。
 | `mr wan detect <port> [--timeout N]` | 一次性探测链路、PPPoE PADO、DHCP OFFER 和 IPv6 RA；默认最多 8 秒，不申请租约、不改地址 / 路由 / 服务 |
 | API `net.wan_detect` | POST `{"port":"wan","timeout":8}`，返回探测结果、`recommendation`（`pppoe` / `dhcp` / `static` / `unknown`）及 LAN 冲突建议 |
 | API `net.redial` | POST `{"wan":"wan2"}`：重启该 WAN 的服务（重新拨号 / 重新获取） |
+| API `net.dial_restore` | POST `{}`：按已应用的 `multiwan.dial_order` 只重拨乱序 / 晚到的线路，返回 `redialled`、`failed` 和 `reason`；scope `operate` |
+| API `net.wan_mac` | POST `{"wan":"wan2","device":"wan","vlan":0}`：为同一物理口的第 2 条及后续 PPPoE WAN 返回本地管理单播 MAC；scope `operate` |
 
 ## 对家里配置（examples/router.yaml）输出的改动（都是有意的）
 

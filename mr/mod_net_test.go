@@ -494,6 +494,29 @@ func TestInitInstancesAndRedialInput(t *testing.T) {
 	if r := apiNetRedial(apiReq{method: "POST", body: []byte(`{"wan":"../../etc"}`)}); r.status != 400 {
 		t.Errorf("redial with bad name: %d", r.status)
 	}
+	if r := apiNetDialRestore(apiReq{method: "GET"}); r.status != 405 {
+		t.Errorf("dial restore via GET: %d", r.status)
+	}
+	if r := apiNetWANMac(apiReq{method: "GET"}); r.status != 405 {
+		t.Errorf("wan mac via GET: %d", r.status)
+	}
+}
+
+func TestWANMACCandidateGuardsPrimary(t *testing.T) {
+	c := testConfig(t)
+	if _, err := wanMACCandidate(c, wanMACRequest{WAN: "wan"}); err == nil || !strings.Contains(err.Error(), "first PPPoE WAN") {
+		t.Fatalf("primary WAN was allowed to receive a generated MAC: %v", err)
+	}
+	if _, err := wanMACCandidate(c, wanMACRequest{WAN: "wan2"}); err != nil {
+		t.Fatalf("secondary WAN rejected: %v", err)
+	} else if got, _ := wanMACCandidate(c, wanMACRequest{WAN: "wan2"}); got != wanMACSuggest(c.WAN[0].MAC, "wan2") {
+		t.Fatalf("secondary MAC %q, want %q", got, wanMACSuggest(c.WAN[0].MAC, "wan2"))
+	}
+	for _, in := range []wanMACRequest{{WAN: "../../etc"}, {WAN: "new", Device: "wan..x"}, {WAN: "new", Device: "wan", VLAN: 4095}} {
+		if _, err := wanMACCandidate(c, in); err == nil {
+			t.Errorf("invalid request accepted: %+v", in)
+		}
+	}
 }
 
 // A WAN that left router.yaml (or moved to another interface) has its lease record dropped;
