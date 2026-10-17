@@ -47,6 +47,9 @@ type applyOpts struct {
 	// BaseRev: the router.yaml rev the candidate was built from (web UI / API). The apply refuses when
 	// the live file differs by the time it installs (Cd1s/mini-router#68).
 	BaseRev string
+	// ConfirmToken is a one-time web handoff for a LAN renumber. It is never written
+	// to the job log or history; applyWith stores only its hash in the pending marker.
+	ConfirmToken string
 }
 
 // bookkeeping reports files that record state for mr itself (not shown in plans).

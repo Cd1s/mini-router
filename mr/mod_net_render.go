@@ -288,7 +288,27 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 			for _, p := range d.ports {
 				fmt.Fprintf(b, "ip link set %s master %s 2>/dev/null; ip link set %s up\n", p, d.br, p)
 			}
-			fmt.Fprintf(b, "ip addr replace %s dev %s\nip link set %s up\n", d.ipv4, d.br, d.br)
+			// Keep the addresses written by mr in tmpfs.  This lets a later apply remove
+			// only mr's previous address and preserve a secondary address added by an
+			// administrator or another service.  promote_secondaries is required when a
+			// new address is in the old subnet: without it, deleting the old primary also
+			// deletes the newly-added secondary on kernels whose default is 0.
+			fmt.Fprintf(b, "mkdir -p /run/mini-router/net-addresses\n")
+			fmt.Fprintf(b, "mr_old_br=0; mr_prev=; [ -r /run/mini-router/net-addresses/%s ] && mr_prev=$(cat /run/mini-router/net-addresses/%s)\n", d.br, d.br)
+			fmt.Fprintf(b, "echo 1 2>/dev/null > /proc/sys/net/ipv4/conf/%s/promote_secondaries\n", d.br)
+			fmt.Fprintf(b, "for a in $mr_prev; do [ \"$a\" = %s ] || { mr_old_br=1; ip addr del \"$a\" dev %s 2>/dev/null || true; }; done\n", d.ipv4, d.br)
+			fmt.Fprintf(b, "ip addr replace %s dev %s\n", d.ipv4, d.br)
+			fmt.Fprintf(b, "printf '%%s\\n' %s > /run/mini-router/net-addresses/%s\n", d.ipv4, d.br)
+			fmt.Fprintf(b, "ip link set %s up\n", d.br)
+			if d.br == c.LAN.Bridge {
+				// A short carrier flap on the wired LAN ports makes DHCP clients renew promptly.
+				// It does not restart WiFi or touch WAN hardware offload.
+				fmt.Fprintf(b, "if [ \"$mr_old_br\" = 1 ]; then\n")
+				for _, p := range d.ports {
+					fmt.Fprintf(b, "ip link set %s down 2>/dev/null || true; ip link set %s up 2>/dev/null || true\n", p, p)
+				}
+				b.WriteString("fi\n")
+			}
 		}
 		// tagged VLANs: <port>.<vid> joins the network's bridge; the port itself keeps its untagged role
 		for _, n := range c.Networks {

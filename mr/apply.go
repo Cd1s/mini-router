@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -635,7 +637,7 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 	appendChangeLog(fmt.Sprintf("mr apply: %s", summary(p)))
 	fmt.Printf("applied (snapshot %s)\n", filepath.Base(snap))
 	if confirmSecs > 0 {
-		armConfirm(snap, confirmSecs, o.Via)
+		armConfirm(snap, confirmSecs, o.Via, o.ConfirmToken)
 		setResult(snap, "pending")
 		fmt.Printf("run `mr confirm` within %ds or this change is rolled back\n", confirmSecs)
 	} else {
@@ -852,11 +854,12 @@ func appendChangeLogAt(t time.Time, line string) {
 
 // pendingApply is the content of ConfirmFile.
 type pendingApply struct {
-	Snapshot string `json:"snapshot"`           // history snapshot taken before the change
-	State    string `json:"state"`              // stateApplying | statePending | stateReverting
-	Deadline int64  `json:"deadline,omitempty"` // unix time the confirm timer rolls back at (statePending)
-	Via      string `json:"via"`                // origin: mr apply | web UI | restore
-	Pid      int    `json:"pid,omitempty"`      // the applying process (stateApplying)
+	Snapshot    string `json:"snapshot"`               // history snapshot taken before the change
+	State       string `json:"state"`                  // stateApplying | statePending | stateReverting
+	Deadline    int64  `json:"deadline,omitempty"`     // unix time the confirm timer rolls back at (statePending)
+	Via         string `json:"via"`                    // origin: mr apply | web UI | restore
+	Pid         int    `json:"pid,omitempty"`          // the applying process (stateApplying)
+	ConfirmHash string `json:"confirm_hash,omitempty"` // sha256 of the one-time LAN handoff token
 }
 
 // interrupted: an apply whose process is gone (killed, out of memory). Nothing finishes or undoes it
@@ -1023,8 +1026,13 @@ func startRevert(snap string) (*pendingApply, bool) {
 	return p, true
 }
 
-func armConfirm(snap string, secs int, via string) {
-	setPending(pendingApply{Snapshot: snap, State: statePending, Deadline: time.Now().Unix() + int64(secs), Via: via})
+func armConfirm(snap string, secs int, via, token string) {
+	p := pendingApply{Snapshot: snap, State: statePending, Deadline: time.Now().Unix() + int64(secs), Via: via}
+	if token != "" {
+		h := sha256.Sum256([]byte(token))
+		p.ConfirmHash = hex.EncodeToString(h[:])
+	}
+	setPending(p)
 	self, _ := os.Executable()
 	startDetached(self, "rollback-if-unconfirmed", snap, fmt.Sprint(secs))
 }
@@ -1040,16 +1048,31 @@ func rollbackIfUnconfirmed(snap string, secs int) error {
 // confirm keeps the pending change; false: there was none.
 func confirm() (bool, error) {
 	unlock := lockPending()
-	defer unlock()
+	r := confirmTransition()
+	unlock()
+	return finishConfirm(r)
+}
+
+type confirmResult struct {
+	ok        bool
+	err       error
+	commitCfg *Config
+	snapshot  string
+}
+
+// confirmTransition is confirm's state transition with lockPending already held. Token
+// confirmation uses the same lock while checking the digest, so a token cannot race
+// a timer or a second pending change between validation and consumption.
+func confirmTransition() confirmResult {
 	p, err := readPending()
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
+		return confirmResult{}
 	}
 	if err == nil && p.State == stateApplying {
-		return false, errors.New("the apply is still running: confirm it when it has finished")
+		return confirmResult{err: errors.New("the apply is still running: confirm it when it has finished")}
 	}
 	if err == nil && p.State == stateReverting {
-		return false, errors.New("the change is being rolled back")
+		return confirmResult{err: errors.New("the change is being rolled back")}
 	}
 	var commitCfg *Config
 	if err == nil {
@@ -1062,16 +1085,24 @@ func confirm() (bool, error) {
 	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
 	acceptStaged()
-	unlock()
-	if commitCfg != nil {
-		if commitErr := netCommit(commitCfg); commitErr != nil {
+	return confirmResult{ok: true, commitCfg: commitCfg, snapshot: func() string {
+		if p != nil {
+			return p.Snapshot
+		}
+		return ""
+	}()}
+}
+
+func finishConfirm(r confirmResult) (bool, error) {
+	if r.commitCfg != nil {
+		if commitErr := netCommit(r.commitCfg); commitErr != nil {
 			logf("net: post-confirm cleanup: %v", commitErr)
 		}
 	}
-	if err == nil {
-		setResult(p.Snapshot, "confirmed")
+	if r.err == nil && r.snapshot != "" {
+		setResult(r.snapshot, "confirmed")
 	}
-	return true, nil
+	return r.ok, r.err
 }
 
 // rollbackCommand is `mr rollback [--boot] [SNAPSHOT]`.
