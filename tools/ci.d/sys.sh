@@ -180,7 +180,8 @@ for t in home lab; do
 done
 # shellcheck disable=SC1091
 v=$(. "$L/etc/conf.d/mr-panel"; echo "$PANEL_ADDR")
-[ "$v" = 192.168.1.6 ] || fail "PANEL_ADDR=$v"
+[ "$v" = 0.0.0.0 ] || fail "PANEL_ADDR=$v"
+grep -q 'after mr-firewall' "$ROOT/rootfs/etc/init.d/mr-panel" || fail "mr-panel does not start after mr-firewall"
 # shellcheck disable=SC1091
 v=$(. "$L/etc/conf.d/crond"; echo "$CRON_OPTS|$TZ")
 [ "$v" = "-c /etc/crontabs|CET-1CEST,M3.5.0,M10.5.0/3" ] || fail "crond conf: $v"

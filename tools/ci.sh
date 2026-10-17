@@ -76,6 +76,7 @@ shellcheck -s sh -S warning -e SC2034,SC2154,SC3043 $files rootfs/etc/dhcpcd.exi
 step "web UI script syntax"
 if command -v node >/dev/null; then
 	for f in rootfs/www/ui/*.js; do node --check "$f"; done
+	node tools/mock/lan-shift.test.js
 	echo "ok: $(ls rootfs/www/ui/*.js | wc -l) files"
 else
 	echo "node not found; skipped"

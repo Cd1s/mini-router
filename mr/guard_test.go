@@ -37,6 +37,21 @@ func TestGuard(t *testing.T) {
 			c.Firewall.Open = append(c.Firewall.Open, Open{Name: "w", Proto: []string{"tcp"}, Port: "80,8080"})
 		},
 			"firewall.open[w] opens port 80 (panel)"},
+		{"panel accepted by a router rule", func(c *Config) {
+			c.Firewall.Rules = append(c.Firewall.Rules, FwRule{Name: "panel-rule", Action: "accept", Src: "wan", Dest: "router", Proto: []string{"tcp"}, DestPort: "80"})
+		},
+			"firewall.rules[panel-rule] accepts port 80 (panel)"},
+		{"panel any TCP port", func(c *Config) {
+			c.Firewall.Rules = append(c.Firewall.Rules, FwRule{Name: "panel-any", Action: "accept", Src: "wan", Dest: "router", Proto: []string{"tcp"}})
+		},
+			"firewall.rules[panel-any] accepts port 80 (panel)"},
+		{"disabled panel rule allowed", func(c *Config) {
+			off := false
+			c.Firewall.Rules = append(c.Firewall.Rules, FwRule{Name: "panel-off", Enabled: &off, Action: "accept", Src: "wan", Dest: "router", Proto: []string{"tcp"}})
+		}, ""},
+		{"UDP-only panel rule ignored", func(c *Config) {
+			c.Firewall.Rules = append(c.Firewall.Rules, FwRule{Name: "panel-udp", Action: "accept", Src: "wan", Dest: "router", Proto: []string{"udp"}})
+		}, ""},
 		{"dns forwarded to the router", func(c *Config) {
 			c.Firewall.Forwards = append(c.Firewall.Forwards, Forward{Name: "d", Proto: []string{"udp"}, Port: "5353", To: router, ToPort: "53"})
 		}, "firewall.forwards[d] forwards to the router's port 53 (dns)"},
@@ -51,7 +66,9 @@ func TestGuard(t *testing.T) {
 	} {
 		c := base()
 		tc.mod(c)
-		if e := guardErrs(c); !strings.Contains(e, tc.want) {
+		if e := guardErrs(c); tc.want == "" && e != "" {
+			t.Errorf("%s: unexpected guard error %q", tc.name, e)
+		} else if tc.want != "" && !strings.Contains(e, tc.want) {
 			t.Errorf("%s: got %q, want %q", tc.name, e, tc.want)
 		}
 	}

@@ -71,14 +71,19 @@ function fmtDur(s){ s=Math.floor(+s||0); const d=Math.floor(s/86400),hh=Math.flo
 const clone = o => JSON.parse(JSON.stringify(o));
 
 // ---------- API ----------
-async function api(action, body){
+async function api(action, body, opts){
+  opts ||= {};
+  const ctl = opts.timeout ? new AbortController() : null;
+  const timer = ctl ? setTimeout(()=>ctl.abort(), opts.timeout) : null;
   const opt = {method: body===undefined?"GET":"POST", headers:{"X-MR":"1"}, credentials:"same-origin"};
+  if (ctl) opt.signal = ctl.signal;
   if (body!==undefined){ opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
-  const r = await fetch("/cgi-bin/api?a="+action, opt);
+  let r;
+  try { r = await fetch("/cgi-bin/api?a="+action, opt); } finally { if (timer) clearTimeout(timer); }
   pendingFrom(r);
   let j = {}; try { j = await r.json(); } catch(e) {}
-  if (r.status===401 && action!=="login"){ S.auth=false; renderLogin(); throw new Error("未登录"); }
-  if (!r.ok) { const e=new Error(j.error || (j.errors||[]).join("; ") || ("HTTP "+r.status)); e.data=j; throw e; }
+  if (r.status===401 && action!=="login" && !(action==="confirm" && body&&body.token)){ S.auth=false; renderLogin(); throw new Error("未登录"); }
+  if (!r.ok) { const e=new Error(j.error || (j.errors||[]).join("; ") || ("HTTP "+r.status)); e.data=j; e.status=r.status; throw e; }
   return j;
 }
 
@@ -107,14 +112,14 @@ function drawPending(){
   b.replaceChildren(
     h("span",{class:"t"}, h("b",{},"有待确认的更改"), "（"+via+"）", p.state==="pending" ? ["：", h("span",{id:"pleft"}, pendLeft()+" 秒"), "后自动回滚。"] : "。", h("span",{class:"mut"}," 确认前不能应用新的更改。")),
     h("button",{class:"btn sm d",onclick:async()=>{ if(!confirm("回滚这次更改（"+via+"）？")) return;
-      try { await api("revert",{}); toast("正在回滚…",4000); setTimeout(()=>api("job").then(reload).catch(()=>{}), 5000); } catch(e){ toast(e.message,4000); } }},"回滚"),
+      try { await api("revert",{}); toast("正在回滚…",4000); setTimeout(()=>api("job",undefined,{timeout:5000}).then(reload).catch(()=>{}), 5000); } catch(e){ toast(e.message,4000); } }},"回滚"),
     h("button",{class:"btn sm p",onclick:async()=>{
       try { await api("confirm",{}); toast("已保留新配置"); await api("job"); await reload(); } catch(e){ toast(e.message,4000); } }},"保留"));
 }
 setInterval(()=>{
   if (!S.auth) return;
   const e = $("#pleft"); if (e && S.pend) e.textContent = tr(pendLeft()+" 秒");
-  if (Date.now()-(S.apiAt||0) > 10000) api("job").catch(()=>{});
+  if (Date.now()-(S.apiAt||0) > 10000) api("job",undefined,{timeout:5000}).catch(()=>{});
 }, 1000);
 
 // ---------- state ----------
@@ -571,7 +576,8 @@ async function doApply(payload, risk){ return runJob(()=>api("apply", Object.ass
 // low / medium risk change is kept by the page itself once it is applied, verified and the page still
 // reaches the router (the confirm window only has to catch changes that cut the administrator off).
 async function runJob(start, auto){
-  try { await start(); } catch(e){
+	let handoff = null;
+	try { handoff = await start(); } catch(e){
     const msg = e.data&&e.data.pending ? "有待确认的更改（"+(VIA[e.data.pending.via]||e.data.pending.via)+"）：请先在页面顶部点“保留”或“回滚”。"
       : e.data&&e.data.errors ? e.data.errors.join("\n") : e.message;
     return modal("应用失败", h("pre",{}, msg), [h("button",{class:"btn p",onclick:ev=>ev.target.closest(".modal").remove()},"关闭")]);
@@ -583,7 +589,18 @@ async function runJob(start, auto){
   let seenOk = 0, fails = 0;
   const poll = async ()=>{
     let j;
-    try { j = await api("job"); fails = 0; } catch(e){ fails++; stateEl.textContent = tr("暂时连不上路由器（"+fails+"）… 如果是改了 LAN 地址，请到新地址访问；超时未确认会自动回滚。"); return setTimeout(poll, 2000); }
+    try { j = await api("job",undefined,{timeout:5000}); fails = 0; } catch(e){
+      fails++;
+      if (handoff && handoff.confirm_token && handoff.confirm_ip && fails >= 2) {
+        stateEl.textContent = tr("LAN 地址已切换，正在打开新地址并自动确认…");
+        const port = location.port ? ":"+location.port : "";
+        const target = location.protocol+"//"+handoff.confirm_ip+port+"/#confirm="+encodeURIComponent(handoff.confirm_token);
+        setTimeout(()=>location.replace(target), 150);
+        return;
+      }
+      stateEl.textContent = tr("暂时连不上路由器（"+fails+"）… 如果是改了 LAN 地址，请到新地址访问；超时未确认会自动回滚。");
+      return setTimeout(poll, 2000);
+    }
     const job = j.job||{}; log.textContent = job.output||"";
     if (job.state==="running") return setTimeout(poll, 1200);
     if (job.state==="failed"){
@@ -614,6 +631,25 @@ async function runJob(start, auto){
     }
   };
   poll();
+}
+
+// A LAN renumber changes the origin and therefore the session-cookie scope. The apply
+// response supplies a one-time token; the new origin accepts it only for POST /confirm.
+async function settleHandoff(token){
+  if (!token) return false;
+  const root=$("#root"); if(root) root.replaceChildren(h("div",{class:"login"},h("div",{class:"mut"},"正在确认 LAN 变更…")));
+  for (let i=0; i<125; i++) {
+    try {
+      await api("confirm", {token}, {timeout:10000});
+      history.replaceState(null, "", location.pathname+location.search+"#overview");
+      return true;
+    } catch(e) {
+      if (e.status===401 || e.status===403 || e.status===409) break;
+      await new Promise(resolve=>setTimeout(resolve, 1000));
+    }
+  }
+  history.replaceState(null, "", location.pathname+location.search+"#overview");
+  return false;
 }
 
 // ---------- first-run setup wizard ----------
@@ -700,6 +736,8 @@ function renderLogin(setup){
 
 async function boot(opts={}){
   await LANG_READY;
+  const handoffMatch = location.hash.match(/^#confirm=([^&]+)/);
+  if (handoffMatch) await settleHandoff(decodeURIComponent(handoffMatch[1]));
   let s;
   try { s = await api("session"); } catch(e){ $("#root").replaceChildren(h("div",{class:"login"},h("div",{class:"err"},"无法连接路由器："+e.message))); return; }
   if (!s.authenticated) return renderLogin(!s.password_set);

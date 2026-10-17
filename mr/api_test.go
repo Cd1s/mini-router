@@ -1,13 +1,82 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestLANConfirmTokenIsScopedAndHashed(t *testing.T) {
+	oldConfirm, oldLoad := ConfirmFile, loadLANConfig
+	t.Cleanup(func() { ConfirmFile, loadLANConfig = oldConfirm, oldLoad })
+	ConfirmFile = t.TempDir() + "/confirm-pending"
+	loadLANConfig = func() (*Config, error) { return &Config{LAN: LAN{IPv4: "192.168.2.1/24"}}, nil }
+	token := newConfirmToken()
+	h := sha256.Sum256([]byte(token))
+	if len(token) < 32 || token == newConfirmToken() {
+		t.Fatal("confirmation token is missing entropy")
+	}
+	if err := setPending(pendingApply{Snapshot: "/tmp/snap", State: statePending, Deadline: time.Now().Unix() + 60, ConfirmHash: hex.EncodeToString(h[:])}); err != nil {
+		t.Fatal(err)
+	}
+	if marker, err := os.ReadFile(ConfirmFile); err != nil || bytes.Contains(marker, []byte(token)) {
+		t.Fatalf("pending marker contains plaintext token: %q", marker)
+	}
+	if got := confirmWithToken(token+"x", "192.168.2.44"); got.status != 401 {
+		t.Fatalf("wrong token status = %d, want 401", got.status)
+	}
+	if _, err := os.Stat(ConfirmFile); err != nil {
+		t.Fatalf("wrong token consumed pending marker: %v", err)
+	}
+	// A token cannot confirm while the apply is still running, even when its hash matches.
+	if err := setPending(pendingApply{Snapshot: "/tmp/snap", State: stateApplying, Pid: os.Getpid(), ConfirmHash: hex.EncodeToString(h[:])}); err != nil {
+		t.Fatal(err)
+	}
+	if got := confirmWithToken(token, "192.168.2.44"); got.status != 409 {
+		t.Fatalf("applying token status = %d, want 409", got.status)
+	}
+}
+
+func TestLANConfirmTokenSuccessIsOneShotAndLANOnly(t *testing.T) {
+	_, _, _ = confirmEnv(t)
+	oldLoad := loadLANConfig
+	t.Cleanup(func() { loadLANConfig = oldLoad })
+	loadLANConfig = func() (*Config, error) { return &Config{LAN: LAN{IPv4: "192.168.2.1/24"}}, nil }
+	token := newConfirmToken()
+	h := sha256.Sum256([]byte(token))
+	if err := setPending(pendingApply{Snapshot: "/tmp/snap", State: statePending, Deadline: time.Now().Unix() + 60, ConfirmHash: hex.EncodeToString(h[:])}); err != nil {
+		t.Fatal(err)
+	}
+	if got := confirmWithToken(token, "192.168.2.44"); got.status != 0 {
+		t.Fatalf("valid LAN token status = %d, want success", got.status)
+	}
+	if got := confirmWithToken(token, "192.168.2.44"); got.status != 409 {
+		t.Fatalf("reused token status = %d, want 409", got.status)
+	}
+	if err := setPending(pendingApply{Snapshot: "/tmp/snap", State: statePending, Deadline: time.Now().Unix() + 60, ConfirmHash: hex.EncodeToString(h[:])}); err != nil {
+		t.Fatal(err)
+	}
+	if got := confirmWithToken(token, "192.168.9.44"); got.status != 403 {
+		t.Fatalf("non-LAN token status = %d, want 403", got.status)
+	}
+	if err := setPending(pendingApply{Snapshot: "/tmp/snap", State: statePending, Deadline: time.Now().Unix() - 1, ConfirmHash: hex.EncodeToString(h[:])}); err != nil {
+		t.Fatal(err)
+	}
+	if got := confirmWithToken(token, "192.168.2.44"); got.status != 409 {
+		t.Fatalf("expired token status = %d, want 409", got.status)
+	}
+	if got := handleAPI(apiReq{method: "GET", action: "confirm", header: "1", remote: "192.168.2.44", body: []byte(`{"token":"` + token + `"}`)}); got.status == 0 {
+		t.Fatal("GET confirmation unexpectedly succeeded")
+	}
+}
 
 func TestNormalizeRemoteAddrBusyboxFormats(t *testing.T) {
 	for _, tc := range []struct {

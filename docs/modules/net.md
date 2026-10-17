@@ -14,6 +14,7 @@ net 负责路由器的"线"：物理网口和网桥、LAN 与额外网络（访�
 | PPPoE（已有） | `pppd` + 生成的 `/etc/ppp/peers/<wan>`，服务实例 `mr-pppoe.<wan>` | pppd |
 | DHCP WAN | busybox `udhcpc -f`，服务实例 `mr-udhcpc.<wan>`（supervise-daemon 守护）；事件脚本 `/usr/libexec/mr/net-udhcpc` → `mr wan dhcp <event>` 校验租约后配地址、路由、规则、DNS | udhcpc（busybox，≈100 KB） |
 | 静态 WAN | `network.sh` 配地址，`mr routes` 装默认路由 | 无 |
+| LAN / 网络地址更新 | `network.sh` 记录并清理上一次由 mr 写入的网桥地址；同网段换地址先启用 `promote_secondaries`，有线 LAN 口短暂 down/up 触发 DHCP 续租 | 不重启 WiFi；外部工具添加的 secondary 地址保留 |
 | WAN VLAN | `<device>.<vlan>` 802.1Q 子接口（PPPoE / DHCP / 静态都可以跑在上面）；由 mr 创建的子接口带 `alias mini-router`，取消配置时只清理这类接口 | 无 |
 | 多线路主备 | `mr-wanmon`：busybox sh 循环，每条线路各自 ping 检测目标；故障线路默认路由 metric +10000，策略路由表去掉默认路由 | sh + 每轮几次 ping |
 | 负载均衡 | nft `numgen random` 按权重给新 IPv4 连接打 WAN 标记，connmark 保持 | 无（nftables 规则） |

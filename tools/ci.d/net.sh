@@ -124,6 +124,28 @@ has "rules" "$rules" "5300:.*fwmark 0x201 lookup 201"
 has "wan2 static address" "$(ip -n "$C" -4 addr show dev wan2 2> /dev/null)" "inet 10.98.0.2/24"
 has "br-lan" "$(ip -n "$C" -4 addr show dev br-lan)" "inet 192.168.1.6/24"
 
+# LAN address changes: keep an address supplied by another tool, and exercise the
+# kernel's promote_secondaries=0 path for same-subnet, subnet, and prefix changes.
+ip -n "$C" addr add 192.168.1.250/32 dev br-lan
+inC sh -c 'echo 0 > /proc/sys/net/ipv4/conf/br-lan/promote_secondaries'
+sed 's#192\.168\.1\.6/24#192.168\.1\.1/24#g' "$T/net.sh" > "$T/net-lan-same.sh"
+inC sh "$T/net-lan-same.sh" 2> "$T/net.sh.err" || { cat "$T/net.sh.err"; fail "network.sh (same-subnet LAN address)"; }
+lanaddrs=$(ip -n "$C" -4 -o addr show dev br-lan)
+has "LAN same-subnet new address" "$lanaddrs" "192.168.1.1/24"
+hasnt "LAN same-subnet old address" "$lanaddrs" "192.168.1.6/24"
+has "LAN external address kept" "$lanaddrs" "192.168.1.250/32"
+sed 's#192\.168\.1\.6/24#192\.168\.2\.1/24#g' "$T/net.sh" > "$T/net-lan-change.sh"
+inC sh "$T/net-lan-change.sh" 2> "$T/net.sh.err" || { cat "$T/net.sh.err"; fail "network.sh (LAN subnet change)"; }
+lanaddrs=$(ip -n "$C" -4 -o addr show dev br-lan)
+has "LAN subnet new address" "$lanaddrs" "192.168.2.1/24"
+hasnt "LAN subnet old address" "$lanaddrs" "192.168.1.1/24"
+has "LAN external address kept after subnet change" "$lanaddrs" "192.168.1.250/32"
+sed 's#192\.168\.1\.6/24#192.168.0.1/16#g' "$T/net.sh" > "$T/net-lan-prefix.sh"
+inC sh "$T/net-lan-prefix.sh" 2> "$T/net.sh.err" || { cat "$T/net.sh.err"; fail "network.sh (LAN prefix change)"; }
+lanaddrs=$(ip -n "$C" -4 -o addr show dev br-lan)
+has "LAN prefix new address" "$lanaddrs" "192.168.0.1/16"
+has "LAN external address kept after prefix change" "$lanaddrs" "192.168.1.250/32"
+
 # DHCP: the real busybox udhcpc with the real event script → `mr wan dhcp bound`
 inC busybox udhcpc -f -q -n -t 5 -T 1 -i wan -s "$ROOT/rootfs/usr/libexec/mr/net-udhcpc" > "$T/udhcpc.log" 2>&1 || {
 	cat "$T/udhcpc.log"
@@ -255,6 +277,15 @@ inC sh "$T/net2.sh" 2> "$T/net.sh.err" || { cat "$T/net.sh.err"; fail "network.s
 a=$(ip -n "$C" -4 -o addr show dev wan2)
 has "static address changed" "$a" "inet 10.98.0.3/24"
 hasnt "static address changed" "$a" "10.98.0.2/"
+
+# LAN renumber: rerunning network.sh must remove the old bridge address and flap the
+# wired LAN port so clients promptly renew DHCP on the new subnet.
+sed 's#192\.168\.1\.6/24#192.168.2.1/24#g' "$T/net.sh" > "$T/net-lan-renumber.sh"
+inC sh "$T/net-lan-renumber.sh" 2> "$T/net.sh.err" || { cat "$T/net.sh.err"; fail "network.sh (LAN renumber)"; }
+lanaddrs=$(ip -n "$C" -4 -o addr show dev br-lan)
+has "LAN renumber new address" "$lanaddrs" "192.168.2.1/24"
+hasnt "LAN renumber old address" "$lanaddrs" "192.168.1.6/24"
+grep -q 'ip link set lan2 down' "$T/net-lan-renumber.sh" || fail "LAN renumber did not flap the wired port"
 echo "net: functional test ok"
 
 step "functional: policy route by domain (dnsmasq nftset -> nft set -> WAN mark), three network namespaces"

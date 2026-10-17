@@ -233,6 +233,54 @@ registerPage("network", "multiwan", "多线路", 15, async ()=>{
 });
 
 // ---------- LAN 与网络 ----------
+function lanCIDR(s){
+  const m=String(s||"").trim().match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d{1,2})$/);
+  if(!m||m.slice(1,5).some(x=>+x>255)||+m[5]>32)return null;
+  const ip=(+m[1]<<24|+m[2]<<16|+m[3]<<8|+m[4])>>>0, bits=+m[5];
+  const mask=bits===0?0:(0xffffffff<<(32-bits))>>>0;
+  return {ip,bits,mask,net:(ip&mask)>>>0};
+}
+function lanIP(s){
+  const m=String(s||"").trim().match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)(?:\/(\d{1,2}))?$/);
+  if(!m||m.slice(1,5).some(x=>+x>255)||(m[5]!==undefined&&+m[5]>32))return null;
+  return {ip:(+m[1]<<24|+m[2]<<16|+m[3]<<8|+m[4])>>>0,suffix:m[5]===undefined?"":"/"+m[5]};
+}
+function lanDotted(ip){return[(ip>>>24)&255,(ip>>>16)&255,(ip>>>8)&255,ip&255].join(".");}
+function lanShiftText(text,oldC,newC){return String(text).replace(/\b(?:\d{1,3}\.){3}\d{1,3}(?:\/\d{1,2})?\b/g,(token,offset,whole)=>{
+  if(offset>0&&whole[offset-1]===":")return token; // do not rewrite the IPv4 tail of an IPv4-mapped IPv6 literal
+  const x=lanIP(token);if(!x||((x.ip&oldC.mask)>>>0)!==oldC.net)return token;
+  const off=(x.ip-oldC.net)>>>0,max=newC.bits===32?0:2**(32-newC.bits)-1;
+  return off>max?token:lanDotted((newC.net+off)>>>0)+x.suffix;
+});}
+function lanRenumberCandidates(c,oldC,newC){
+  const out=[],add=(path,obj,key,label)=>{const old=String(obj?.[key]??""),next=lanShiftText(old,oldC,newC);if(next!==old)out.push({path,obj,key,label,old,next});};
+  (c.dhcp?.hosts||[]).forEach((x,i)=>add(`dhcp.hosts[${i}].ip`,x,"ip",`DHCP 主机 ${x.name||x.mac||i+1}`));
+  (c.devices||[]).forEach((x,i)=>add(`devices[${i}].ip`,x,"ip",`设备 ${x.name||i+1}`));
+  (c.firewall?.forwards||[]).forEach((x,i)=>add(`firewall.forwards[${i}].to`,x,"to",`端口转发 ${x.name||i+1}`));
+  (c.firewall?.forwards||[]).forEach((x,i)=>(x.src_ip||[]).forEach((_,j)=>add(`firewall.forwards[${i}].src_ip[${j}]`,x.src_ip,j,`转发来源 ${x.name||i+1}`)));
+  (c.firewall?.open||[]).forEach((x,i)=>(x.src_ip||[]).forEach((_,j)=>add(`firewall.open[${i}].src_ip[${j}]`,x.src_ip,j,`开放端口来源 ${x.name||i+1}`)));
+  (c.firewall?.rules||[]).forEach((x,i)=>{
+    (x.src_ip||[]).forEach((_,j)=>add(`firewall.rules[${i}].src_ip[${j}]`,x.src_ip,j,`防火墙规则来源 ${x.name||i+1}`));
+    (x.dest_ip||[]).forEach((_,j)=>add(`firewall.rules[${i}].dest_ip[${j}]`,x.dest_ip,j,`防火墙规则目标 ${x.name||i+1}`));
+  });
+  (c.policy_routes||[]).forEach((x,i)=>add(`policy_routes[${i}].src`,x,"src",`策略路由 ${x.name||i+1}`));
+  (c.static_routes||[]).forEach((x,i)=>{add(`static_routes[${i}].target`,x,"target",`静态路由目标 ${x.name||i+1}`);add(`static_routes[${i}].via`,x,"via",`静态路由网关 ${x.name||i+1}`);});
+  add("lan.gateway",c.lan,"gateway","LAN 主路由网关");
+  (c.services?.edge?.routes||[]).forEach((x,i)=>{add(`services.edge.routes[${i}].to`,x,"to",`HTTPS 路由目标 ${x.name||i+1}`);(x.allow||[]).forEach((_,j)=>add(`services.edge.routes[${i}].allow[${j}]`,x.allow,j,`HTTPS 路由来源 ${x.name||i+1}`));});
+  (c.api?.tokens||[]).forEach((x,i)=>(x.from||[]).forEach((_,j)=>add(`api.tokens[${i}].from[${j}]`,x.from,j,`API 令牌来源 ${x.name||i+1}`)));
+  (c.dns?.records||[]).forEach((x,i)=>{if(String(x.type||"").toUpperCase()==="A")add(`dns.records[${i}].value`,x,"value",`DNS 记录 ${x.name||i+1}`);});
+  (c.dhcp?.dns||[]).forEach((_,i)=>add(`dhcp.dns[${i}]`,c.dhcp.dns,i,"DNS DHCP "+(i+1)));
+  (c.dhcp?.ntp||[]).forEach((_,i)=>add(`dhcp.ntp[${i}]`,c.dhcp.ntp,i,"NTP DHCP "+(i+1)));
+  (c.dhcp?.options||[]).forEach((x,i)=>add(`dhcp.options[${i}].value`,x,"value",`DHCP 选项 ${x.code||i+1}`));
+  return out;
+}
+function lanRenumberPrompt(c,oldValue,newValue){
+  const oldC=lanCIDR(oldValue),newC=lanCIDR(newValue);if(!oldC||!newC||oldC.net===newC.net)return;
+  const rows=lanRenumberCandidates(c,oldC,newC);if(!rows.length)return;
+  const checks=rows.map(x=>{const cb=h("input",{type:"checkbox",checked:true});x.cb=cb;return h("label",{class:"row",style:"display:flex;gap:8px;align-items:flex-start"},cb,h("span",{},h("b",{},x.label),h("span",{class:"mono"}," · "+x.old+" → "+x.next)));});
+  const m=modal("LAN 网段变更：同步地址",[h("p",{},"以下地址落在旧 LAN 网段。勾选后会按主机号平移到新网段；取消某条即可保留原值。"),h("div",{class:"form"},checks)],
+    [h("button",{class:"btn",onclick:()=>m.remove()},"稍后手动处理"),h("button",{class:"btn p",onclick:()=>{rows.forEach(x=>{if(x.cb.checked)x.obj[x.key]=x.next;});touch();m.remove();toast("已同步选中的 LAN 地址");}},"平移选中地址")]);
+}
 registerPage("network", "lan", "LAN 与网络", 20, async ()=>{
   const c = S.cfg;
   const ports = await portNames();
@@ -285,11 +333,15 @@ registerPage("network", "lan", "LAN 与网络", 20, async ()=>{
     return card("工作模式", form(...body.filter(Boolean)));
   };
   const onEdit = (el, fn)=>{ el.addEventListener("input", fn); el.addEventListener("change", fn); return el; };
-  const draw = ()=>box.replaceChildren(
+  const draw = ()=>{
+    let oldLAN=c.lan.ipv4;
+    const lanInput=inText(c.lan,"ipv4",{placeholder:"192.168.1.1/24"});
+    lanInput.addEventListener("change",()=>{lanRenumberPrompt(c,oldLAN,c.lan.ipv4);oldLAN=c.lan.ipv4;});
+    box.replaceChildren(
     modeCard(),
     card("LAN（主网络）", form(
       ...field("网桥", inText(c.lan,"bridge")),
-      ...field("IPv4 地址 / 掩码", inText(c.lan,"ipv4",{placeholder:"192.168.1.1/24"}), "修改后如果浏览器失去连接，超时未确认会自动回滚"),
+      ...field("IPv4 地址 / 掩码", lanInput, "修改网段时会列出旧网段引用；有线客户端会快速续租，WiFi 设备需要重新连接，确认期间旧地址会自动跳转到新地址"),
       ...field("LAN 口", checks(ports, p=>c.lan.ports.includes(p), (p,on)=>setUntagged(p,null,on), p=>wanDevs.has(p)), "WAN 口不能同时做 LAN 口"),
       ...field("IPv6 RA / SLAAC", inBool(c.lan,"ipv6_ra"), "向 LAN 通告 IPv6 前缀"))),
     ...c.networks.map(netCard),
@@ -298,6 +350,7 @@ registerPage("network", "lan", "LAN 与网络", 20, async ()=>{
       c.networks.push({name:k?"net"+(k+1):"guest", ipv4:"192.168."+(20+k*10)+".1/24", zone:"guest", ports:[], vlan:0, trunk:[], ipv6_ra:false, dhcp:{enabled:true, start:100, end:199, lease:"12h"}});
       touch(); draw(); }},"+ 添加网络（访客 / IoT / VLAN）"),
       h("span",{class:"mut"},"WiFi 的 SSID 在“无线设置”里选择加入哪个网络。")));
+  };
   draw();
   return box;
 });
