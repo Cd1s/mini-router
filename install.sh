@@ -16,7 +16,8 @@
 #   MR_VERSION        release tag (default latest)       MR_REPO        GitHub repo (default Cd1s/mini-router)
 #   MR_LOCAL          directory with mr-linux-<arch> + mini-router-rootfs.tar.gz (offline install)
 #   MR_YES=1          do not ask anything; fail if a required value is missing
-#   MR_APPLY=0        install and write the config, but do not apply it (run `mr apply` later)
+#   MR_APPLY=0        install and write the config; prepare the takeover and start the panel,
+#                     but leave the first full apply to the web wizard / `mr apply`
 #
 # What it changes: installs Alpine packages, /usr/sbin/mr, OpenRC services (mr-*), the web UI in
 # /www, writes /etc/mini-router/{router.yaml,secrets.yaml}, disables Alpine's `networking` service
@@ -322,11 +323,33 @@ printf '%s\n' "$MR_ADMIN_PASS" | /usr/sbin/mr passwd > /dev/null
 /usr/bin/touch "$CONF/state/first-run"
 /usr/sbin/mr validate || die "router.yaml is not valid (fix $CONF/router.yaml and run: mr apply)"
 
-# ---------------------------------------------------------------- apply
+# ---------------------------------------------------------------- takeover / apply
+# This must happen even with MR_APPLY=0: otherwise Alpine's networking and
+# dhcpcd continue to own the same devices and the first web apply races them.
+takeover_network() {
+	for s in networking dhcpcd; do
+		for rl in boot default; do rc-update del "$s" "$rl" > /dev/null 2>&1 || :; done
+	done
+	[ -f /etc/network/interfaces ] && mv /etc/network/interfaces /etc/network/interfaces.before-mini-router
+	# A change that was never confirmed (power cut in the confirm window) is
+	# rolled back at the next boot.
+	rc-update add mr-unconfirmed boot > /dev/null 2>&1 || :
+}
+
 if [ "${MR_APPLY:-1}" = 0 ]; then
-	say "MR_APPLY=0: configuration written, nothing applied. Run 'mr apply' when ready."
+	takeover_network
+	# Generate the panel/network prerequisites without recording an apply.  The
+	# network service is started so the panel has its LAN address; the wizard's
+	# first apply then enables the remaining services atomically.
+	/usr/sbin/mr render / || die "could not render the panel prerequisites"
+	rc-update add mr-panel default > /dev/null 2>&1 || :
+	rc-service mr-network start || die "could not start mini-router network"
+	rc-service mr-panel start || die "could not start mini-router panel"
+	say "MR_APPLY=0: takeover prepared; panel ready at http://$host/"
+	echo "Run the first setup wizard, or 'mr apply' from the console."
 	exit 0
 fi
+
 say "5/5 应用 / applying"
 [ "$MR_MODE" = router ] || echo "mode $MR_MODE · main router $MR_GATEWAY"
 echo "WAN $MR_WAN ($MR_WAN_PROTO) · LAN $MR_LAN_PORTS · $MR_LAN_IP · WiFi $([ "$MR_WIFI" = 1 ] && echo "$MR_WIFI_SSID" || echo off)"
@@ -336,13 +359,7 @@ if [ "$YES" != 1 ]; then
 	read -r go < /dev/tty || go=y
 	case ${go:-y} in y | Y | yes) ;; *) die "stopped; run 'mr apply' when ready" ;; esac
 fi
-# mr-network owns the interfaces from now on; Alpine's ifupdown and its dhcpcd service would fight it
-for s in networking dhcpcd; do
-	for rl in boot default; do rc-update del "$s" "$rl" > /dev/null 2>&1 || :; done
-done
-[ -f /etc/network/interfaces ] && mv /etc/network/interfaces /etc/network/interfaces.before-mini-router
-# a change that was never confirmed (power cut in the confirm window) is rolled back at the next boot
-rc-update add mr-unconfirmed boot > /dev/null 2>&1 || :
+takeover_network
 /usr/sbin/mr apply || die "apply failed (it was rolled back); see 'mr plan' and /var/log/messages"
 say "完成 / done: http://$host/  (admin password as entered)"
 echo "配置文件 / config: $CONF/router.yaml · 命令 / commands: mr plan | mr apply | mr status | mr rollback"

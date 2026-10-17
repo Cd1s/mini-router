@@ -1,2 +1,3 @@
 - Fixed Go probe context/socket binding and added passive IPv6 RA capture.
 - Fixed wizard WAN probe button syntax and completed i18n entry.
+- P0 fixes: MR_APPLY=0 now performs Alpine network takeover, renders prerequisites, starts mr-network + mr-panel; added wifi.defaults hardware suggestion API and wizard integration; raised i18n budget to 160 KiB with rationale.

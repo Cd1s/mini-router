@@ -503,11 +503,12 @@ func init() {
 		Status: func(c *Config, st map[string]any) {
 			st["wifi"] = wifiStatusAll(c)
 		},
-		TokenScope: map[string]string{"wifi.status": "read", "wifi.stations": "read", "clients": "read", "wifi.survey": "read", "wifi.health": "read", "wifi.kick": "operate", "wifi.scan": "operate"},
+		TokenScope: map[string]string{"wifi.status": "read", "wifi.stations": "read", "clients": "read", "wifi.survey": "read", "wifi.health": "read", "wifi.defaults": "read", "wifi.kick": "operate", "wifi.scan": "operate"},
 		API: map[string]func(r apiReq) apiResp{
 			"clients":       func(apiReq) apiResp { return apiStations() }, // kept for older pages
 			"wifi.stations": func(apiReq) apiResp { return apiStations() },
 			"wifi.status":   func(apiReq) apiResp { return apiWifiStatus() },
+			"wifi.defaults": func(apiReq) apiResp { return apiWifiDefaults() },
 			"wifi.kick":     apiKick,
 			"wifi.survey":   func(apiReq) apiResp { return apiSurvey() },
 			"wifi.scan":     apiScan,
