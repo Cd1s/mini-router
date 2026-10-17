@@ -24,7 +24,7 @@ func fakeDocEnv() *docEnv {
 	return &docEnv{
 		now: now, uptime: 5000,
 		read:   func(p string) string { return files[p] },
-		exists: func(string) bool { return false },
+		exists: func(p string) bool { return p == "/proc/net/pppoe" },
 		mtime: func(p string) (time.Time, bool) {
 			return now.Add(-30 * 24 * time.Hour), p == "/etc/mini-router-release"
 		},
@@ -323,5 +323,24 @@ func TestDoctorCommandAndAPI(t *testing.T) {
 		if _, v, ok := strings.Cut(l, ": "); ok && len(strings.Trim(v, `"`)) >= 6 && strings.Contains(string(b), strings.Trim(v, `"`)) {
 			t.Errorf("a secret value is in the doctor's answer")
 		}
+	}
+}
+
+// A PPPoE WAN without the kernel's PPPoE (Alpine's linux-virt) names that cause, not the cable.
+func TestDoctorPPPoEWithoutKernelSupport(t *testing.T) {
+	eventEnv(t)
+	c := testConfig(t)
+	c.Services.Edge = Edge{}
+	e := fakeDocEnv()
+	e.addrs4 = func(string) []string { return nil }
+	e.read = func(p string) string { return map[string]string{"/proc/sys/kernel/osrelease": "6.18.35-0-virt\n"}[p] }
+	e.exists = func(string) bool { return false }
+	f := docFind(runDoctor(c, e), "wan.wan")
+	if f.Sev != "risk" || !strings.Contains(f.Detail, "6.18.35-0-virt has no PPPoE") || !strings.Contains(f.Fix, "linux-lts") {
+		t.Fatalf("no /proc/net/pppoe: %+v", f)
+	}
+	e.exists = func(p string) bool { return p == "/proc/net/pppoe" }
+	if f := docFind(runDoctor(c, e), "wan.wan"); strings.Contains(f.Detail, "PPPoE") || !strings.Contains(f.Fix, "cable") {
+		t.Fatalf("the module is loaded: the usual hint: %+v", f)
 	}
 }

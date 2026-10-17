@@ -64,6 +64,19 @@ ask_secret() {
 	done
 	eval "$1=\$a"
 }
+# kernel-mode PPPoE needs the pppoe module (it brings ppp_generic). Alpine's linux-virt kernel (cloud
+# images, many VMs) is built without it: without this check the apply would roll back after 90 s.
+pppoe_kernel() {
+	modprobe -q pppoe 2> /dev/null || :
+	[ -e /proc/net/pppoe ] && return 0
+	k=$(uname -r)
+	case $k in
+	*-virt) hint="apk add linux-lts && reboot（linux-virt 内核没有 PPPoE / the linux-virt kernel has no PPPoE）" ;;
+	*) hint="apk add linux-lts && reboot；刚升级过内核则先重启 / or reboot after a kernel upgrade" ;;
+	esac
+	die "内核 $k 不能加载 pppoe 模块，PPPoE 无法工作 / kernel $k cannot load the pppoe module, PPPoE cannot work.
+  解决 / fix: $hint, then run install.sh again"
+}
 yaml_str() { # single-quoted YAML scalar
 	printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
 }
@@ -177,6 +190,7 @@ done
 ask MR_WAN_PROTO "WAN 类型 dhcp / pppoe / static" dhcp
 case $MR_WAN_PROTO in
 pppoe)
+	pppoe_kernel
 	ask MR_PPPOE_USER "PPPoE 账号 / username"
 	ask_secret MR_PPPOE_PASS "PPPoE 密码 / password" 1
 	;;
