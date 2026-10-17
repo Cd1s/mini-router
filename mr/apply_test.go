@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -605,5 +606,36 @@ func TestRenderOutputIncludesAppliedConfigBookkeeping(t *testing.T) {
 	}
 	if !seen[appliedYAML] || !seen[appliedSecrets] {
 		t.Fatalf("render output missing bookkeeping: %v", seen)
+	}
+}
+
+// A machine without WiFi (a VM, most x86 boxes): the first apply writes wifi-post.sh like every other
+// generated file, but the config runs no mr-hostapd. Restarting it failed ("no hostapd config for an
+// existing radio") and rolled back install.sh on every such machine.
+func TestPlanDoesNotRestartServicesTheConfigDoesNotRun(t *testing.T) {
+	confirmEnv(t)
+	c := testConfig(t)
+	if len(c.WiFi.Radios) == 0 {
+		t.Fatal("the home config has no radios")
+	}
+	p, err := plan(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(p.Services, "mr-hostapd") {
+		t.Fatalf("with radios, a new hostapd config restarts mr-hostapd: %v", p.Services)
+	}
+	c.WiFi.Radios = nil
+	if p, err = plan(c); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(p.Services, "mr-hostapd") {
+		t.Fatalf("without radios mr-hostapd must not be restarted: %v", p.Services)
+	}
+	if !slices.ContainsFunc(p.Changed, func(f File) bool { return f.Path == GenDir+"/wifi-post.sh" }) {
+		t.Fatal("wifi-post.sh is still written")
+	}
+	if !slices.Contains(p.Services, "mr-network") {
+		t.Fatalf("the other services still restart: %v", p.Services)
 	}
 }
