@@ -7,6 +7,8 @@ LABDIR=$ROOT/tools/lab
 IMGDIR=${MR_LAB_IMAGE_DIR:-/root/build/mr-lab-images}
 RUNDIR=$LABDIR/state
 BASE=$IMGDIR/alpine-3.24-x86_64.qcow2
+KERNEL=$IMGDIR/vmlinuz-virt
+INITRD=$IMGDIR/initramfs-virt
 mkdir -p "$IMGDIR" "$RUNDIR"
 
 die(){ echo "lab: $*" >&2; exit 1; }
@@ -28,6 +30,15 @@ ensure_base(){
   mv "$tmp" "$BASE"
   qemu-img info "$BASE" >/dev/null || die "invalid Alpine image"
 }
+ensure_boot_files(){
+  [ -s "$KERNEL" ] && [ -s "$INITRD" ] && return 0
+  raw=$IMGDIR/alpine-3.24-x86_64.raw
+  [ -s "$raw" ] || qemu-img convert -O raw "$BASE" "$raw"
+  mnt=$IMGDIR/.mnt; mkdir -p "$mnt"
+  mount -o loop,ro "$raw" "$mnt" 2>/dev/null || die "cannot mount Alpine base image"
+  cp "$mnt/boot/vmlinuz-virt" "$KERNEL"; cp "$mnt/boot/initramfs-virt" "$INITRD"
+  umount "$mnt"; rmdir "$mnt" 2>/dev/null || true
+}
 
 kill_pid(){
   p=$1
@@ -39,11 +50,19 @@ kill_pid(){
     for pid in $(ps -eo pid=,args= | awk -v f="$ov" '$0 ~ f {print $1}'); do kill -9 "$pid" 2>/dev/null || true; done ;;
   esac
 }
-ns_del(){ ip netns pids "$1" 2>/dev/null | xargs -r kill -9 2>/dev/null || true; ip netns del "$1" 2>/dev/null || true; }
+kill_qemu(){
+  qov=$(state "$1")/overlay.qcow2
+  for qpid in $(ps -eo pid=,args= | awk -v f="$qov" 'index($0,f)>0 {print $1}'); do
+    kill "$qpid" 2>/dev/null || true
+    sleep 1
+    kill -9 "$qpid" 2>/dev/null || true
+  done
+}
+ns_del(){ ip netns pids "$1" 2>/dev/null | xargs -r kill -9 2>/dev/null || true; ip netns del "$1" >/dev/null 2>&1 || true; }
 cleanup_host_links(){
   id=$1
   for x in mrlab${id}s1 mrlab${id}s1p mrlab${id}s2 mrlab${id}s2p mrlab${id}sl mrlab${id}slp; do
-    ip link del "$x" 2>/dev/null || true
+    ip link del "$x" >/dev/null 2>&1 || true
   done
 }
 slirp_start(){
@@ -59,9 +78,9 @@ slirp_start(){
 }
 
 up(){
-  id=$1; valid_id "$id"; ensure_base; d=$(state "$id"); mkdir -p "$d"
+  id=$1; valid_id "$id"; ensure_base; ensure_boot_files; d=$(state "$id"); mkdir -p "$d"
   [ -e "$d/overlay.qcow2" ] || qemu-img create -f qcow2 -F qcow2 -b "$BASE" "$d/overlay.qcow2" >/dev/null
-  for n in "$(sw "$id")" "$(isp "$id" 1)" "$(isp "$id" 2)" "$(lan "$id")"; do ip netns list | awk '{print $1}' | grep -qx "$n" || ip netns add "$n"; done
+  for n in "$(sw "$id")" "$(isp "$id" 1)" "$(isp "$id" 2)" "$(lan "$id")"; do [ -e "/run/netns/$n" ] || ip netns add "$n"; done
   for br in br-wan1 br-wan2 br-lan; do
     run_ns "$(sw "$id")" ip link show "$br" >/dev/null 2>&1 || run_ns "$(sw "$id")" ip link add "$br" type bridge
     run_ns "$(sw "$id")" ip link set "$br" up
@@ -89,7 +108,7 @@ up(){
     accel=tcg; [ -e /dev/kvm ] && accel=kvm
     seedarg=; [ -s "$d/seed.iso" ] && seedarg="-drive file=$d/seed.iso,media=cdrom,readonly=on"
     rm -f "$d/serial.sock"
-    ip netns exec "$(sw "$id")" qemu-system-x86_64 -accel "$accel" -m 512 -smp 1 -drive "file=$d/overlay.qcow2,if=virtio,format=qcow2" $seedarg -netdev tap,id=wan1,ifname=mrlab${id}tap0,script=no,downscript=no -device virtio-net-pci,netdev=wan1,mac=52:54:00:${hexid}:01:01 -netdev tap,id=lan,ifname=mrlab${id}tap1,script=no,downscript=no -device virtio-net-pci,netdev=lan,mac=52:54:00:${hexid}:01:02 -chardev socket,id=ser,path="$d/serial.sock",server=on,wait=off -serial chardev:ser -display none -daemonize -pidfile "$(pidfile "$id")" 2>>"$d/qemu.err" || true
+    ip netns exec "$(sw "$id")" qemu-system-x86_64 -accel "$accel" -m 512 -smp 1 -kernel "$KERNEL" -initrd "$INITRD" -append "root=LABEL=/ rootflags=rw rw modules=sd-mod,usb-storage,virtio_blk,ext4 init=/sbin/init console=ttyS0,115200n8" -drive "file=$d/overlay.qcow2,if=virtio,format=qcow2" $seedarg -netdev tap,id=wan1,ifname=mrlab${id}tap0,script=no,downscript=no -device virtio-net-pci,netdev=wan1,mac=52:54:00:${hexid}:01:01 -netdev tap,id=lan,ifname=mrlab${id}tap1,script=no,downscript=no -device virtio-net-pci,netdev=lan,mac=52:54:00:${hexid}:01:02 -chardev socket,id=ser,path="$d/serial.sock",server=on,wait=off -serial chardev:ser -display none -daemonize -pidfile "$(pidfile "$id")" 2>>"$d/qemu.err" || true
     run_ns "$(sw "$id")" ip link set mrlab${id}tap0 master br-wan1 2>/dev/null || true
     run_ns "$(sw "$id")" ip link set mrlab${id}tap1 master br-lan 2>/dev/null || true
     run_ns "$(sw "$id")" ip link set mrlab${id}tap0 up 2>/dev/null || true
@@ -98,12 +117,12 @@ up(){
   echo "{\"id\":$id,\"state\":\"up\",\"switch\":\"$(sw "$id")\"}"
 }
 
-down(){ id=$1; valid_id "$id"; kill_pid "$(pidfile "$id")"; for w in 1 2; do kill_pid "$(state "$id")/isp$w/slirp.pid"; kill_pid "$(state "$id")/isp$w/slirp-target.pid"; done; for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; done; cleanup_host_links "$id"; rm -rf "$(state "$id")"; echo "down $id"; }
+down(){ id=$1; valid_id "$id"; kill_qemu "$id"; kill_pid "$(pidfile "$id")"; for w in 1 2; do kill_pid "$(state "$id")/isp$w/slirp.pid"; kill_pid "$(state "$id")/isp$w/slirp-target.pid"; done; for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; done; cleanup_host_links "$id"; rm -rf "$(state "$id")"; echo "down $id"; }
 status(){ id=$1; valid_id "$id"; p=$(pidfile "$id"); alive=false; [ -s "$p" ] && kill -0 "$(cat "$p")" 2>/dev/null && alive=true; printf '{"id":%s,"qemu":%s,"namespaces":["%s","%s","%s","%s"]}\n' "$id" "$alive" "$(sw "$id")" "$(isp "$id" 1)" "$(isp "$id" 2)" "$(lan "$id")"; }
-reset(){ id=$1; valid_id "$id"; kill_pid "$(pidfile "$id")"; rm -rf "$(state "$id")"; up "$id"; }
+reset(){ id=$1; valid_id "$id"; kill_qemu "$id"; kill_pid "$(pidfile "$id")"; rm -rf "$(state "$id")"; up "$id"; }
 
 isp_cmd(){
-  id=$1; wan=$2; mode=$3; shift 3; valid_id "$id"; n=$(isp "$id" "$wan"); d=$(state "$id"); mkdir -p "$d/isp$wan"; pk="$d/isp$wan/dnsmasq.pid"; kill_pid "$pk"; kill_pid "$d/isp$wan/pppoe.pid"
+  id=$1; wan=$2; mode=$3; shift 3; valid_id "$id"; n=$(isp "$id" "$wan"); d=$(state "$id"); mkdir -p "$d/isp$wan"; pk="$d/isp$wan/dnsmasq.pid"; kill_pid "$pk"; kill_pid "$d/isp$wan/pppoe.pid"; kill_pid "$d/isp$wan/http.pid"
   [ "$mode" = down ] && { run_ns "$n" ip link set "mrlab${id}s${wan}p" down; echo "isp $wan down"; return; }
   run_ns "$n" ip link set "mrlab${id}s${wan}p" up
   subnet="10.${id}.${wan}"; badpass=0; nopado=0; cgnat=0; v6=none; same=
@@ -112,7 +131,7 @@ isp_cmd(){
   [ "$cgnat" = 1 ] && subnet="100.64.${id}"
   slirp_start "$id" "$wan"
   case $mode in
-    dhcp) run_ns "$n" dnsmasq --no-resolv --no-hosts --server=10.0.2.3 --interface="mrlab${id}s${wan}p" --bind-interfaces --dhcp-range="${same:-$subnet}.10,${same:-$subnet}.200,255.255.255.0,1h" --dhcp-option=3,"${same:-$subnet}.1" --dhcp-option=6,"${same:-$subnet}.1" --address=/isp.test/${same:-$subnet}.1 --pid-file="$pk" --log-facility="$d/isp$wan/dnsmasq.log";;
+    dhcp) [ -n "$same" ] && run_ns "$n" ip addr replace 192.168.1.1/24 dev "mrlab${id}s${wan}p"; run_ns "$n" dnsmasq --no-resolv --no-hosts --server=10.0.2.3 --interface="mrlab${id}s${wan}p" --bind-interfaces --dhcp-range="${same:-$subnet}.10,${same:-$subnet}.200,255.255.255.0,1h" --dhcp-option=3,"${same:-$subnet}.1" --dhcp-option=6,"${same:-$subnet}.1" --address=/isp.test/${same:-$subnet}.1 --pid-file="$pk" --log-facility="$d/isp$wan/dnsmasq.log"; if [ -n "$same" ]; then (cd "$d/isp$wan" && run_ns "$n" python3 -m http.server 80 --bind 192.168.1.1 >/dev/null 2>&1) & echo $! > "$d/isp$wan/http.pid"; fi;;
     static) run_ns "$n" ip addr replace "${subnet}.1/24" dev "mrlab${id}s${wan}p";;
     pppoe)
       printf '* lab %s %s\n' "${badpass:+badpass}" > "$d/isp$wan/chap-secrets"; [ "$badpass" = 0 ] && printf 'lab * labpass *\n' >> "$d/isp$wan/chap-secrets" || printf 'lab * wrongpass *\n' >> "$d/isp$wan/chap-secrets"
@@ -206,7 +225,7 @@ EOF
   genisoimage -quiet -volid cidata -o "$(state "$id")/seed.iso" -graft-points user-data="$out/user-data" meta-data="$out/meta-data" network-config="$out/network-config" release="$assets" >/dev/null
   # Recreate the switch namespaces so the seed is attached on the first guest boot and no
   # previous tap/veth endpoint survives the restart.
-  kill_pid "$(pidfile "$id")"
+  kill_qemu "$id"; kill_pid "$(pidfile "$id")"
   for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; done
   cleanup_host_links "$id"
   up "$id"
@@ -232,4 +251,4 @@ api_cmd(){
 }
 run_cmd(){ id=$1; scen=$2; valid_id "$id"; case $scen in *.sh) f=$scen;; *) f="$LABDIR/scenarios/$scen.sh";; esac; [ -x "$f" ] || die "scenario not found: $f"; LAB_SH="$LABDIR/lab.sh" "$f" "$id"; }
 
-cmd=${1:-}; shift || true; case $cmd in up) up "$@";; down) down "$@";; status) status "$@";; reset) reset "$@";; isp) isp_cmd "$@";; install) install_cmd "$@";; lan) lan_cmd "$@";; ssh) ssh_cmd "$@";; console) console "$@";; reboot) id=$1; kill_pid "$(pidfile "$id")"; up "$id";; powercut) id=$1; kill_pid "$(pidfile "$id")"; up "$id";; api) api_cmd "$@";; run) run_cmd "$@";; *) die "usage: lab.sh up|down|status|reset|isp|install|lan|ssh|console|reboot|powercut|api|run";; esac
+cmd=${1:-}; shift || true; case $cmd in up) up "$@";; down) down "$@";; status) status "$@";; reset) reset "$@";; isp) isp_cmd "$@";; install) install_cmd "$@";; lan) lan_cmd "$@";; ssh) ssh_cmd "$@";; console) console "$@";; reboot) id=$1; kill_qemu "$id"; kill_pid "$(pidfile "$id")"; up "$id";; powercut) id=$1; kill_qemu "$id"; kill_pid "$(pidfile "$id")"; up "$id";; api) api_cmd "$@";; run) run_cmd "$@";; *) die "usage: lab.sh up|down|status|reset|isp|install|lan|ssh|console|reboot|powercut|api|run";; esac
