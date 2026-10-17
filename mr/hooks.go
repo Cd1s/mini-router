@@ -335,11 +335,6 @@ func dropStaleWANs(c *Config) {
 	for _, w := range c.WAN {
 		live[w.Ifname()] = true
 		liveWAN[w.Name] = true
-		// A disabled IPv6/PD WAN must not keep an old delegated prefix record;
-		// lan6Renumber will retire the addresses recorded for it.
-		if !w.IPv6 || !w.IPv6PD {
-			os.Remove(pd6File(w.Name))
-		}
 	}
 	for _, e := range ents {
 		name, ok := strings.CutSuffix(e.Name(), ".json")
@@ -407,9 +402,12 @@ func refreshRoutes(c *Config) {
 		}
 		wanUp(c, w, ifn, local, gw)
 	}
+	// Retire removed/disabled delegated prefixes before rebuilding source routes.
+	// lan6Renumber keeps the runtime record for a transient dhcpcd release, but
+	// removes it when the accepted configuration no longer owns that prefix.
+	lan6Renumber(c)
 	srcDefaults6(c) // health changes move it with the WAN metrics
 	writeResolv(c)
-	lan6Renumber(c)
 }
 
 // writeResolv rewrites resolvConf from the WANs that are up (healthy first, then by metric).

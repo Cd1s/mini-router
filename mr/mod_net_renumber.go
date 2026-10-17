@@ -217,6 +217,12 @@ func lan6Renumber(c *Config) {
 		// its keys so lan6Plan emits them as stale instead of preserving the
 		// transient empty state used during a normal dhcpcd release.
 		if !w.IPv6 || !w.IPv6PD {
+			for k := range prev.Addrs {
+				if strings.HasPrefix(k, w.Name+" ") {
+					os.Remove(pd6File(w.Name))
+					break
+				}
+			}
 			continue
 		}
 		for _, l := range strings.Fields(readFile(pd6File(w.Name))) {
