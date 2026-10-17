@@ -6,9 +6,14 @@ Run as root on IN from the repository root. IDs 1–8 are independent labs and m
 time. Every command checks the host's `/etc/resolv.conf`, `/etc/hosts` and `/etc/ppp/**` before
 and after and fails loudly if anything changed.
 
+**IDs are host-wide**, shared by every checkout and agent on the build host: `up` takes the lock
+`/run/mrlab/<ID>.lock` (owner checkout + PID) until `down`, and every command refuses an ID another
+checkout holds. Check first, then pick a free one:
+
 ```sh
 L=tools/lab/lab.sh; ID=1
-trap '$L down $ID' EXIT                         # always clean up
+$L status $ID                                   # "lock": free | ours | held (owner, owner_pid) | stale
+trap '$L down $ID' EXIT                         # always clean up (also releases the ID)
 
 # 1. a new router: never-booted Alpine 3.24 + the real install.sh (2–3 min)
 $L reset $ID                                    # empty lab: namespaces + a fresh disk
@@ -32,6 +37,8 @@ $L lan $ID exec 'curl -fsS http://example.com/ >/dev/null && ping6 -c2 2001:db8:
 $L api $ID GET status
 $L change $ID '[{"op":"set","path":"system.hostname","value":"r1"}]'           # apply + confirm
 $L change $ID '[{"op":"set","path":"dhcp.lease","value":"1h"}]' --no-confirm   # leave it pending
+$L change $ID '[{"op":"set","path":"lan.ipv4","value":"192.168.2.1/24"}]'      # LAN moves: the client renews,
+#   the change is confirmed on the new address with the one-time token, later commands use it
 
 # 5. inside the router, power
 $L console $ID 'mr status; tail -20 /var/log/messages'   # root shell, works with the network down
@@ -40,10 +47,15 @@ $L reboot $ID; $L powercut $ID                  # clean reboot / kill -9 QEMU an
 # 6. clean up
 $L down $ID
 ip -br link | grep -c mrlab                     # must print 0
+
+# an ID whose owner died without `down` (holder process gone, "lock":"stale"):
+MRLAB_FORCE=1 $L reset $ID                      # only after checking that nobody uses it any more
 ```
 
 Scenarios (TAP output, log in `/tmp/mrlab<ID>-<name>.log`): `$L run $ID 01-fresh-dhcp`,
-`02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`.
+`02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`,
+`06-lan-renumber` (192.168.1.1 → .6 → 192.168.2.1 via the API), `07-require-public-ip` (PPPoE behind
+CGNAT, `wan[].require_public_ip`).
 Each starts with `reset` and removes its lab when it ends (passed, failed or interrupted;
 `MRLAB_KEEP=1` leaves it up for inspection), so give every parallel scenario its own ID. A failed
 setup step prints `Bail out!` and stops the scenario.
