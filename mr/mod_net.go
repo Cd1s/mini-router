@@ -278,12 +278,12 @@ func init() {
 		Status:       netStatus,
 		TokenScope:   map[string]string{"net": "read", "net.ports": "read", "net.routes": "read", "net.wan": "read", "net.wan_detect": "operate", "net.redial": "operate"},
 		API: map[string]func(r apiReq) apiResp{
-			"net":        func(apiReq) apiResp { return apiNet() },
-			"net.ports":  func(apiReq) apiResp { return apiNetPorts() },
-			"net.routes": func(apiReq) apiResp { return apiNetRoutes() },
-			"net.wan":    func(apiReq) apiResp { return apiNetWAN() },
+			"net":            func(apiReq) apiResp { return apiNet() },
+			"net.ports":      func(apiReq) apiResp { return apiNetPorts() },
+			"net.routes":     func(apiReq) apiResp { return apiNetRoutes() },
+			"net.wan":        func(apiReq) apiResp { return apiNetWAN() },
 			"net.wan_detect": apiNetWANDetect,
-			"net.redial": apiNetRedial,
+			"net.redial":     apiNetRedial,
 		},
 		Commands: map[string]func(c *Config, args []string) error{
 			"wan": wanCommand,

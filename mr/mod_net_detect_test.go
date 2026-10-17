@@ -32,5 +32,7 @@ func TestParseRouterAdvertisement(t *testing.T) {
 
 func TestSuggestLANAvoidsUpstream(t *testing.T) {
 	_, n, _ := net.ParseCIDR("192.168.1.0/24")
-	if got := suggestLAN(n); got == "192.168.1.1/24" { t.Fatal(got) }
+	if got := suggestLAN(n); got == "192.168.1.1/24" {
+		t.Fatal(got)
+	}
 }

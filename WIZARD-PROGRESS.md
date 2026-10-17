@@ -1,0 +1,2 @@
+- Fixed Go probe context/socket binding and added passive IPv6 RA capture.
+- Fixed wizard WAN probe button syntax and completed i18n entry.
