@@ -328,6 +328,14 @@ func docWAN(c *Config, e *docEnv) []docFinding {
 		case !isUp:
 			f.Sev, f.Detail = "warn", fmt.Sprintf("no IPv4 address on %s (%s)", w.Ifname(), w.Proto)
 			f.Fix = restart + "; grep -E 'pppd|udhcpc' /var/log/messages | tail (cable, account, ISP)"
+		case w.Proto == "pppoe" && health[w.Name] == "down" && addrClass(ip) != "":
+			cls := addrClass(ip)
+			f.Sev, f.Detail = "warn", fmt.Sprintf("has %s (%s) and fails the health check; the ISP likely placed this PPPoE session in a private/CGNAT pool", ip, cls)
+			if w.RequirePublicIP {
+				f.Fix = restart + fmt.Sprintf("; automatic public-IP redial stops after %d private addresses; ask the ISP for a public IPv4 address", requirePublicMax)
+			} else {
+				f.Fix = restart + "; enable wan.require_public_ip for bounded automatic redials, or ask the ISP for a public IPv4 address"
+			}
 		case health[w.Name] == "down":
 			f.Sev, f.Detail = "warn", fmt.Sprintf("has %s but fails the health check (no reply from the multiwan targets)", ip)
 			f.Fix = "mr wan health; ping -I " + w.Ifname() + " <target>; " + strings.TrimPrefix(restart, "mr wan status; ")
