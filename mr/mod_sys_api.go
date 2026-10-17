@@ -21,6 +21,12 @@ import (
 
 var hostRe = lazyRegexp(`^[A-Za-z0-9.:-]{1,253}$`)
 
+// tsCommand is replaceable in tests so the login action can prove it never
+// invokes `tailscale login` for an already authenticated backend.
+var tsCommand = func(ctx context.Context, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, "tailscale", args...).CombinedOutput()
+}
+
 // apiDiag runs ping / ping6 / traceroute / traceroute6 / nslookup with a hard timeout. Arguments are
 // fixed; only the target is user-supplied and must look like a host name or address. The old
 // {tool: ping|traceroute, ipv6: true} form still works.
@@ -266,6 +272,58 @@ func apiSysServices(r apiReq) apiResp {
 		}
 	}
 	return apiResp{body: body}
+}
+
+// apiSysTSLogin starts the interactive Tailscale login flow for the current
+// web session. It is intentionally session-only (not in TokenScope): the
+// returned URL is a one-time enrollment flow and must not be exposed to API
+// tokens.
+func apiSysTSLogin(r apiReq) apiResp {
+	if r.method != "POST" {
+		return errResp(405, "POST required")
+	}
+	c, err := loadConfig(sysConfigPath, sysSecretsPath)
+	if err != nil {
+		return errResp(500, "%v", err)
+	}
+	if !c.Services.Tailscale.Enabled {
+		return errResp(409, "Tailscale is disabled")
+	}
+	status := func() (map[string]any, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		raw, err := tsCommand(ctx, "status", "--json")
+		if err != nil && len(raw) == 0 {
+			return nil, err
+		}
+		return tailscaleStatus(raw)
+	}
+	ts, err := status()
+	if err != nil {
+		return errResp(409, "Tailscale is not running")
+	}
+	state, _ := ts["state"].(string)
+	if state == "Running" {
+		return errResp(409, "Tailscale is already logged in")
+	}
+	if state != "NeedsLogin" && state != "NoState" && state != "" {
+		return errResp(409, "Tailscale is not ready: %s", state)
+	}
+	if u, ok := ts["auth_url"].(string); ok && u != "" {
+		return apiResp{body: map[string]any{"state": state, "auth_url": u}}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	_, _ = tsCommand(ctx, "login") // may time out while waiting for the browser
+	if ts, err = status(); err == nil {
+		if u, ok := ts["auth_url"].(string); ok && u != "" {
+			return apiResp{body: map[string]any{"state": ts["state"], "auth_url": u}}
+		}
+		if state, _ = ts["state"].(string); state == "Running" {
+			return errResp(409, "Tailscale is already logged in")
+		}
+	}
+	return errResp(502, "Tailscale login status unavailable")
 }
 
 // ---- system log ----

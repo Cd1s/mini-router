@@ -404,6 +404,9 @@ func TestNotifyBuild(t *testing.T) {
 func TestNotifyCommandAndAPI(t *testing.T) {
 	d, _, _, _ := eventEnv(t)
 	c := testConfig(t)
+	if st := apiSysUpdateCheck(apiReq{method: "GET"}).status; st != 405 {
+		t.Errorf("GET sys.updatecheck: %d", st)
+	}
 	for _, bad := range [][]string{nil, {"flush", "--now"}, {"nope"}} {
 		if notifyCommand(c, bad) == nil {
 			t.Errorf("mr notify %v accepted", bad)

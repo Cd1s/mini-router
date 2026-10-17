@@ -20,14 +20,28 @@ start_pre() {
 	return 0
 }
 # TS_EXIT_NODE: services.tailscale.exit_node.node — set it once tailscaled answers, or clear the one mr set before
+# TS_ADVERTISE_ROUTES: services.tailscale.advertise_routes — comma-separated subnet CIDRs
 start_post() {
-	[ -n "${TS_EXIT_NODE:-}" ] || [ -e /etc/tailscale/mr-exit-node ] || return 0
+	[ -n "${TS_EXIT_NODE:-}" ] || [ -n "${TS_ADVERTISE_ROUTES:-}" ] || [ -e /etc/tailscale/mr-exit-node ] || [ -e /etc/tailscale/mr-advertise-routes ] || return 0
 	(
 		for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
 			sleep 2
-			tailscale set --exit-node="${TS_EXIT_NODE:-}" && break
+			ok=1
+			if [ -n "${TS_EXIT_NODE:-}" ] || [ -e /etc/tailscale/mr-exit-node ]; then
+				tailscale set --exit-node="${TS_EXIT_NODE:-}" || ok=0
+				if [ "$ok" = 1 ]; then
+					if [ -n "${TS_EXIT_NODE:-}" ]; then : > /etc/tailscale/mr-exit-node; else rm -f /etc/tailscale/mr-exit-node; fi
+				fi
+			fi
+			if [ -n "${TS_ADVERTISE_ROUTES:-}" ] || [ -e /etc/tailscale/mr-advertise-routes ]; then
+				tailscale set --advertise-routes="${TS_ADVERTISE_ROUTES:-}" || ok=0
+				if [ "$ok" = 1 ]; then
+					if [ -n "${TS_ADVERTISE_ROUTES:-}" ]; then : > /etc/tailscale/mr-advertise-routes; else rm -f /etc/tailscale/mr-advertise-routes; fi
+				fi
+			fi
+			[ "$ok" = 1 ] && break
 		done
-		if [ -n "${TS_EXIT_NODE:-}" ]; then : > /etc/tailscale/mr-exit-node; else rm -f /etc/tailscale/mr-exit-node; fi
+		[ "$ok" = 1 ] || logger -t tailscale "mr: failed to apply exit node or advertised routes after retries"
 	) > /dev/null 2>&1 &
 	return 0
 }
