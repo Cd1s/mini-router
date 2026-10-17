@@ -49,10 +49,15 @@ func fakeHookCommands(t *testing.T) {
 func TestPPPDownCurrentPPPoEStillCleansState(t *testing.T) {
 	tempState(t)
 	fakeHookCommands(t)
+	oldFW := fwLoadForHook
+	fwLoadForHook = func(*Config) error { return nil }
+	t.Cleanup(func() { fwLoadForHook = oldFW })
 	c := testConfig(t)
 	c.WAN[0] = WAN{Name: "wan", Device: "wan", Proto: "pppoe", PeerDNS: true}
 	writeLease("wan", wanLease{IP: "203.0.113.10", Dev: "pppoe-wan"})
-	wanDown(c, &c.WAN[0])
+	if err := hookPPP(c, false, []string{"pppoe-wan", "", "", "", "", "wan"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := readLease("wan"); ok {
 		t.Fatal("current PPPoE down did not remove its lease")
 	}
@@ -149,6 +154,19 @@ func TestLan6RenumberRetiresProtoSwitchAfterCommit(t *testing.T) {
 	t.Cleanup(func() { os.Setenv("PATH", oldPath) })
 	c := testConfig(t)
 	c.WAN[0] = WAN{Name: "wan", Device: "wan", Proto: "dhcp", IPv6: true, IPv6PD: true}
+	// A real apply can run dhcpcd hooks with the new config before the
+	// confirmation commit.  That observation must preserve the old owner.
+	lan6Renumber(c)
+	var observed lan6State
+	stateBytes, _ := os.ReadFile(lan6StateFile)
+	json.Unmarshal(stateBytes, &observed)
+	if observed.Devices["wan br-lan"] != "pppoe-wan" {
+		t.Fatalf("pre-commit hook rewrote the old owner: %v", observed.Devices)
+	}
+	if _, err := os.Stat(pd6File("wan")); err != nil {
+		t.Fatalf("pre-commit hook removed pd6: %v", err)
+	}
+	os.WriteFile(filepath.Join(d, "ip.log"), nil, 0644)
 	lan6Renumber(c, true)
 	if _, err := os.Stat(pd6File("wan")); !os.IsNotExist(err) {
 		t.Fatalf("committed protocol switch kept old pd6: %v", err)

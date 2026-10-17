@@ -82,7 +82,7 @@ sing-box **1.14.1**，tag `v1.14.1` = `1ac1a339cb12…`（与官方二进制内�
 
 Alpine 3.24 aarch64（docker arm64 + binfmt）：
 
-- 软件包（`out/m3/packages.txt`）：M2 的集合（busybox + OpenRC、dropbear、iproute2（minimal + ss，不带 tc）、iw、
+- 软件包（`out/m3/packages.txt`）：M2 的集合（busybox + OpenRC、dropbear、iproute2（minimal + ss，不带 tc）、ethtool、iw、
   nftables、ppp-pppoe、dhcpcd、dnsmasq、hostapd、wireless-regdb、stubby、curl、jq、busybox-extras）
   + `mtd-utils-ubi`、`kexec-tools`、`ssl_client`（busybox wget 的 https）、`igmpproxy`。不装 `alpine-base`
   里的 alpine-conf（setup 脚本）和 busybox-suid。dnsmasq 用 `dnsmasq-dnssec-nftset` 这个构建（按域名选 WAN 的

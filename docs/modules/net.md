@@ -21,9 +21,9 @@ net 负责路由器的"线"：物理网口和网桥、LAN 与额外网络（访�
 | 按域名选 WAN | dnsmasq 的 `nftset=` 把上游应答里的地址写进 nft 集合，新连接的第一个包按集合打 WAN 标记，之后照常 flowtable / PPE（见下文“按域名”） | 无（dnsmasq 本来就在；集合按需占内核内存） |
 | VLAN 网络 | 额外网络可带 802.1Q 标签：`<port>.<vlan>` 加入该网络的网桥，端口原来的用途不变 | 无 |
 | 接口状态 | `net.ports` 读 `/sys/class/net`：链路、速率、双工、计数、错误；网页显示前面板网口 + 接口表（实时速率） | 无 |
+| WAN DNS | 钩子维护 `/run/mini-router/resolv.conf`（在线线路的 DNS，健康的优先），dnsmasq 读它 | 无 |
 
 取消 `wan[].mac` 后，`network.sh` 使用 `ethtool -P` 恢复永久 MAC；只有合法的非零单播地址会被接受，并保留网卡原本的 up/down 状态。取消 VLAN 后，mr 只删除带有 `alias mini-router` 的历史子接口；升级前由旧版本创建、没有该标记的接口会保留，需要用户手工清理。
-| WAN DNS | 钩子维护 `/run/mini-router/resolv.conf`（在线线路的 DNS，健康的优先），dnsmasq 读它 | 无 |
 
 ## 路由表 / 规则 / 标记布局
 

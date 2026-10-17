@@ -883,14 +883,16 @@ func confirm() (bool, error) {
 	if err == nil && p.State == stateReverting {
 		return false, errors.New("the change is being rolled back")
 	}
+	var commitCfg *Config
+	if err == nil {
+		commitCfg, _ = loadConfig(ConfigPath, SecretsPath)
+	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
 	acceptStaged()
 	unlock()
-	if err == nil {
-		if c, loadErr := loadConfig(ConfigPath, SecretsPath); loadErr == nil {
-			if commitErr := netCommit(c); commitErr != nil {
-				logf("net: post-confirm cleanup: %v", commitErr)
-			}
+	if commitCfg != nil {
+		if commitErr := netCommit(commitCfg); commitErr != nil {
+			logf("net: post-confirm cleanup: %v", commitErr)
 		}
 	}
 	if err == nil {

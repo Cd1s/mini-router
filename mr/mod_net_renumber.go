@@ -115,7 +115,7 @@ func lan6CIDR(s string) (string, bool) {
 // the prefix the ISP may hand out again must not be deprecated in between); a key with addresses replaces
 // it, and the recorded ones that are gone are stale. WANs and bridges that no longer do RA are left out
 // (nothing advertises there).
-func lan6Plan(prev lan6State, cur map[string][]string) (stale map[string][]string, next lan6State) {
+func lan6Plan(prev lan6State, cur map[string][]string, retireMissing ...bool) (stale map[string][]string, next lan6State) {
 	next = lan6State{Addrs: map[string][]string{}}
 	stale = map[string][]string{}
 	current := map[string]bool{}
@@ -141,13 +141,15 @@ func lan6Plan(prev lan6State, cur map[string][]string) (stale map[string][]strin
 	// A key that disappeared from cur belongs to a WAN or RA bridge removed from
 	// the configuration.  It cannot be preserved as a temporary empty state: the
 	// old prefix must be announced as deprecated once so LAN clients retire it.
-	for k, old := range prev.Addrs {
-		if _, present := cur[k]; present {
-			continue
-		}
-		for _, a := range old {
-			if s, valid := lan6CIDR(a); valid && !current[s] && !containsString(stale[k], s) {
-				stale[k] = append(stale[k], s)
+	if len(retireMissing) == 0 || retireMissing[0] {
+		for k, old := range prev.Addrs {
+			if _, present := cur[k]; present {
+				continue
+			}
+			for _, a := range old {
+				if s, valid := lan6CIDR(a); valid && !current[s] && !containsString(stale[k], s) {
+					stale[k] = append(stale[k], s)
+				}
 			}
 		}
 	}
@@ -246,9 +248,13 @@ func lan6Renumber(c *Config, retireDisabled ...bool) {
 			}
 		}
 	}
-	stale, next := lan6Plan(prev, curByWAN)
+	stale, next := lan6Plan(prev, curByWAN, retireConfig)
 	next.Devices = map[string]string{}
 	for k := range next.Addrs {
+		if prevDev := prev.Devices[k]; prevDev != "" && sameStrings(prev.Addrs[k], next.Addrs[k]) {
+			next.Devices[k] = prevDev
+			continue
+		}
 		wan, _, _ := strings.Cut(k, " ")
 		if w := c.WANByName(wan); w != nil {
 			next.Devices[k] = w.Ifname()
@@ -278,6 +284,18 @@ func lan6Renumber(c *Config, retireDisabled ...bool) {
 	if err := writeAtomic(lan6StateFile, b, 0644); err != nil {
 		logf("lan6: %v", err)
 	}
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func lan6RetireWAN(prev lan6State, w WAN, retireConfig bool) bool {

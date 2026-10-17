@@ -27,9 +27,10 @@ const downMetric = 10000
 
 // runtime state paths (variables so tests can use a temp dir)
 var (
-	wanRunDir    = RunDir + "/wan"
-	wanStateFile = RunDir + "/wan-state.json"
-	resolvConf   = RunDir + "/resolv.conf"
+	wanRunDir     = RunDir + "/wan"
+	wanStateFile  = RunDir + "/wan-state.json"
+	resolvConf    = RunDir + "/resolv.conf"
+	fwLoadForHook = fwLoad
 )
 
 // wanLease is what a WAN got when it came up.
@@ -141,7 +142,7 @@ func hookPPP(c *Config, up bool, args []string) error {
 		wanDown(c, w)
 	}
 	updateLEDs(c)
-	err := fwLoad(c)
+	err := fwLoadForHook(c)
 	if up {
 		runOnWAN(c, w.Name, "up")
 		dialOnUp(c, w.Name)

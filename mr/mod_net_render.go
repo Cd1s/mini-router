@@ -416,7 +416,7 @@ func wanMACRestoreSh(c *Config, b *strings.Builder) {
 	}
 	sort.Strings(xs)
 	for _, d := range xs {
-		fmt.Fprintf(b, "was_up=0; case \"$(ip -o link show dev %s 2>/dev/null)\" in *\"<\"*UP*) was_up=1;; esac; perm=$(ethtool -P %s 2>/dev/null | awk '$1==\"Permanent\" && $2==\"address:\" && $3 ~ /^[[:xdigit:]][02468ace](:[[:xdigit:]][[:xdigit:]]){5}$/ {m=tolower($3); if (m !~ /^00:00:00:00:00:00$/) print m}'); if [ -n \"$perm\" ] && [ \"$(cat /sys/class/net/%s/address 2>/dev/null)\" != \"$perm\" ]; then ip link set %s down; ip link set dev %s address \"$perm\" 2>/dev/null || :; [ \"$was_up\" = 1 ] && ip link set %s up; fi\n", d, d, d, d, d, d)
+		fmt.Fprintf(b, "was_up=0; case \"$(ip -o link show dev %s 2>/dev/null)\" in *\"<\"*UP*) was_up=1;; esac; perm=$(ethtool -P %s 2>/dev/null | awk '$1==\"Permanent\" && $2==\"address:\" && $3 ~ /^[[:xdigit:]][02468aceACE](:[[:xdigit:]][[:xdigit:]]){5}$/ {m=tolower($3); if (m !~ /^00:00:00:00:00:00$/) print m}'); if [ -n \"$perm\" ] && [ \"$(cat /sys/class/net/%s/address 2>/dev/null)\" != \"$perm\" ]; then ip link set %s down; ip link set dev %s address \"$perm\" 2>/dev/null || :; [ \"$was_up\" = 1 ] && ip link set %s up; fi\n", d, d, d, d, d, d)
 	}
 }
 
