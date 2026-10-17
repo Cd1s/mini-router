@@ -348,17 +348,33 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 func wanVLANCleanupSh(c *Config, b *strings.Builder) {
 	parents := map[string]bool{}
 	keep := map[string]bool{}
+	keepName := func(name string) {
+		if name != "" {
+			keep[name] = true
+		}
+	}
 	for _, w := range c.WAN {
 		parents[w.Device] = true
+		keepName(w.Device)
+		keepName(w.LinkDev())
 		if w.VLAN > 0 {
 			keep[w.LinkDev()] = true
 		}
 	}
+	for _, p := range c.LAN.Ports {
+		parents[p] = true
+		keepName(p)
+	}
 	for _, n := range c.Networks {
+		for _, p := range n.Ports {
+			parents[p] = true
+			keepName(p)
+		}
 		for _, p := range n.Trunk {
 			parents[p] = true
+			keepName(p)
 			if n.VLAN > 0 {
-				keep[fmt.Sprintf("%s.%d", p, n.VLAN)] = true
+				keepName(fmt.Sprintf("%s.%d", p, n.VLAN))
 			}
 		}
 	}
@@ -374,7 +390,7 @@ func wanVLANCleanupSh(c *Config, b *strings.Builder) {
 	}
 	sort.Strings(ps)
 	for _, p := range ps {
-		fmt.Fprintf(b, "for d in /sys/class/net/%s.*; do [ -e \"$d\" ] || continue; n=${d##*/}; case \" %s \" in *\" $n \"*) continue;; esac; ip link del \"$n\" 2>/dev/null; done\n", p, caseList)
+		fmt.Fprintf(b, "for d in /sys/class/net/%s.*; do [ -e \"$d\" ] || continue; n=${d##*/}; case \" %s \" in *\" $n \"*) continue;; esac; case \"$(ip -o link show dev \"$n\" 2>/dev/null)\" in *\" alias mini-router\"*) ip link del \"$n\" 2>/dev/null;; esac; done\n", p, caseList)
 	}
 }
 
@@ -400,7 +416,7 @@ func wanMACRestoreSh(c *Config, b *strings.Builder) {
 	}
 	sort.Strings(xs)
 	for _, d := range xs {
-		fmt.Fprintf(b, "perm=$(ethtool -P %s 2>/dev/null | awk '$1==\"Permanent\" && $2==\"address:\" && $3 ~ /^[[:xdigit:]][[:xdigit:]](:[[:xdigit:]][[:xdigit:]]){5}$/ {print tolower($3)}'); if [ -n \"$perm\" ] && [ \"$(cat /sys/class/net/%s/address 2>/dev/null)\" != \"$perm\" ]; then ip link set %s down; ip link set dev %s address \"$perm\"; fi\n", d, d, d, d)
+		fmt.Fprintf(b, "was_up=0; case \"$(ip -o link show dev %s 2>/dev/null)\" in *\"<\"*UP*) was_up=1;; esac; perm=$(ethtool -P %s 2>/dev/null | awk '$1==\"Permanent\" && $2==\"address:\" && $3 ~ /^[[:xdigit:]][02468ace](:[[:xdigit:]][[:xdigit:]]){5}$/ {m=tolower($3); if (m !~ /^00:00:00:00:00:00$/) print m}'); if [ -n \"$perm\" ] && [ \"$(cat /sys/class/net/%s/address 2>/dev/null)\" != \"$perm\" ]; then ip link set %s down; ip link set dev %s address \"$perm\" 2>/dev/null || :; [ \"$was_up\" = 1 ] && ip link set %s up; fi\n", d, d, d, d, d, d)
 	}
 }
 
@@ -427,7 +443,8 @@ func wanIPv6OffSh(c *Config, b *strings.Builder) {
 }
 
 func vlanLink(b *strings.Builder, dev string, vid int) {
-	fmt.Fprintf(b, "ip link show %s.%d >/dev/null 2>&1 || ip link add link %s name %s.%d type vlan id %d\n", dev, vid, dev, dev, vid, vid)
+	sub := fmt.Sprintf("%s.%d", dev, vid)
+	fmt.Fprintf(b, "if ! ip link show %s >/dev/null 2>&1; then ip link add link %s name %s type vlan id %d && ip link set dev %s alias mini-router; fi\n", sub, dev, sub, vid, sub)
 }
 
 // nftIfnames renders one interface name or an anonymous set of them.

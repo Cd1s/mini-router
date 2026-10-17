@@ -40,7 +40,8 @@ const lan6StalePreferred = 10
 
 // lan6State: the addresses last advertised per WAN x bridge. Keys are "<wan> <bridge>" (lan6Key).
 type lan6State struct {
-	Addrs map[string][]string `json:"addrs"` // "wan br-lan" -> ["2001:db8:1::1/64", ...]
+	Addrs   map[string][]string `json:"addrs"`   // "wan br-lan" -> ["2001:db8:1::1/64", ...]
+	Devices map[string]string   `json:"devices"` // key -> L3 interface that owned the prefix
 }
 
 func lan6Key(wan, br string) string { return wan + " " + br }
@@ -117,6 +118,12 @@ func lan6CIDR(s string) (string, bool) {
 func lan6Plan(prev lan6State, cur map[string][]string) (stale map[string][]string, next lan6State) {
 	next = lan6State{Addrs: map[string][]string{}}
 	stale = map[string][]string{}
+	current := map[string]bool{}
+	for _, as := range cur {
+		for _, a := range as {
+			current[a] = true
+		}
+	}
 	for k, now := range cur {
 		if len(now) == 0 {
 			if len(prev.Addrs[k]) > 0 {
@@ -126,7 +133,7 @@ func lan6Plan(prev lan6State, cur map[string][]string) (stale map[string][]strin
 		}
 		next.Addrs[k] = now
 		for _, a := range prev.Addrs[k] {
-			if s, valid := lan6CIDR(a); valid && !containsString(now, s) && !containsString(stale[k], s) {
+			if s, valid := lan6CIDR(a); valid && !current[s] && !containsString(now, s) && !containsString(stale[k], s) {
 				stale[k] = append(stale[k], s)
 			}
 		}
@@ -139,7 +146,7 @@ func lan6Plan(prev lan6State, cur map[string][]string) (stale map[string][]strin
 			continue
 		}
 		for _, a := range old {
-			if s, valid := lan6CIDR(a); valid && !containsString(stale[k], s) {
+			if s, valid := lan6CIDR(a); valid && !current[s] && !containsString(stale[k], s) {
 				stale[k] = append(stale[k], s)
 			}
 		}
@@ -212,23 +219,18 @@ func lan6Renumber(c *Config, retireDisabled ...bool) {
 	}
 	var wans []string
 	pds := map[string][]netip.Prefix{}
+	retireWAN := map[string]bool{}
 	for _, w := range c.WAN {
 		wans = append(wans, w.Name)
 		// A WAN with IPv6 or PD disabled has no owner for its old prefix.  Omit
 		// its keys so lan6Plan emits them as stale instead of preserving the
 		// transient empty state used during a normal dhcpcd release.
-		retire := false
-		if retireConfig && (!w.IPv6 || !w.IPv6PD) {
-			for k := range prev.Addrs {
-				if strings.HasPrefix(k, w.Name+" ") {
-					retire = true
-					os.Remove(pd6File(w.Name))
-					break
-				}
-			}
-			if retire {
-				continue
-			}
+		if lan6RetireWAN(prev, w, retireConfig) {
+			retireWAN[w.Name] = true
+			os.Remove(pd6File(w.Name))
+		}
+		if retireWAN[w.Name] {
+			continue
 		}
 		for _, l := range strings.Fields(readFile(pd6File(w.Name))) {
 			if p, err := netip.ParsePrefix(l); err == nil {
@@ -238,23 +240,20 @@ func lan6Renumber(c *Config, retireDisabled ...bool) {
 	}
 	curByWAN := lan6ByWAN(cur, wans, pds)
 	for _, w := range c.WAN {
-		if retireConfig && (!w.IPv6 || !w.IPv6PD) {
-			retire := false
-			for k := range prev.Addrs {
-				if strings.HasPrefix(k, w.Name+" ") {
-					retire = true
-					break
-				}
-			}
-			if !retire {
-				continue
-			}
+		if retireWAN[w.Name] {
 			for br := range cur {
 				delete(curByWAN, lan6Key(w.Name, br))
 			}
 		}
 	}
 	stale, next := lan6Plan(prev, curByWAN)
+	next.Devices = map[string]string{}
+	for k := range next.Addrs {
+		wan, _, _ := strings.Cut(k, " ")
+		if w := c.WANByName(wan); w != nil {
+			next.Devices[k] = w.Ifname()
+		}
+	}
 	var keys []string
 	for k := range stale {
 		keys = append(keys, k)
@@ -262,6 +261,9 @@ func lan6Renumber(c *Config, retireDisabled ...bool) {
 	sort.Strings(keys)
 	for _, k := range keys {
 		_, br, _ := strings.Cut(k, " ")
+		if lease[br] <= 0 {
+			continue // the bridge no longer advertises RA; there is no client to notify
+		}
 		for _, a := range stale[k] {
 			logf("lan6: %s on %s was advertised and is gone: announcing it as stale (RFC 9096)", a, br)
 			run("ip", "-6", "addr", "replace", a, "dev", br, "valid_lft", strconv.Itoa(lease[br]),
@@ -276,4 +278,25 @@ func lan6Renumber(c *Config, retireDisabled ...bool) {
 	if err := writeAtomic(lan6StateFile, b, 0644); err != nil {
 		logf("lan6: %v", err)
 	}
+}
+
+func lan6RetireWAN(prev lan6State, w WAN, retireConfig bool) bool {
+	if !retireConfig {
+		return false
+	}
+	for k := range prev.Addrs {
+		if !strings.HasPrefix(k, w.Name+" ") {
+			continue
+		}
+		oldDev := prev.Devices[k]
+		if oldDev == "" {
+			if l, ok := readLease(w.Name); ok {
+				oldDev = l.Dev
+			}
+		}
+		if !w.IPv6 || !w.IPv6PD || oldDev != "" && oldDev != w.Ifname() {
+			return true
+		}
+	}
+	return false
 }

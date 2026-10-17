@@ -586,6 +586,9 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 		clearPending(snap)
 		acceptStaged()
 		setResult(snap, "applied")
+		if err := netCommit(c); err != nil {
+			logf("net: post-apply cleanup: %v", err)
+		}
 	}
 	return nil
 }
@@ -883,6 +886,13 @@ func confirm() (bool, error) {
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
 	acceptStaged()
 	unlock()
+	if err == nil {
+		if c, loadErr := loadConfig(ConfigPath, SecretsPath); loadErr == nil {
+			if commitErr := netCommit(c); commitErr != nil {
+				logf("net: post-confirm cleanup: %v", commitErr)
+			}
+		}
+	}
 	if err == nil {
 		setResult(p.Snapshot, "confirmed")
 	}

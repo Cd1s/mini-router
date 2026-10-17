@@ -331,10 +331,8 @@ func wanDown(c *Config, w *WAN) {
 func dropStaleWANs(c *Config) {
 	ents, _ := os.ReadDir(wanRunDir)
 	live := map[string]bool{}
-	liveWAN := map[string]bool{}
 	for _, w := range c.WAN {
 		live[w.Ifname()] = true
-		liveWAN[w.Name] = true
 	}
 	for _, e := range ents {
 		name, ok := strings.CutSuffix(e.Name(), ".json")
@@ -356,12 +354,20 @@ func dropStaleWANs(c *Config) {
 		}
 		removeLease(name)
 	}
-	// pd6 files are runtime records too, but unlike leases they may outlive the
-	// last IPv4 event.  Remove records for WANs deleted from the config so the
-	// IPv6 policy sets and renumbering code cannot resurrect them.
+}
+
+// removeStalePD6 is committed only after an apply is accepted. Keeping deleted
+// WAN PD records through verify lets a failed apply/rollback restore the old
+// IPv6 policy state unchanged.
+func removeStalePD6(c *Config) {
+	ents, _ := os.ReadDir(wanRunDir)
+	live := map[string]bool{}
+	for _, w := range c.WAN {
+		live[w.Name] = true
+	}
 	for _, e := range ents {
 		name, ok := strings.CutSuffix(e.Name(), ".pd6")
-		if ok && !liveWAN[name] {
+		if ok && !live[name] {
 			os.Remove(filepath.Join(wanRunDir, e.Name()))
 		}
 	}
@@ -402,12 +408,21 @@ func refreshRoutes(c *Config) {
 		}
 		wanUp(c, w, ifn, local, gw)
 	}
-	// Retire removed/disabled delegated prefixes before rebuilding source routes.
-	// lan6Renumber keeps the runtime record for a transient dhcpcd release, but
-	// removes it when the accepted configuration no longer owns that prefix.
-	lan6Renumber(c, true)
+	// DHCPv6 hooks record renumber state.  Configuration changes retire old
+	// prefixes only from netCommit, after apply verification/confirmation, so a
+	// rollback never loses the previous prefix record.
 	srcDefaults6(c) // health changes move it with the WAN metrics
 	writeResolv(c)
+}
+
+// netCommit performs the irreversible runtime cleanup only after apply has
+// passed verification (and, for a confirm window, after the owner confirms).
+func netCommit(c *Config) error {
+	removeStalePD6(c)
+	lan6Renumber(c, true)
+	srcDefaults6(c)
+	writeResolv(c)
+	return fwLoad(c)
 }
 
 // writeResolv rewrites resolvConf from the WANs that are up (healthy first, then by metric).
