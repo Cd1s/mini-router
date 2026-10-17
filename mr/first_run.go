@@ -9,15 +9,17 @@ import (
 // or factory-reset. It is intentionally outside router.yaml so importing an
 // old configuration never triggers the wizard for an existing owner.
 var firstRunMarker = "/etc/mini-router/state/first-run"
+var firstRunSecretsPath = SecretsPath
+var firstRunGenDir = GenDir
 
 func firstRunPending() bool {
 	b, err := os.ReadFile(firstRunMarker)
 	if err != nil {
 		return false
 	}
-	if _, pwErr := os.Stat(SecretsPath); pwErr == nil {
-		if _, appliedErr := os.Stat(GenDir + "/applied.yaml"); appliedErr == nil {
-			secrets, _ := os.ReadFile(SecretsPath)
+	if _, pwErr := os.Stat(firstRunSecretsPath); pwErr == nil {
+		if _, appliedErr := os.Stat(firstRunGenDir + "/applied.yaml"); appliedErr == nil {
+			secrets, _ := os.ReadFile(firstRunSecretsPath)
 			if suppressFirstRun(string(b), string(secrets), true) {
 				return false
 			}

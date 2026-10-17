@@ -26,6 +26,31 @@ func TestFirstRunMarkerKinds(t *testing.T) {
 }
 
 func TestSuppressFirstRunForAcceptedExistingRouter(t *testing.T) {
+	d := t.TempDir()
+	oldMarker, oldSecrets, oldGen := firstRunMarker, firstRunSecretsPath, firstRunGenDir
+	firstRunMarker = filepath.Join(d, "state", "first-run")
+	firstRunSecretsPath = filepath.Join(d, "secrets.yaml")
+	firstRunGenDir = filepath.Join(d, "gen")
+	t.Cleanup(func() { firstRunMarker, firstRunSecretsPath, firstRunGenDir = oldMarker, oldSecrets, oldGen })
+	if err := os.MkdirAll(firstRunGenDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(firstRunMarker), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(firstRunMarker, []byte("factory\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(firstRunSecretsPath, []byte("webui_password: pbkdf2-sha256$1$abc\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(firstRunGenDir, "applied.yaml"), []byte("lan:\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if firstRunPending() {
+		t.Fatal("accepted router with stale factory marker entered first run")
+	}
+
 	if !suppressFirstRun("install\n", "webui_password: pbkdf2-sha256$1$abc\n", true) {
 		t.Fatal("accepted router with password was not suppressed")
 	}
