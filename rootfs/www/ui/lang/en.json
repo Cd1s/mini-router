@@ -264,7 +264,6 @@
 "跳过首次设置？之后仍可在各网络页面单独配置。": "Skip first-run setup? You can configure each section later.",
 "跳过首次设置": "Skip first-run setup",
 "首次设置 · ": "First setup · ",
-"可随时离开；确认窗口会在页面重新可达时自动保留，失败会自动回滚。": "You can leave at any time. The confirmation window keeps reachable changes automatically and rolls back failures.",
 "密码": "Password",
 "设置管理员密码": "Set admin password",
 "登录": "Log in",
@@ -2021,5 +2020,15 @@
 "你正从 WAN（": "You are connected from the WAN (",
 "）连接，而这条线路会重拨": "), and this line will redial",
 "你正在用 SSH，而 SSH 服务会重启": "You are using SSH, and the SSH service will restart",
-"无法判断改动了什么": "Cannot tell what changes"
+"无法判断改动了什么": "Cannot tell what changes",
+"请选择国家/地区": "Choose a country or region",
+"中国": "China",
+"新加坡": "Singapore",
+"日本": "Japan",
+"美国": "United States",
+"英国": "United Kingdom",
+"德国": "Germany",
+"请选择无线所在国家/地区；不确定时留空，稍后可在无线设置中设置。": "Choose the WiFi country or region; leave blank if unsure and set it later in WiFi settings.",
+"国家/地区": "Country/region",
+"应用后请在确认窗口内检查网络并点击“保留”；未确认会自动回滚。": "After applying, check the network in the confirmation window and click Keep; unconfirmed changes roll back automatically."
 }
