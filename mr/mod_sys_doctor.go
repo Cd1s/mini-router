@@ -332,7 +332,7 @@ func docWAN(c *Config, e *docEnv) []docFinding {
 			cls := addrClass(ip)
 			f.Sev, f.Detail = "warn", fmt.Sprintf("has %s (%s) and fails the health check; the ISP likely placed this PPPoE session in a private/CGNAT pool", ip, cls)
 			if w.RequirePublicIP {
-				f.Fix = restart + "; automatic public-IP redial stops after 5 private addresses; ask the ISP for a public IPv4 address"
+				f.Fix = restart + fmt.Sprintf("; automatic public-IP redial stops after %d private addresses; ask the ISP for a public IPv4 address", requirePublicMax)
 			} else {
 				f.Fix = restart + "; enable wan.require_public_ip for bounded automatic redials, or ask the ISP for a public IPv4 address"
 			}

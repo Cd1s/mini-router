@@ -37,6 +37,7 @@ var (
 	requirePublicFile   = RunDir + "/require-public-ip.json"
 	requirePublicNow    = time.Now
 	requirePublicRedial = func(w *WAN) { startDetached("rc-service", netService(*w), "restart") }
+	publicCheckAddrs    = ipv4Addrs
 )
 
 const (
@@ -72,13 +73,13 @@ func writeRequirePublic(m map[string]requirePublicRecord) {
 
 // requirePublicIP enforces the PPPoE public-address guard from the ppp-up hook. The state is in
 // /run, so a reboot starts a fresh sequence; a public address clears it immediately.
-func requirePublicIP(c *Config, w *WAN, ip string) {
+func requirePublicIP(c *Config, w *WAN, ip string) bool {
 	if w == nil || w.Proto != "pppoe" || !w.RequirePublicIP {
-		return
+		return false
 	}
 	lk := flock(requirePublicFile+".lock", true)
 	if lk == nil {
-		return
+		return true
 	}
 	defer lk.Close()
 	m := readRequirePublic()
@@ -86,7 +87,7 @@ func requirePublicIP(c *Config, w *WAN, ip string) {
 	if cls == "" {
 		delete(m, w.Name)
 		writeRequirePublic(m)
-		return
+		return false
 	}
 	r := m[w.Name]
 	now := requirePublicNow().Unix()
@@ -95,10 +96,10 @@ func requirePublicIP(c *Config, w *WAN, ip string) {
 		gap = requirePublicGap
 	}
 	if r.Risk {
-		return
+		return true
 	}
 	if r.LastRedial != 0 && now-r.LastRedial < int64(gap) {
-		return
+		return true
 	}
 	r.Attempts++
 	if r.Attempts >= requirePublicMax {
@@ -106,14 +107,52 @@ func requirePublicIP(c *Config, w *WAN, ip string) {
 		m[w.Name] = r
 		writeRequirePublic(m)
 		eventAdd(c, "doctor", "risk", "wan."+w.Name, fmt.Sprintf("%s has a %s IPv4 address after %d PPPoE attempts; automatic redial stopped", w.Name, cls, r.Attempts), false)
-		return
+		return true
 	}
 	r.LastRedial = now
 	m[w.Name] = r
 	writeRequirePublic(m)
 	logf("wan %s: %s IPv4 address; redial %d/%d", w.Name, cls, r.Attempts, requirePublicMax-1)
 	requirePublicRedial(w)
+	return true
 }
+
+func publicIPCheckEnabled(c *Config) bool {
+	for _, w := range c.WAN {
+		if w.Proto == "pppoe" && w.RequirePublicIP {
+			return true
+		}
+	}
+	return false
+}
+
+func publicIPCheckCronLine(c *Config) []string {
+	if !publicIPCheckEnabled(c) {
+		return nil
+	}
+	return []string{"# require_public_ip", "* * * * * " + mrBin + " wan public-check --cron"}
+}
+
+// publicIPCheck is the periodic review for sessions that came back during the cooldown. It reads
+// the live interface address, so it also catches a PPPoE session that was already up when the option
+// was enabled. The cron invocation is the only periodic work; no resident process is added.
+func publicIPCheck(c *Config) error {
+	for i := range c.WAN {
+		w := &c.WAN[i]
+		if w.Proto != "pppoe" || !w.RequirePublicIP {
+			continue
+		}
+		addrs := publicCheckAddrs(w.Ifname())
+		if len(addrs) == 0 {
+			continue
+		}
+		ip := strings.SplitN(addrs[0], "/", 2)[0]
+		requirePublicIP(c, w, ip)
+	}
+	return nil
+}
+
+func ipv6HealthRoutingEnabled(c *Config) bool { return c != nil && c.MultiWAN.Enabled() }
 
 func gatewayConflictReported(key string) bool {
 	lk := flock(gatewayConflictFile+".lock", true)
@@ -249,6 +288,7 @@ func hookPPP(c *Config, up bool, args []string) error {
 		logf("wan %s: ignoring stale PPP event on %s (current %s on %s)", w.Name, ifname, w.Proto, w.Ifname())
 		return nil
 	}
+	guarded := false
 	if up {
 		logf("wan %s up on %s (%s)", w.Name, ifname, args[3])
 		l := wanLease{IP: args[3], Since: time.Now().Unix(), Dev: ifname}
@@ -259,7 +299,7 @@ func hookPPP(c *Config, up bool, args []string) error {
 			l.DNS, l.DNS6 = splitDNS(3, os.Getenv("DNS1"), os.Getenv("DNS2"))
 		}
 		writeLease(w.Name, l)
-		requirePublicIP(c, w, args[3])
+		guarded = requirePublicIP(c, w, args[3])
 		wanUp(c, w, ifname, args[3], "")
 		writeResolv(c)
 	} else {
@@ -269,8 +309,10 @@ func hookPPP(c *Config, up bool, args []string) error {
 	updateLEDs(c)
 	err := fwLoadForHook(c)
 	if up {
-		runOnWAN(c, w.Name, "up")
-		dialOnUp(c, w.Name)
+		if !guarded {
+			runOnWAN(c, w.Name, "up")
+			dialOnUp(c, w.Name)
+		}
 	} else {
 		runOnWAN(c, w.Name, "down")
 	}
@@ -379,7 +421,9 @@ func wanUp(c *Config, w *WAN, ifname, local, gw string) {
 			run("ip", args...)
 		}
 	}
-	setMainDefault6(w, healthy)
+	if ipv6HealthRoutingEnabled(c) {
+		setMainDefault6(w, healthy)
+	}
 	// LAN route in the WAN table: strict rp_filter (src_valid_mark=1) checks marked LAN packets against it
 	if _, lanNet, err := net.ParseCIDR(c.LAN.IPv4); err == nil {
 		must("ip", "route", "replace", lanNet.String(), "dev", c.LAN.Bridge, "table", ts)
@@ -471,16 +515,41 @@ func setMainDefault6(w *WAN, healthy bool) {
 	}
 	for _, x := range rs {
 		r, _ := x.(map[string]any)
+		if proto, ok := r["protocol"].(string); !ok || proto != "ra" {
+			continue
+		}
 		if ipv6SourceRoute(r) {
 			continue
 		}
-		args := ipv6DefaultRouteArgs(r, w.Ifname(), metric)
+		old, hasOld := r["metric"].(float64)
+		if hasOld && int(old) == metric {
+			continue
+		}
+		if w.Proto != "pppoe" && !ipv6RouteHasGateway(r) {
+			continue
+		}
+		args := ipv6DefaultRouteReplaceArgs(r, w.Ifname(), metric)
 		if len(args) == 0 {
 			continue
 		}
 		run("ip", args...)
-		if old, ok := r["metric"].(float64); ok && int(old) != metric {
-			run("ip", "-6", "route", "del", "default", "dev", w.Ifname(), "metric", fmt.Sprint(int(old)))
+		if hasOld {
+			del := []string{"-6", "route", "del"}
+			for i := 3; i < len(args); i++ {
+				if args[i] == "expires" && i+1 < len(args) {
+					i++
+					continue
+				}
+				del = append(del, args[i])
+			}
+			// The route key includes its old metric; replace it first, then remove only the
+			// previous RA route. Protocol and expiry are retained on the replacement.
+			for i := range del {
+				if del[i] == "metric" && i+1 < len(del) {
+					del[i+1] = fmt.Sprint(int(old))
+				}
+			}
+			run("ip", del...)
 		}
 	}
 }
@@ -498,15 +567,67 @@ func ipv6SourceRoute(r map[string]any) bool {
 	return hasSrc
 }
 
-func ipv6DefaultRouteArgs(r map[string]any, dev string, metric int) []string {
-	if dev == "" {
+func ipv6RouteHasGateway(r map[string]any) bool {
+	if gw, ok := r["gateway"].(string); ok && net.ParseIP(gw) != nil {
+		return true
+	}
+	nhs, ok := r["nexthops"].([]any)
+	if !ok {
+		return false
+	}
+	for _, x := range nhs {
+		nh, _ := x.(map[string]any)
+		if gw, ok := nh["gateway"].(string); ok && net.ParseIP(gw) != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func ipv6DefaultRouteReplaceArgs(r map[string]any, dev string, metric int) []string {
+	if dev == "" || r == nil {
 		return nil
 	}
 	args := []string{"-6", "route", "replace", "default"}
-	if gw, ok := r["gateway"].(string); ok && net.ParseIP(gw) != nil {
-		args = append(args, "via", gw)
+	nhs, hasNexthops := r["nexthops"].([]any)
+	if hasNexthops && len(nhs) > 0 {
+		appendIPv6RouteAttrs := func(dst []string) []string {
+			if proto, ok := r["protocol"].(string); ok && proto == "ra" {
+				dst = append(dst, "proto", "ra")
+			}
+			if expires, ok := r["expires"].(float64); ok && expires > 0 {
+				dst = append(dst, "expires", fmt.Sprint(int(expires)))
+			}
+			return append(dst, "metric", fmt.Sprint(metric))
+		}
+		args = appendIPv6RouteAttrs(args)
+		for _, x := range nhs {
+			nh, _ := x.(map[string]any)
+			args = append(args, "nexthop")
+			if gw, ok := nh["gateway"].(string); ok && net.ParseIP(gw) != nil {
+				args = append(args, "via", gw)
+			}
+			if nd, ok := nh["dev"].(string); ok && validDev(nd) {
+				args = append(args, "dev", nd)
+			}
+			if weight, ok := nh["weight"].(float64); ok && weight > 0 {
+				args = append(args, "weight", fmt.Sprint(int(weight)))
+			}
+		}
+	} else {
+		if gw, ok := r["gateway"].(string); ok && net.ParseIP(gw) != nil {
+			args = append(args, "via", gw)
+		}
+		args = append(args, "dev", dev)
+		if proto, ok := r["protocol"].(string); ok && proto == "ra" {
+			args = append(args, "proto", "ra")
+		}
+		if expires, ok := r["expires"].(float64); ok && expires > 0 {
+			args = append(args, "expires", fmt.Sprint(int(expires)))
+		}
+		args = append(args, "metric", fmt.Sprint(metric))
 	}
-	return append(args, "dev", dev, "metric", fmt.Sprint(metric))
+	return args
 }
 
 func ipv6WANTableRouteArgs(w *WAN, healthy bool, gateway string, table int) []string {
@@ -891,7 +1012,9 @@ func hookDhcpcd(c *Config) error {
 		t, _ := c.WANTable(w.Name)
 		run("ip", ipv6WANTableRouteArgs(w, wanHealthy(c, w.Name), gw6, t)...)
 	}
-	setMainDefault6(w, wanHealthy(c, w.Name))
+	if ipv6HealthRoutingEnabled(c) {
+		setMainDefault6(w, wanHealthy(c, w.Name))
+	}
 	for _, pfx := range append(delegatedPrefixes(os.Environ()), strings.Fields(os.Getenv("new_delegated_dhcp6_prefix"))...) {
 		// "2405:...::/64" possibly with lifetime suffixes; keep the CIDR part
 		pfx = strings.SplitN(pfx, ",", 2)[0]
@@ -1134,10 +1257,10 @@ func hookHealth(c *Config) error {
 	return err
 }
 
-// wanCommand: `mr wan dhcp EVENT` (udhcpc script), `mr wan health` (net-wanmon), `mr wan status`.
+// wanCommand: DHCP/health hooks, the periodic public-IP review, and WAN status/control commands.
 func wanCommand(c *Config, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: mr wan dhcp EVENT | health | status | dial-wait WAN | dial-restore | mac WAN")
+		return fmt.Errorf("usage: mr wan dhcp EVENT | health | public-check --cron | status | dial-wait WAN | dial-restore | mac WAN")
 	}
 	switch args[0] {
 	case "dial-wait":
@@ -1161,6 +1284,11 @@ func wanCommand(c *Config, args []string) error {
 		return hookUdhcpc(c, args[1])
 	case "health":
 		return hookHealth(c)
+	case "public-check":
+		if len(args) != 2 || args[1] != "--cron" {
+			return fmt.Errorf("usage: mr wan public-check --cron")
+		}
+		return publicIPCheck(c)
 	case "status":
 		return json.NewEncoder(os.Stdout).Encode(wanRuntime(c))
 	}
