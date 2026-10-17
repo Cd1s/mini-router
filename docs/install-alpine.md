@@ -72,7 +72,9 @@ mr doctor                 # 体检：每项 ok / warn / risk，附修复方法
 
 ### 首次设置向导
 
-安装脚本会在 `/etc/mini-router/state/first-run` 写入一次性标记；AX6000 出厂镜像和
+只有 `MR_APPLY=0` 的安装会在 `/etc/mini-router/state/first-run` 写入一次性标记；
+已经询问 WAN、密码并完成 apply 的 `MR_APPLY=1` 安装不会写入标记，首次登录直接进入总览。
+AX6000 出厂镜像和
 新建、擦除后的 `rootfs_data` 由 `mr-preinit` 创建同一标记。没有管理员密码的出厂机
 先从当前 LAN 进入现有的首次设密页，设置成功后直接进入向导。向导包含时区、WAN
 自动探测、LAN 冲突建议、WiFi 和变更预览，都走普通的 validate → plan → apply →

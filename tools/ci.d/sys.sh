@@ -26,6 +26,19 @@ H=$OUT/home L=$OUT/lab
 fail() { echo "FAIL: $*"; exit 1; }
 ok() { echo "ok: $*"; }
 
+# install.sh must only offer the browser wizard for deferred (MR_APPLY=0) installs.
+python3 - "$ROOT/install.sh" <<'PY' || fail "install.sh first-run marker is not limited to MR_APPLY=0"
+import pathlib, sys
+s = pathlib.Path(sys.argv[1]).read_text()
+branch = s.index('if [ "${MR_APPLY:-1}" = 0 ]; then')
+marker = s.index("printf 'install\\n' > \"$CONF/state/first-run\"")
+validate = s.rfind('/usr/sbin/mr validate', 0, branch)
+exit0 = s.index('\texit 0', branch)
+assert validate < marker < exit0
+assert s.index('if [ "${MR_APPLY:-1}" = 0 ]; then') == branch
+PY
+ok "install.sh first-run marker is only written for MR_APPLY=0"
+
 # 1. TZif vs glibc's own POSIX TZ parser
 check_tz() { # name tzstring
 	f=$OUT/$1/etc/localtime

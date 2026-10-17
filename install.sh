@@ -316,14 +316,13 @@ chmod 600 "$CONF/secrets.yaml"
 umask 022
 printf '%s\n' "$MR_ADMIN_PASS" | /usr/sbin/mr passwd > /dev/null
 /bin/mkdir -p "$CONF/state"
-# A marker drives the post-install browser wizard.  It is separate from the
-# password so an install with MR_APPLY=0 cannot be mistaken for an old router;
-# the marker is removed only after the wizard's apply has been confirmed.
-/usr/bin/printf 'install\n' > "$CONF/state/first-run"
 /usr/sbin/mr validate || die "router.yaml is not valid (fix $CONF/router.yaml and run: mr apply)"
 
 # ---------------------------------------------------------------- takeover / apply
 if [ "${MR_APPLY:-1}" = 0 ]; then
+	# Deferred installs enter the browser wizard after the operator reviews the
+	# generated config. An immediately applied install already completed setup.
+	/usr/bin/printf 'install\n' > "$CONF/state/first-run"
 	say "MR_APPLY=0: configuration written, nothing applied. Run 'mr apply' when ready."
 	exit 0
 fi
