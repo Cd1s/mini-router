@@ -872,6 +872,7 @@
 "（尚未应用）": "(not applied yet)",
 "已连接 ": "Connected ",
 " · 网关 ": " · gateway ",
+" · 上游/LAN 同网段 ": " · upstream/LAN overlap ",
 " · 接口 ": " · interface ",
 "重新拨号 ": "Redial ",
 "重新获取地址 ": "Renew address of ",

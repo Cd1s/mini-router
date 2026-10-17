@@ -214,6 +214,19 @@ has "event: lease lost" "$ev" '"type":"wan_down","sev":"warn","key":"wan","msg":
 has "event: lease again" "$ev" '"type":"wan_up","sev":"info","key":"wan","msg":"wan is connected again after [0-9]*s down"'
 [ "$(printf '%s\n' "$ev" | grep -c '"type":"wan_up"')" = 1 ] || fail "event: a renewal counted as a recovery: $ev"
 
+# upstream router overlaps LAN: the DHCP hook must pin the gateway to WAN, proxy-ARP it on LAN,
+# and install a /32 masquerade rule rather than treating the whole LAN subnet as upstream.
+inC env interface=wan ip=192.168.1.2 mask=24 router=192.168.1.1 dns=192.168.1.1 mr wan dhcp bound
+has "overlap: main host route" "$(ip -n "$C" route show)" "192.168.1.1 dev wan"
+has "overlap: WAN table host route" "$(ip -n "$C" route show table 200)" "192.168.1.1 dev wan"
+has "overlap: proxy ARP" "$(ip -n "$C" neigh show proxy)" "192.168.1.1 dev br-lan"
+inC mr fw
+has "overlap: gateway NAT" "$(inC nft list table inet mr)" 'ip daddr 192.168.1.1 ip saddr 192.168.1.0/24 masquerade comment "wan-gateway:wan"'
+inC env interface=wan mr wan dhcp deconfig 2> /dev/null
+# restore the ordinary lease for the following stale-WAN cleanup assertion
+inC env interface=wan ip=10.99.0.78 mask=24 router=10.99.0.1 dns=10.99.0.53 mr wan dhcp bound
+
+
 # the DHCP WAN leaves router.yaml (back home after travelling): its client's deconfig no longer finds
 # the interface, so `mr routes` (run by every apply) removes the address and default route left on it
 grep -v 'name: wan, device: wan,\|^multiwan:' "$T/router.yaml" > "$T/router-b.yaml"
@@ -464,7 +477,7 @@ cat > "$M4/router.yaml" << 'EOF'
 system: {hostname: mtutest}
 lan: {bridge: br-lan, ports: [lan2], ipv4: 192.168.1.6/24, ipv6_ra: true}
 wan:
-  - {name: wan, device: wan, proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, mtu: 1500, metric: 10}
+  - {name: wan, device: wan, proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, mtu: 1500, metric: 10, peerdns: true}
   - {name: tv, device: wan, vlan: 20, proto: dhcp, metric: 20}
 firewall: {offload: software}
 dhcp: {start: 100, end: 200, lease: 12h, domain: lan, ipv6: {mode: slaac, lease: 1d}}
@@ -488,8 +501,8 @@ cat > "$MV/router.yaml" << 'EOF'
 system: {hostname: mvtest}
 lan: {bridge: br-lan, ports: [lan2], ipv4: 192.168.1.6/24}
 wan:
-  - {name: wan, device: wan, mac: "02:00:00:00:00:01", proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, metric: 10}
-  - {name: wan2, device: wan, mac: "02:94:9a:e3:fb:78", proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, metric: 20}
+  - {name: wan, device: wan, mac: "02:00:00:00:00:01", proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, metric: 10, peerdns: true}
+  - {name: wan2, device: wan, mac: "02:94:9a:e3:fb:78", proto: pppoe, username: "test@isp.example", password_secret: pppoe_password, metric: 20, peerdns: true}
 firewall: {offload: software}
 dhcp: {start: 100, end: 200, lease: 12h, domain: lan}
 EOF

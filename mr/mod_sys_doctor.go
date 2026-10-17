@@ -332,8 +332,8 @@ func docWAN(c *Config, e *docEnv) []docFinding {
 			f.Sev, f.Detail = "ok", fmt.Sprintf("up on %s, %s", w.Ifname(), ip)
 			if n, pfx := docLANOverlap(c, ip); n != "" { // a hotel / upstream router using the LAN's range
 				f.Sev = "risk"
-				f.Detail += fmt.Sprintf(" is inside %s's subnet %s: LAN and WAN overlap, some destinations are unreachable", n, pfx)
-				f.Fix = "move the LAN to another range (lan.ipv4, e.g. 192.168.77.1/24; DHCP clients follow) — or the upstream network"
+				f.Detail += fmt.Sprintf(" is inside %s's subnet %s: upstream and LAN share a subnet, some destinations are unreachable", n, pfx)
+				f.Fix = "upstream and LAN share a subnet; change LAN to another range (lan.ipv4, e.g. 192.168.77.1/24; DHCP clients follow) — or change the upstream network"
 			} else if cls := addrClass(ip); cls != "" && len(fwEnabledForwards(c)) > 0 {
 				f.Sev = "warn"
 				f.Detail += fmt.Sprintf(" is a %s address: the port forwards cannot be reached from the internet", cls)
@@ -402,6 +402,10 @@ func docProbeName(c *Config) string {
 
 func docDNS(c *Config, e *docEnv) []docFinding {
 	if len(docWANsUp(c, e)) == 0 {
+		if c.DNS.Upstream == "isp" && len(c.DNS.Fallback) == 0 {
+			return []docFinding{{Sev: "risk", Title: "DNS", Detail: "dns.upstream isp has no active WAN DNS source and no fallback configured",
+				Fix: "set dns.fallback to one or more resolver IPs, or restore WAN peerdns/static DNS"}}
+		}
 		return []docFinding{{Sev: "skip", Title: "DNS", Detail: "no WAN is up"}}
 	}
 	name := docProbeName(c)

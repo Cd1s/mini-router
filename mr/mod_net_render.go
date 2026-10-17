@@ -175,7 +175,7 @@ func wanDNSFromPeers(c *Config) bool {
 			return true
 		}
 	}
-	return false
+	return len(c.DNS.Fallback) > 0
 }
 
 // The net hooks keep resolvConf = nameservers of every WAN that is up (healthy first); the dns
@@ -265,6 +265,13 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 				fmt.Fprintf(b, "ip addr replace %s dev %s\n", w.IPv4, w.LinkDev())
 				fmt.Fprintf(b, "for a in $(ip -4 -o addr show dev %s | awk '{print $4}'); do [ \"$a\" = %s ] || ip addr del \"$a\" dev %s; done\n", w.LinkDev(), w.IPv4, w.LinkDev())
 			}
+			if w.Modem.Address != "" {
+				alias := modemAlias(c, w)
+				if alias != "" {
+					fmt.Fprintf(b, "ip addr replace %s dev %s\n", alias, w.LinkDev())
+					fmt.Fprintf(b, "ip route replace %s/32 dev %s\n", w.Modem.Address, w.LinkDev())
+				}
+			}
 		}
 		wanIPv6OffSh(c, b)
 		macvlanSh(c, b, need)
@@ -338,6 +345,36 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 	}
 	modeNetSh(c, phase, b)
 }
+
+// modemAlias returns a usable host address in the modem's subnet for the optional management alias.
+func modemAlias(c *Config, w WAN) string {
+	_, lanNet, _ := net.ParseCIDR(c.LAN.IPv4)
+	target := net.ParseIP(w.Modem.Address).To4()
+	if lanNet == nil || target == nil {
+		return ""
+	}
+	mask := lanNet.Mask
+	n := &net.IPNet{IP: target.Mask(mask), Mask: mask}
+	reserved := map[string]bool{net.ParseIP(w.Modem.Address).String(): true}
+	for _, ln := range c.LANNets() {
+		if ip, _, err := net.ParseCIDR(ln.IPv4); err == nil {
+			reserved[ip.String()] = true
+		}
+	}
+	ip := append(net.IP(nil), n.IP...)
+	for i := 0; i < 1<<16; i++ {
+		ip[len(ip)-1]++
+		if !n.Contains(ip) {
+			break
+		}
+		if !reserved[ip.String()] {
+			return fmt.Sprintf("%s/%d", ip, bitsFor(n))
+		}
+	}
+	return ""
+}
+
+func bitsFor(n *net.IPNet) int { ones, _ := n.Mask.Size(); return ones }
 
 // wanIPv6OffSh: a WAN link device that no IPv6-enabled DHCP / static WAN uses as its interface takes no
 // router advertisements and keeps no global IPv6 state. The WAN-up hook sets accept_ra=2 while ipv6 is on,
@@ -632,6 +669,12 @@ func netNft(c *Config, hook string, n *Nft) {
 		for _, r := range lanGatewayRouteNAT(c) {
 			n.W("%s", r)
 		}
+		for _, r := range wanGatewayNATRules(c) {
+			n.W("%s", r)
+		}
+		for _, r := range modemNATRules(c) {
+			n.W("%s", r)
+		}
 	case "forward_first":
 		for _, r := range policyFallbackRules(c) {
 			n.W("%s", r)
@@ -665,6 +708,50 @@ func netNft(c *Config, hook string, n *Nft) {
 			}
 		}
 	}
+}
+
+func modemNATRules(c *Config) []string {
+	var out []string
+	for _, w := range c.WAN {
+		if w.Modem.Address == "" {
+			continue
+		}
+		ip := net.ParseIP(w.Modem.Address)
+		if ip == nil || ip.To4() == nil {
+			continue
+		}
+		for _, ln := range c.LANNets() {
+			_, n, err := net.ParseCIDR(ln.IPv4)
+			if err != nil {
+				continue
+			}
+			out = append(out, fmt.Sprintf("iifname %q oifname %q ip daddr %s ip saddr %s masquerade comment \"modem:%s\"", ln.Bridge, w.LinkDev(), ip, n, w.Name))
+		}
+	}
+	return out
+}
+
+// wanGatewayNATRules keeps LAN clients' packets to an overlapping DHCP/static gateway on the WAN.
+// The lease is runtime state, so fwLoad after a WAN hook picks up changes without config edits.
+func wanGatewayNATRules(c *Config) []string {
+	var out []string
+	for _, w := range c.WAN {
+		l, ok := readLease(w.Name)
+		if !ok || l.Gateway == "" || l.Dev == "" {
+			continue
+		}
+		gw := net.ParseIP(l.Gateway)
+		if gw == nil || gw.To4() == nil {
+			continue
+		}
+		for _, ln := range c.LANNets() {
+			_, n, err := net.ParseCIDR(ln.IPv4)
+			if err == nil && n.Contains(gw) {
+				out = append(out, fmt.Sprintf("iifname %q oifname %q ip daddr %s ip saddr %s masquerade comment \"wan-gateway:%s\"", ln.Bridge, l.Dev, gw, n, w.Name))
+			}
+		}
+	}
+	return out
 }
 
 // sortedWANs returns WAN names ordered by preference: healthy first, then metric, then config order.

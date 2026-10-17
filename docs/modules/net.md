@@ -140,6 +140,8 @@ wan:
     mtu: 1492                 # pppoe 默认 1492，可设 1500（RFC 4638，见下）；dhcp/static 0 = 不改
     metric: 0                 # 默认路由跃点：越小越优先（主备顺序）；每条 WAN 必须不同（同 metric 的默认路由会互相覆盖）
     peerdns: true             # 用运营商下发的 DNS（pppoe / dhcp）
+    modem:                    # 可选：桥接光猫的管理地址（从 LAN 访问）
+      address: 192.168.1.1   # 物理口别名 + /32 路由，并只对该地址做 masquerade
     ipv6: true                # dhcpcd：RA / DHCPv6
     ipv6_pd: true             # 申请前缀放到 LAN
     ipv6_srcroute: false      # 源地址是本线路前缀的 IPv6 从本线路走（多线必开）
@@ -162,6 +164,10 @@ wan:
 既不能同时是 LAN 口，也不能做任何网络的带标签端口（trunk），否则 LAN 侧网络会被桥到运营商那一侧。
 DHCP / 静态 WAN 被删除、改名或换了接口（VLAN / 口）时，应用会删掉它留在旧接口上的地址和默认路由
 （按 `/run/mini-router/wan/<wan>.json` 里记录的接口）；改地址时新地址和旧地址在同一网段也不会一起丢（`promote_secondaries`）。
+当 DHCP / 静态 WAN 的网关落在 LAN 网段内，运行时会在 main 表和该 WAN 表安装 `<gateway>/32 dev <wan>`，并在对应
+LAN bridge 设置 proxy ARP；LAN 到这个单一网关地址做 masquerade。`mr doctor` 和网络状态会标出 upstream/LAN
+同网段并建议把 LAN 改到其它网段。静态 WAN 与 LAN 网段重叠会被校验拒绝。桥接 PPPoE 可用 `modem.address`；
+例如 `192.168.1.1` 会在物理口加 `192.168.1.2/24` 和主机路由，LAN 可访问光猫管理页（面板入口留待后续）。
 没有任何开了 `ipv6` 的 DHCP / 静态 WAN 落在其上的 WAN 接口（`ipv6: false`，或只跑 PPPoE）不收 RA：`network.sh` 把它的
 `accept_ra` 设为 0，并清掉留在上面的全局 IPv6 地址和 RA 默认路由（dhcpcd 停止管理接口时不删自己的地址）。
 网页上删除 WAN、关闭它的 `ipv6` / `ipv6_pd` 时，会列出引用它、否则无法保存的设置（策略路由、多线路权重与拨号顺序、
@@ -360,9 +366,9 @@ conntrack 会把后续包当作 invalid 丢掉。
    标记（desktop 走 wan2）不会再把去往 LAN 侧 / 直连 / 静态路由的流量带到 WAN 表；改了表 / 标记不会留下旧规则。`wan` 口只 `up` 一次。
 2. 生成 `/etc/init.d/mr-pppoe.wan`、`mr-pppoe.wan2` 两行实例脚本（原来靠镜像构建时按示例配置做软链，网页 / agent 新加的 WAN 没有服务）。
    第一次应用会把软链替换成文件，不重启 pppd。
-3. dnsmasq 多一行 `resolv-file=/run/mini-router/resolv.conf`：ip-up 钩子把 pppd 给的 DNS1/DNS2 写进去（wan 的 peerdns），
-   和 `/run/ppp/resolv.conf` 一起被 dnsmasq 轮询（用最新的那个）；掉线的线路 DNS 会被移除。
-   没有任何线路记录了 DNS 时（例如刚升级、PPPoE 还没重拨）这个文件不存在，也绝不会写空文件，dnsmasq 继续用原来的上游。
+3. dnsmasq 使用 `resolv-file=/run/mini-router/resolv.conf`：WAN 钩子合并 PPPoE peerdns、DHCP option 6、DHCPv6
+   nameservers，并按健康状态排序；切换协议或所有 WAN 掉线时不会继续读取陈旧的 PPP 文件。可用 `dns.fallback`
+   提供没有任何来源时的明确兜底，否则 `mr doctor` 会报告 DNS 上游不可用。
 4. nft、pppd peers、dhcpcd.conf、服务列表与之前相同；多线路默认关闭（家里配置没有 `multiwan`）。
 5. wan2 有了自己的 `mac`（#114）：network.sh 建 `mv-wan2`，peers/wan2 用 `nic-mv-wan2`，flowtable 多 `mv-wan2`；wan 不变。
 

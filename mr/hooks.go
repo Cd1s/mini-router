@@ -187,6 +187,15 @@ func wanUp(c *Config, w *WAN, ifname, local, gw string) {
 			run("ip", "route", "del", "default", "table", ts)
 		}
 	}
+	if gw != "" && net.ParseIP(gw) != nil {
+		for _, args := range gatewayRouteCommands(gw, ifname, local, t) {
+			must(args[0], args[1:]...)
+		}
+		if ln := lanForIP(c, gw); ln != nil && !sameIP(gw, lanAddress(ln.IPv4)) {
+			must("ip", "neigh", "replace", "proxy", gw, "dev", ln.Bridge)
+			eventAdd(c, "doctor", "risk", "wan."+w.Name, fmt.Sprintf("upstream gateway %s is in LAN subnet %s; upstream and LAN share a subnet, consider changing LAN to another range", gw, ln.IPv4), false)
+		}
+	}
 	if w.Proto == "pppoe" {
 		must("ip", "-6", "route", "replace", "default", "dev", ifname, "table", ts)
 	} else if gw6 := mainDefault6(ifname); gw6 != "" {
@@ -299,6 +308,7 @@ func ipv4Addrs(ifname string) []string {
 }
 
 func wanDown(c *Config, w *WAN) {
+	lease, had := readLease(w.Name)
 	t, _ := c.WANTable(w.Name)
 	run("ip", "route", "flush", "table", fmt.Sprint(t))
 	run("ip", "-6", "route", "flush", "table", fmt.Sprint(t))
@@ -312,8 +322,55 @@ func wanDown(c *Config, w *WAN) {
 			run("ip", "route", "del", "default", "dev", w.Ifname(), "metric", fmt.Sprint(m))
 		}
 	}
+	if had {
+		removeGatewayArtifacts(c, lease)
+	}
 	removeLease(w.Name)
 	writeResolv(c)
+}
+
+func removeGatewayArtifacts(c *Config, l wanLease) {
+	if l.Gateway == "" || !validDev(l.Dev) {
+		return
+	}
+	run("ip", "route", "del", l.Gateway+"/32", "dev", l.Dev)
+	if ln := lanForIP(c, l.Gateway); ln != nil && !sameIP(l.Gateway, lanAddress(ln.IPv4)) {
+		run("ip", "neigh", "del", "proxy", l.Gateway, "dev", ln.Bridge)
+	}
+}
+
+// gatewayRouteCommands installs a gateway host route in both the main and WAN policy tables.
+func gatewayRouteCommands(gw, dev, local string, table int) [][]string {
+	host := gw + "/32"
+	base := []string{"ip", "route", "replace", host, "dev", dev}
+	if local != "" {
+		base = append(base, "src", local)
+	}
+	base = append(base, "metric", "0")
+	main := append([]string(nil), base...)
+	wan := append(append([]string(nil), base...), "table", fmt.Sprint(table))
+	return [][]string{main, wan}
+}
+
+func sameIP(a, b string) bool { return net.ParseIP(a) != nil && net.ParseIP(a).Equal(net.ParseIP(b)) }
+
+func lanAddress(cidr string) string {
+	ip, _, _ := net.ParseCIDR(cidr)
+	return ip.String()
+}
+
+func lanForIP(c *Config, ip string) *LANNet {
+	a := net.ParseIP(ip)
+	if a == nil {
+		return nil
+	}
+	for _, ln := range c.LANNets() {
+		if _, n, err := net.ParseCIDR(ln.IPv4); err == nil && n.Contains(a) {
+			copy := ln
+			return &copy
+		}
+	}
+	return nil
 }
 
 // dropStaleWANs removes what a WAN that left router.yaml (or moved to another interface: renamed,
@@ -345,6 +402,9 @@ func dropStaleWANs(c *Config) {
 				run("ip", "-4", "addr", "del", fmt.Sprintf("%s/%d", ip, l.Prefix), "dev", l.Dev)
 			}
 		}
+		if l.Gateway != "" {
+			removeGatewayArtifacts(c, l)
+		}
 		removeLease(name)
 	}
 }
@@ -359,6 +419,9 @@ func refreshRoutes(c *Config) {
 		ifn := w.Ifname()
 		addrs := ipv4Addrs(ifn)
 		if len(addrs) == 0 {
+			if w.Proto == "static" {
+				removeLease(w.Name)
+			}
 			continue
 		}
 		local := strings.SplitN(addrs[0], "/", 2)[0]
@@ -367,6 +430,9 @@ func refreshRoutes(c *Config) {
 		case "static":
 			gw = w.Gateway
 			l, had := readLease(w.Name)
+			if had && l.Gateway != "" && l.Gateway != w.Gateway {
+				removeGatewayArtifacts(c, l)
+			}
 			if !had || l.IP != local {
 				l = wanLease{IP: local, Since: time.Now().Unix()}
 			}
@@ -390,7 +456,7 @@ func refreshRoutes(c *Config) {
 
 // writeResolv rewrites resolvConf from the WANs that are up (healthy first, then by metric).
 func writeResolv(c *Config) {
-	if !wanDNSFromPeers(c) {
+	if c.DNS.Upstream != "isp" || !wanDNSFromPeers(c) {
 		return
 	}
 	var b strings.Builder
@@ -409,11 +475,19 @@ func writeResolv(c *Config) {
 		}
 	}
 	if len(seen) == 0 {
-		// Never hand dnsmasq an empty (and therefore newest) resolv file: it would drop every
-		// upstream. Without this file dnsmasq keeps what it has / uses its other resolv files
-		// (e.g. right after an upgrade, before the WANs have re-dialled and written lease records).
-		os.Remove(resolvConf)
-		return
+		for _, d := range c.DNS.Fallback {
+			server := strings.SplitN(d, "#", 2)[0]
+			if net.ParseIP(server) != nil && !seen[server] {
+				seen[server] = true
+				fmt.Fprintf(&b, "nameserver %s\n", server)
+			}
+		}
+		if len(seen) == 0 {
+			// Never hand dnsmasq an empty (and therefore newest) resolv file: it would drop every
+			// upstream. Without this file dnsmasq has no usable ISP source and doctor reports it.
+			os.Remove(resolvConf)
+			return
+		}
 	}
 	if err := writeAtomic(resolvConf, []byte(b.String()), 0644); err != nil {
 		logf("resolv: %v", err)
@@ -431,6 +505,20 @@ func hookDhcpcd(c *Config) error {
 	w := c.wanByIfname(iface)
 	if w == nil {
 		return nil
+	}
+	if w.PeerDNS {
+		if l, ok := readLease(w.Name); ok {
+			if ds := validIPs(3, os.Getenv("new_dhcp6_name_servers"), os.Getenv("new_domain_name_servers")); len(ds) > 0 {
+				l.DNS = append(l.DNS, ds...)
+				l.DNS = validIPs(3, strings.Join(l.DNS, " "))
+				writeLease(w.Name, l)
+				defer writeResolv(c)
+			} else if reason := os.Getenv("reason"); reason == "EXPIRE6" || reason == "RELEASE6" || reason == "STOP6" || reason == "NOCARRIER" || reason == "STOPPED" {
+				l.DNS = nil
+				writeLease(w.Name, l)
+				defer writeResolv(c)
+			}
+		}
 	}
 	switch reason {
 	case "BOUND6", "REBIND6", "RENEW6", "REBOOT6", "INFORM6", "DELEGATED6", "ROUTERADVERT":
@@ -623,6 +711,9 @@ func hookUdhcpc(c *Config, event string) error {
 		}
 		cidr := fmt.Sprintf("%s/%d", ip, prefix)
 		old, had := readLease(w.Name)
+		if had && old.Gateway != "" && old.Gateway != gw {
+			removeGatewayArtifacts(c, old)
+		}
 		// a new address in the old one's subnet is added as a secondary; with the kernel default
 		// promote_secondaries=0, deleting the old primary below would delete the new address too
 		os.WriteFile("/proc/sys/net/ipv4/conf/"+iface+"/promote_secondaries", []byte("1"), 0644)

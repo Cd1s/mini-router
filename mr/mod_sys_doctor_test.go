@@ -128,7 +128,7 @@ func TestDoctorFindings(t *testing.T) {
 		{"one WAN down", func(e *docEnv) {
 			e.addrs4 = func(dev string) []string { return map[string][]string{"pppoe-wan2": {"198.51.100.20/32"}}[dev] }
 		}, "wan.wan=warn"},
-		{"no internet", func(e *docEnv) { e.addrs4 = func(string) []string { return nil } }, "wan.wan=risk wan.wan2=risk"},
+		{"no internet", func(e *docEnv) { e.addrs4 = func(string) []string { return nil } }, "wan.wan=risk wan.wan2=risk dns=risk"},
 		{"health", func(e *docEnv) {
 			e.health = func(*Config) map[string]string { return map[string]string{"wan2": "down"} }
 		}, "wan.wan2=warn"},
@@ -238,7 +238,7 @@ func TestDoctorFindings(t *testing.T) {
 		t.Errorf("clock right after boot: %+v", f)
 	}
 	txt := doctorText(run(cases[1].f))
-	if !strings.HasPrefix(txt, "mr doctor: 2 risk, 0 warning(s), ") || !strings.Contains(txt, "\nRISK  wan.wan ") || !strings.Contains(txt, "      fix: mr wan status; rc-service mr-pppoe.wan restart") {
+	if !strings.HasPrefix(txt, "mr doctor: 3 risk, 0 warning(s), ") || !strings.Contains(txt, "\nRISK  wan.wan ") || !strings.Contains(txt, "      fix: mr wan status; rc-service mr-pppoe.wan restart") {
 		t.Errorf("text:\n%s", txt)
 	}
 	if !strings.HasPrefix(strings.Split(txt, "\n")[1], "RISK") {

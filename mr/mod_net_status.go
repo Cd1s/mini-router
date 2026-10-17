@@ -25,16 +25,17 @@ func sysRead(dev, attr string) string {
 func carrier(dev string) bool { return sysRead(dev, "carrier") == "1" }
 
 type wanStatus struct {
-	Name   string   `json:"name"`
-	Proto  string   `json:"proto"`
-	Up     bool     `json:"up"`
-	IP     string   `json:"ip"`
-	Dev    string   `json:"dev"`
-	RX     uint64   `json:"rx"`
-	TX     uint64   `json:"tx"`
-	Uptime int64    `json:"uptime"`
-	Health string   `json:"health,omitempty"` // up | down (multiwan health checker)
-	RTT    *float64 `json:"rtt_ms,omitempty"`
+	Name    string   `json:"name"`
+	Proto   string   `json:"proto"`
+	Up      bool     `json:"up"`
+	IP      string   `json:"ip"`
+	Dev     string   `json:"dev"`
+	RX      uint64   `json:"rx"`
+	TX      uint64   `json:"tx"`
+	Uptime  int64    `json:"uptime"`
+	Health  string   `json:"health,omitempty"` // up | down (multiwan health checker)
+	RTT     *float64 `json:"rtt_ms,omitempty"`
+	Overlap string   `json:"overlap,omitempty"`
 }
 
 func netStatus(c *Config, st map[string]any) {
@@ -65,6 +66,11 @@ func netStatus(c *Config, st map[string]any) {
 		}
 		if h, ok := health[w.Name]; ok {
 			ws.Health, ws.RTT = h.State, h.RTT
+		}
+		if l, ok := readLease(w.Name); ok {
+			if ln := lanForIP(c, l.Gateway); ln != nil {
+				ws.Overlap = fmt.Sprintf("%s (%s)", ln.Name, ln.IPv4)
+			}
 		}
 		wans = append(wans, ws)
 	}
@@ -376,6 +382,7 @@ type wanRT struct {
 	RTT         *float64 `json:"rtt_ms,omitempty"`
 	Fails       int      `json:"fails,omitempty"`
 	HealthSince int64    `json:"health_since,omitempty"`
+	Overlap     string   `json:"overlap,omitempty"`
 }
 
 type wanRuntimeView struct {
@@ -410,6 +417,9 @@ func wanRuntime(c *Config) wanRuntimeView {
 			r.Up, r.IP, r.MTU = true, strings.SplitN(a[0], "/", 2)[0], atoi(sysRead(r.Dev, "mtu"))
 			if l, ok := readLease(w.Name); ok {
 				r.Gateway, r.DNS, r.Since = l.Gateway, l.DNS, l.Since
+				if ln := lanForIP(c, l.Gateway); ln != nil {
+					r.Overlap = fmt.Sprintf("%s (%s)", ln.Name, ln.IPv4)
+				}
 			}
 			if ms := mainDefaultMetrics(r.Dev); len(ms) > 0 {
 				r.RouteMetric = &ms[0]

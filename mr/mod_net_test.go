@@ -69,7 +69,7 @@ func TestNetHomeConfig(t *testing.T) {
 	// wan dials after wan2 (multiwan.dial_order): no persist, every redial goes through pppoe-dial
 	wantSubs(t, "peers/wan", f["/etc/ppp/peers/wan"], "nodetach\n", "lcp-echo-interval 5\n")
 	wantNone(t, "peers/wan", f["/etc/ppp/peers/wan"], "persist\n", "holdoff")
-	wantSubs(t, "dnsmasq.conf", f["/etc/dnsmasq.conf"], "resolv-file=/run/ppp/resolv.conf\n", "resolv-file=/run/mini-router/resolv.conf\n")
+	wantSubs(t, "dnsmasq.conf", f["/etc/dnsmasq.conf"], "resolv-file=/run/mini-router/resolv.conf\n")
 	wantSubs(t, "services", f[GenDir+"/services"], "mr-pppoe.wan\n", "mr-pppoe.wan2\n", "dhcpcd\n")
 	wantNone(t, "services", f[GenDir+"/services"], "mr-wanmon", "mr-udhcpc")
 	if _, ok := f[wanmonConf]; ok {

@@ -132,6 +132,7 @@ dns:
   edns_packet_max: 1232
   upstream: isp               # isp | manual | dot
   servers: []                 # manual: ["1.1.1.1", "9.9.9.9#9953", "2606:4700:4700::1111"]
+  fallback: []                # isp only: up to 3 IPs used when every WAN has lost its DNS
   dot:                        # stubby; rendered when services.stubby.enabled
     port: 5453                # stubby listens on 127.0.0.1:<port> only (not 53)
     servers:                  # default: Cloudflare 1.1.1.1 + 1.0.0.1, TLS name cloudflare-dns.com
@@ -213,8 +214,9 @@ the set (tens of KB for a DoH list).
 
 Upstream modes:
 
-- `isp` (default): `resolv-file=/run/ppp/resolv.conf`, i.e. the DNS servers PPPoE hands out
-  (`wan[].peerdns`). Follows the router when it travels.
+- `isp` (default): `resolv-file=/run/mini-router/resolv.conf`, maintained from PPPoE peerdns, DHCP option 6,
+  and DHCPv6 nameservers. `fallback` (up to three IP addresses) is written only when no active WAN has a source;
+  without it, no upstream is configured and `mr doctor` reports the condition. Follows the router when it travels.
 - `manual`: `no-resolv` + one `server=` per entry (`ip` or `ip#port`, v4 or v6). Port 53 on
   loopback or on the router's own LAN-side addresses (dnsmasq itself — a forwarding loop) is refused,
   here and in `dns.split` / `dns.dot.bootstrap`.

@@ -43,8 +43,15 @@ type WAN struct {
 	Metric   int      `yaml:"metric"` // default-route metric: lower = preferred (failover order)
 	PeerDNS  bool     `yaml:"peerdns"`
 	IPv6     bool     `yaml:"ipv6"`
-	IPv6PD   bool     `yaml:"ipv6_pd"`       // request a delegated prefix and put it on the LAN
-	SrcRoute bool     `yaml:"ipv6_srcroute"` // IPv6 traffic sourced from this WAN's prefix leaves via this WAN
+	IPv6PD   bool     `yaml:"ipv6_pd"`         // request a delegated prefix and put it on the LAN
+	SrcRoute bool     `yaml:"ipv6_srcroute"`   // IPv6 traffic sourced from this WAN's prefix leaves via this WAN
+	Modem    Modem    `yaml:"modem,omitempty"` // optional modem management address on the physical WAN link
+}
+
+// Modem is the upstream modem/router address reachable on the WAN's Ethernet segment.
+// The renderer chooses a free address in the same subnet for the WAN-side alias.
+type Modem struct {
+	Address string `yaml:"address"`
 }
 
 // LinkDev is the ethernet-level netdev of the WAN: Device, or its 802.1Q subinterface.
@@ -605,6 +612,11 @@ func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
 			if !isIPv4Literal(w.Gateway) || (sn != nil && !sn.Contains(g)) || g.Equal(ip) {
 				v.Add("%s.gateway: IPv4 inside %s, got %q", p, w.IPv4, w.Gateway)
 			}
+			for _, ln := range c.LANNets() {
+				if _, lnet, e := net.ParseCIDR(ln.IPv4); e == nil && sn != nil && (lnet.Contains(sn.IP) || sn.Contains(lnet.IP)) {
+					v.Add("%s.ipv4: overlaps LAN %s (%s); choose a different LAN or WAN subnet", p, ln.Name, lnet)
+				}
+			}
 		default:
 			v.Add("%s.proto: pppoe|dhcp|static, got %q", p, w.Proto)
 		}
@@ -617,6 +629,11 @@ func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
 		for _, d := range w.DNS {
 			if net.ParseIP(d) == nil {
 				v.Add("%s.dns: invalid address %q", p, d)
+			}
+		}
+		if w.Modem.Address != "" {
+			if !isIPv4Literal(w.Modem.Address) {
+				v.Add("%s.modem.address: IPv4 address required, got %q", p, w.Modem.Address)
 			}
 		}
 	}

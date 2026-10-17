@@ -90,7 +90,7 @@ func TestFwHomeEquivalent(t *testing.T) {
 		`iifname { "br-lan", "tailscale0" } accept`,
 		"tcp flags & (fin|syn|rst|ack) == syn limit rate over 50/second burst 100 packets drop",
 		"icmp type echo-request limit rate 20/second accept",
-		`ip6 saddr fc00::/6 ip6 daddr fc00::/6 udp dport 546 accept`,
+		`iifname { "pppoe-wan", "pppoe-wan2" } ip6 daddr fe80::/10 udp sport 547 udp dport 546 accept comment "dhcpv6-client"`,
 		`iifname { "pppoe-wan", "pppoe-wan2" } udp dport 41641 accept comment "tailscale"`,
 		`iifname { "pppoe-wan", "pppoe-wan2" } counter drop comment "wan-in-drop"`,
 		"ct status dnat accept",
