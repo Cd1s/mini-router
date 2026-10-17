@@ -3,6 +3,7 @@ package main
 import (
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -98,5 +99,43 @@ func TestNetworkScriptCleansStaleWANVLANAndRestoresMAC(t *testing.T) {
 	}
 	if !strings.Contains(sh, "ethtool -P wan") || !strings.Contains(sh, "ip link set dev wan address") {
 		t.Fatalf("network.sh has no permanent MAC restore:\n%s", sh)
+	}
+	// veth devices in the netns report "Permanent address: not set".  That
+	// must not be mistaken for a MAC and must not be taken down.
+	var line string
+	for _, l := range strings.Split(sh, "\n") {
+		if strings.HasPrefix(l, "perm=$(ethtool -P wan ") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatal("missing WAN permanent MAC command")
+	}
+	d := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(d, "sys/net"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d, "sys/net/address"), []byte("02:00:00:00:00:01\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(d, "bin")
+	if err := os.Mkdir(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "ethtool"), []byte("#!/bin/sh\necho 'Permanent address: not set'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "ip"), []byte("#!/bin/sh\necho \"$*\" >> \""+filepath.Join(d, "ip.log")+"\"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	line = strings.ReplaceAll(line, "/sys/class/net/wan/address", filepath.Join(d, "sys/net/address"))
+	cmd := exec.Command("sh", "-c", line)
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("MAC restore command: %v %s", err, out)
+	}
+	if b, _ := os.ReadFile(filepath.Join(d, "ip.log")); len(b) != 0 {
+		t.Fatalf("invalid permanent MAC caused link mutation: %q", b)
 	}
 }

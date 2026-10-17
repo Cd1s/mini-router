@@ -400,7 +400,7 @@ func wanMACRestoreSh(c *Config, b *strings.Builder) {
 	}
 	sort.Strings(xs)
 	for _, d := range xs {
-		fmt.Fprintf(b, "perm=$(ethtool -P %s 2>/dev/null | awk '/Permanent address:/ {print $3}'); if [ -n \"$perm\" ] && [ \"$(cat /sys/class/net/%s/address 2>/dev/null)\" != \"$perm\" ]; then ip link set %s down; ip link set dev %s address \"$perm\"; fi\n", d, d, d, d)
+		fmt.Fprintf(b, "perm=$(ethtool -P %s 2>/dev/null | awk '$1==\"Permanent\" && $2==\"address:\" && $3 ~ /^[[:xdigit:]][[:xdigit:]](:[[:xdigit:]][[:xdigit:]]){5}$/ {print tolower($3)}'); if [ -n \"$perm\" ] && [ \"$(cat /sys/class/net/%s/address 2>/dev/null)\" != \"$perm\" ]; then ip link set %s down; ip link set dev %s address \"$perm\"; fi\n", d, d, d, d)
 	}
 }
 
