@@ -999,6 +999,8 @@
 "0 = 不打标签；运营商要求时填（例如 PPPoE 走 VLAN 500）": "0 = untagged; set it if your ISP requires one (e.g. PPPoE on VLAN 500)",
 "密码引用名": "Password secret name",
 "密码保存在 secrets.yaml，多条 WAN 可共用一个": "The password is stored in secrets.yaml; several WANs can share one",
+"请填写光猫管理地址": "Enter the modem management address",
+"光猫地址不能与路由器 LAN 地址相同": "The modem address cannot be the same as the router LAN address",
 "光猫管理页": "Modem management page",
 "启用后，局域网设备可访问桥接光猫的管理页（例如 192.168.1.1）；地址必须是上级私网 IPv4。": "When enabled, LAN devices can access the bridged modem page (for example 192.168.1.1); use a private IPv4 address upstream.",
 "要求公网 IPv4": "Require public IPv4",

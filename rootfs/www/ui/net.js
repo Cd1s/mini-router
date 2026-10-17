@@ -110,6 +110,12 @@ const netListFileEditor = (ed,file,after)=>api("dns.files",{file}).then(j=>{
     }},"保存列表"),h("button",{class:"btn",onclick:()=>ed.replaceChildren()},"关闭"))]));
 }).catch(e=>toast(e.message,4000));
 
+function modemToggle(w, on){
+  if (on) w.modem = {address:""};
+  else delete w.modem;
+  return !!w.modem;
+}
+
 // ---------- 接口状态 ----------
 registerPage("status", "interfaces", "接口状态", 30, async ()=>{
   const panel = h("div",{class:"net-ports"}), list = h("div"), when = h("span",{class:"mut",style:"font-weight:400;font-size:12px"});
@@ -209,18 +215,28 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
         ...field("PPPoE 账号", inText(w,"username")),
         ...field("密码引用名", inText(w,"password_secret",{placeholder:"pppoe_password"}), "密码保存在 secrets.yaml，多条 WAN 可共用一个"),
         ...field("PPPoE 密码", inSecret(w,"password_secret")));
-      const modem = w.modem||{};
-      const modemToggle = h("label",{class:"sw"}, h("input",{type:"checkbox",checked:!!w.modem?.address,onchange:e=>{
-        if (e.target.checked) { w.modem ||= {}; }
-        else delete w.modem;
-        touch(); draw();
+      const modemToggleControl = h("label",{class:"sw"}, h("input",{type:"checkbox",checked:!!w.modem,onchange:e=>{
+        if (modemToggle(w,e.target.checked)) {
+          modemInput.disabled=false;
+          modemInput.value="";
+          modemInput.focus();
+        } else {
+          modemInput.disabled=true;
+          modemInput.value="";
+        }
+        touch();
       }}), h("span"));
-      const modemInput = h("input",{type:"text",value:modem.address||"",placeholder:"192.168.1.1",disabled:!w.modem?.address,oninput:e=>{
-        w.modem ||= {};
+      const modemInput = h("input",{type:"text",value:w.modem?.address||"",placeholder:"192.168.1.1",disabled:!w.modem,oninput:e=>{
+        if (!w.modem) return;
         w.modem.address = e.target.value;
         touch();
+      },onblur:e=>{
+        const value=e.target.value.trim();
+        if (!value) return toast("请填写光猫管理地址",4000);
+        const lanIPs=[c.lan?.ipv4,...(c.networks||[]).map(n=>n.ipv4)].map(x=>String(x||"").split("/")[0]);
+        if (lanIPs.includes(value)) toast("光猫地址不能与路由器 LAN 地址相同",5000);
       }});
-      rows.push(...field("光猫管理页", h("span",{class:"row"},modemToggle,modemInput), "启用后，局域网设备可访问桥接光猫的管理页（例如 192.168.1.1）；地址必须是上级私网 IPv4。"));
+      rows.push(...field("光猫管理页", h("span",{class:"row"},modemToggleControl,modemInput), "启用后，局域网设备可访问桥接光猫的管理页（例如 192.168.1.1）；地址必须是上级私网 IPv4。"));
       rows.push(
         ...field("要求公网 IPv4", inBool(w,"require_public_ip"), "拿到内网或 CGNAT 地址时自动重拨这一条线路；连续 5 次仍拿不到公网地址后停止并告警。"),
         ...field("公网地址重拨冷却（秒）", inNum(w,"require_public_ip_gap",{min:1,max:86400,placeholder:"180",value:w.require_public_ip_gap||""}), "留空使用默认 180 秒；只在 PPPoE 且开启上面的开关时生效。"));
