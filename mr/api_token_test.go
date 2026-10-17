@@ -53,8 +53,8 @@ func TestTokenScopes(t *testing.T) {
 		want          int
 	}{
 		{"reader", "status", 200}, {"reader", "config", 200}, {"reader", "mon.conns", 200}, {"reader", "history", 200}, {"reader", "schema", 200},
-		{"reader", "apply", 403}, {"reader", "plan", 403}, {"reader", "net.redial", 403}, {"reader", "confirm", 403},
-		{"ops", "net.redial", 200}, {"ops", "wifi.kick", 200}, {"ops", "status", 200}, {"ops", "apply", 403}, {"ops", "rollback", 403},
+		{"reader", "apply", 403}, {"reader", "plan", 403}, {"reader", "net.redial", 403}, {"reader", "net.dial_restore", 403}, {"reader", "net.wan_mac", 403}, {"reader", "confirm", 403},
+		{"ops", "net.redial", 200}, {"ops", "net.dial_restore", 200}, {"ops", "net.wan_mac", 200}, {"ops", "wifi.kick", 200}, {"ops", "status", 200}, {"ops", "apply", 403}, {"ops", "rollback", 403},
 		{"agent", "apply", 200}, {"agent", "plan", 200}, {"agent", "rollback", 200}, {"agent", "revert", 200}, {"agent", "net.redial", 200}, {"agent", "status", 200},
 		{"ha", "status", 200}, {"ha", "mon.now", 200}, {"ha", "mon.devices", 200}, {"ha", "config", 403}, {"ha", "wifi.stations", 403},
 		{"old", "status", 401},

@@ -223,3 +223,27 @@ func TestDialRestore(t *testing.T) {
 		t.Errorf("after 11 minutes: restarted %v", restarted)
 	}
 }
+
+func TestDialRestoreManualResult(t *testing.T) {
+	c, now, _, _ := dialEnv(t)
+	c.MultiWAN.DialRestore = "off"
+	for i := range c.WAN {
+		c.WAN[i].IPv6PD = false
+	}
+	var restarted []string
+	dialRestart = func(svc string) error {
+		restarted = append(restarted, svc)
+		writeLease(strings.TrimPrefix(svc, "mr-pppoe."), wanLease{IP: "192.0.2.1", Since: now.Unix()})
+		return nil
+	}
+	writeLease("wan", wanLease{IP: "192.0.2.1", Since: now.Unix() - 100})
+	writeLease("wan2", wanLease{IP: "192.0.2.2", Since: now.Unix()})
+	got, err := dialRestoreWithOptions(c, true)
+	if err != nil || got.Reason != "redialled" || strings.Join(got.Redialled, ",") != "wan" || strings.Join(restarted, ",") != "mr-pppoe.wan" {
+		t.Fatalf("manual restore: result=%+v restarted=%v err=%v", got, restarted, err)
+	}
+	got, err = dialRestoreWithOptions(c, true)
+	if err != nil || got.Reason != "order_ok" || len(got.Redialled) != 0 {
+		t.Fatalf("manual restore after order fixed: result=%+v err=%v", got, err)
+	}
+}

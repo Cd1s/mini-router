@@ -494,47 +494,78 @@ func apiNetDialRestore(r apiReq) apiResp {
 	if len(c.MultiWAN.DialOrder) < 2 {
 		return errResp(400, "multiwan.dial_order is not configured")
 	}
-	appendChangeLog("webui: restore WAN dial order")
-	startDetached(mrBin, "wan", "dial-restore")
-	return apiResp{body: map[string]any{"ok": true}}
+	result, err := dialRestoreWithOptions(c, true)
+	if err != nil {
+		return errResp(500, "%v", err)
+	}
+	if len(result.Redialled) > 0 {
+		appendChangeLog("webui: restore WAN dial order (" + strings.Join(result.Redialled, ", ") + ")")
+	}
+	return apiResp{body: map[string]any{
+		"ok":        len(result.Failed) == 0,
+		"redialled": result.Redialled,
+		"failed":    result.Failed,
+		"reason":    result.Reason,
+	}}
 }
 
 // apiNetWANMac returns the stable locally administered MAC used by `mr wan mac`.
 // The device/vlan fields allow the UI to generate one for a newly added, not-yet-applied WAN.
-func apiNetWANMac(r apiReq) apiResp {
-	if r.method != "POST" {
-		return errResp(405, "POST required")
-	}
-	var in struct {
-		WAN    string `json:"wan"`
-		Device string `json:"device"`
-		VLAN   int    `json:"vlan"`
-	}
-	if err := json.Unmarshal(r.body, &in); err != nil {
-		return errResp(400, "bad request")
-	}
+type wanMACRequest struct {
+	WAN    string `json:"wan"`
+	Device string `json:"device"`
+	VLAN   int    `json:"vlan"`
+}
+
+func wanMACCandidate(c *Config, in wanMACRequest) (string, error) {
 	if !reName.MatchString(in.WAN) {
-		return errResp(400, "bad wan name")
-	}
-	c, err := loadConfig(ConfigPath, SecretsPath)
-	if err != nil {
-		return errResp(500, "%v", err)
+		return "", fmt.Errorf("bad wan name")
 	}
 	var w WAN
 	if configured := c.WANByName(in.WAN); configured != nil {
 		w = *configured
+		if w.Proto != "pppoe" {
+			return "", fmt.Errorf("WAN %s is not PPPoE", w.Name)
+		}
+		for _, prior := range c.WAN {
+			if prior.Proto == "pppoe" && prior.LinkDev() == w.LinkDev() {
+				if prior.Name == w.Name {
+					return "", fmt.Errorf("WAN %s is the first PPPoE WAN on %s; use the port MAC", w.Name, w.LinkDev())
+				}
+				break
+			}
+		}
 	} else {
 		if !validDev(in.Device) || strings.Contains(in.Device, "..") {
-			return errResp(400, "bad device")
+			return "", fmt.Errorf("bad device")
 		}
 		if in.VLAN < 0 || in.VLAN > 4094 {
-			return errResp(400, "bad vlan")
+			return "", fmt.Errorf("bad vlan")
 		}
 		w = WAN{Name: in.WAN, Device: in.Device, VLAN: in.VLAN, Proto: "pppoe"}
 	}
 	portMAC := wanPortMAC(c, w, readFile)
 	if !reMAC.MatchString(portMAC) || !unicastMAC(portMAC) {
-		return errResp(400, "cannot read the MAC address of %s", w.LinkDev())
+		return "", fmt.Errorf("cannot read the MAC address of %s", w.LinkDev())
 	}
-	return apiResp{body: map[string]any{"mac": wanMACSuggest(portMAC, w.Name)}}
+	return wanMACSuggest(portMAC, w.Name), nil
+}
+
+func apiNetWANMac(r apiReq) apiResp {
+	if r.method != "POST" {
+		return errResp(405, "POST required")
+	}
+	var in wanMACRequest
+	if err := json.Unmarshal(r.body, &in); err != nil {
+		return errResp(400, "bad request")
+	}
+	c, err := loadConfig(ConfigPath, SecretsPath)
+	if err != nil {
+		return errResp(500, "%v", err)
+	}
+	mac, err := wanMACCandidate(c, in)
+	if err != nil {
+		return errResp(400, "%v", err)
+	}
+	return apiResp{body: map[string]any{"mac": mac}}
 }

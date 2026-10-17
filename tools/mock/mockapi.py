@@ -166,7 +166,7 @@ class H(http.server.SimpleHTTPRequestHandler):
                 return self.send_json({"file": name, "path": item.get("path", name) if item else name, "exists": item is not None, "content": item.get("content", "") if item else ""})
             return self.send_json({"dir": STATE["dns_files"].get("dir", "/etc/mini-router/dns"), "files": files})
         if a == "net.dial_restore":
-            return self.send_json({"ok": True})
+            return self.send_json({"ok": True, "redialled": [], "failed": [], "reason": "order_ok"})
         if a == "net.wan_mac":
             # Stable fixture value; the real API derives this from the physical port MAC.
             return self.send_json({"ok": True, "mac": "02:00:00:00:00:02"})
