@@ -166,3 +166,18 @@ func TestStaticRoutesAndMulticast(t *testing.T) {
 		}
 	}
 }
+
+// install.sh's first apply runs network.sh in place before mr-network ever created /run/mini-router;
+// a redirection into a missing directory ends the script (the apply rolled back on every new box).
+func TestNetworkShCreatesRunDirFirst(t *testing.T) {
+	c := testConfig(t)
+	sh := renderNetwork(c)
+	mk := strings.Index(sh, "mkdir -p /run/mini-router\n")
+	use := strings.Index(sh, "/run/mini-router/")
+	if use < 0 {
+		t.Fatal("network.sh does not use /run/mini-router any more: drop this test")
+	}
+	if mk < 0 || mk > use {
+		t.Fatalf("network.sh uses /run/mini-router before creating it:\n%s", sh[:use+80])
+	}
+}
