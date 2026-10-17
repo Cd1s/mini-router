@@ -173,17 +173,20 @@ func confirmWithToken(token, remote string) apiResp {
 		return errResp(403, "confirmation is only allowed from the LAN")
 	}
 	unlock := lockPending()
-	defer unlock()
 	p, err := readPending()
 	if err != nil || p.ConfirmHash == "" || p.left() <= 0 {
+		unlock()
 		return errResp(409, "no matching LAN confirmation is pending")
 	}
 	h := sha256.Sum256([]byte(token))
 	want, err := hex.DecodeString(p.ConfirmHash)
 	if err != nil || subtle.ConstantTimeCompare(want, h[:]) != 1 {
+		unlock()
 		return errResp(401, "invalid confirmation token")
 	}
-	ok, err := confirmLocked()
+	r := confirmTransition()
+	unlock()
+	ok, err := finishConfirm(r)
 	if err != nil {
 		return errResp(409, "%v", err)
 	}

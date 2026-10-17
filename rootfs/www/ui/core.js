@@ -71,12 +71,15 @@ function fmtDur(s){ s=Math.floor(+s||0); const d=Math.floor(s/86400),hh=Math.flo
 const clone = o => JSON.parse(JSON.stringify(o));
 
 // ---------- API ----------
-async function api(action, body){
-  const ctl = new AbortController(), timer = setTimeout(()=>ctl.abort(), body===undefined?5000:10000);
-  const opt = {method: body===undefined?"GET":"POST", headers:{"X-MR":"1"}, credentials:"same-origin", signal:ctl.signal};
+async function api(action, body, opts){
+  opts ||= {};
+  const ctl = opts.timeout ? new AbortController() : null;
+  const timer = ctl ? setTimeout(()=>ctl.abort(), opts.timeout) : null;
+  const opt = {method: body===undefined?"GET":"POST", headers:{"X-MR":"1"}, credentials:"same-origin"};
+  if (ctl) opt.signal = ctl.signal;
   if (body!==undefined){ opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
   let r;
-  try { r = await fetch("/cgi-bin/api?a="+action, opt); } finally { clearTimeout(timer); }
+  try { r = await fetch("/cgi-bin/api?a="+action, opt); } finally { if (timer) clearTimeout(timer); }
   pendingFrom(r);
   let j = {}; try { j = await r.json(); } catch(e) {}
   if (r.status===401 && action!=="login" && !(action==="confirm" && body&&body.token)){ S.auth=false; renderLogin(); throw new Error("未登录"); }
@@ -109,14 +112,14 @@ function drawPending(){
   b.replaceChildren(
     h("span",{class:"t"}, h("b",{},"有待确认的更改"), "（"+via+"）", p.state==="pending" ? ["：", h("span",{id:"pleft"}, pendLeft()+" 秒"), "后自动回滚。"] : "。", h("span",{class:"mut"}," 确认前不能应用新的更改。")),
     h("button",{class:"btn sm d",onclick:async()=>{ if(!confirm("回滚这次更改（"+via+"）？")) return;
-      try { await api("revert",{}); toast("正在回滚…",4000); setTimeout(()=>api("job").then(reload).catch(()=>{}), 5000); } catch(e){ toast(e.message,4000); } }},"回滚"),
+      try { await api("revert",{}); toast("正在回滚…",4000); setTimeout(()=>api("job",undefined,{timeout:5000}).then(reload).catch(()=>{}), 5000); } catch(e){ toast(e.message,4000); } }},"回滚"),
     h("button",{class:"btn sm p",onclick:async()=>{
       try { await api("confirm",{}); toast("已保留新配置"); await api("job"); await reload(); } catch(e){ toast(e.message,4000); } }},"保留"));
 }
 setInterval(()=>{
   if (!S.auth) return;
   const e = $("#pleft"); if (e && S.pend) e.textContent = tr(pendLeft()+" 秒");
-  if (Date.now()-(S.apiAt||0) > 10000) api("job").catch(()=>{});
+  if (Date.now()-(S.apiAt||0) > 10000) api("job",undefined,{timeout:5000}).catch(()=>{});
 }, 1000);
 
 // ---------- state ----------
@@ -586,7 +589,7 @@ async function runJob(start, auto){
   let seenOk = 0, fails = 0;
   const poll = async ()=>{
     let j;
-    try { j = await api("job"); fails = 0; } catch(e){
+    try { j = await api("job",undefined,{timeout:5000}); fails = 0; } catch(e){
       fails++;
       if (handoff && handoff.confirm_token && handoff.confirm_ip && fails >= 2) {
         stateEl.textContent = tr("LAN 地址已切换，正在打开新地址并自动确认…");
@@ -637,7 +640,7 @@ async function settleHandoff(token){
   const root=$("#root"); if(root) root.replaceChildren(h("div",{class:"login"},h("div",{class:"mut"},"正在确认 LAN 变更…")));
   for (let i=0; i<125; i++) {
     try {
-      await api("confirm", {token});
+      await api("confirm", {token}, {timeout:10000});
       history.replaceState(null, "", location.pathname+location.search+"#overview");
       return true;
     } catch(e) {

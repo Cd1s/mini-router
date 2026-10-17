@@ -75,9 +75,12 @@ func guardValidate(c *Config, v *Validator) {
 			}
 		}
 		for _, r := range c.Firewall.Rules {
+			if r.Enabled != nil && !*r.Enabled || r.Dest != "router" || r.Action != "accept" || !panelRuleTCP(r.Proto) {
+				continue
+			}
 			if r.Dest == "router" && r.Action == "accept" {
 				for _, p := range ports {
-					if r.DestPort != "" && portIn(r.DestPort, p) {
+					if r.DestPort == "" || portIn(r.DestPort, p) {
 						v.Add("guard.never_expose: firewall.rules[%s] accepts port %d (%s) towards the router", r.Name, p, s)
 					}
 				}
@@ -121,6 +124,16 @@ func guardValidate(c *Config, v *Validator) {
 	if g.SSHLANOnly && c.Services.SSH.Enabled && !c.Services.SSH.LANOnly {
 		v.Add("guard.ssh_lan_only: services.ssh.lan_only must stay true")
 	}
+}
+
+func panelRuleTCP(proto []string) bool {
+	if len(proto) == 1 {
+		return proto[0] == "tcp"
+	}
+	if len(proto) == 2 {
+		return (proto[0] == "tcp" && proto[1] == "udp") || (proto[0] == "udp" && proto[1] == "tcp")
+	}
+	return false
 }
 
 // portIn: whether port p is in a port spec ("443", "8000-8100", "80,443", "").

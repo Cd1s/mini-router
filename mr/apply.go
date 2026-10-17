@@ -1048,23 +1048,31 @@ func rollbackIfUnconfirmed(snap string, secs int) error {
 // confirm keeps the pending change; false: there was none.
 func confirm() (bool, error) {
 	unlock := lockPending()
-	defer unlock()
-	return confirmLocked()
+	r := confirmTransition()
+	unlock()
+	return finishConfirm(r)
 }
 
-// confirmLocked is confirm's state transition with lockPending already held. Token
+type confirmResult struct {
+	ok        bool
+	err       error
+	commitCfg *Config
+	snapshot  string
+}
+
+// confirmTransition is confirm's state transition with lockPending already held. Token
 // confirmation uses the same lock while checking the digest, so a token cannot race
 // a timer or a second pending change between validation and consumption.
-func confirmLocked() (bool, error) {
+func confirmTransition() confirmResult {
 	p, err := readPending()
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
+		return confirmResult{}
 	}
 	if err == nil && p.State == stateApplying {
-		return false, errors.New("the apply is still running: confirm it when it has finished")
+		return confirmResult{err: errors.New("the apply is still running: confirm it when it has finished")}
 	}
 	if err == nil && p.State == stateReverting {
-		return false, errors.New("the change is being rolled back")
+		return confirmResult{err: errors.New("the change is being rolled back")}
 	}
 	var commitCfg *Config
 	if err == nil {
@@ -1077,15 +1085,24 @@ func confirmLocked() (bool, error) {
 	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
 	acceptStaged()
-	if commitCfg != nil {
-		if commitErr := netCommit(commitCfg); commitErr != nil {
+	return confirmResult{ok: true, commitCfg: commitCfg, snapshot: func() string {
+		if p != nil {
+			return p.Snapshot
+		}
+		return ""
+	}()}
+}
+
+func finishConfirm(r confirmResult) (bool, error) {
+	if r.commitCfg != nil {
+		if commitErr := netCommit(r.commitCfg); commitErr != nil {
 			logf("net: post-confirm cleanup: %v", commitErr)
 		}
 	}
-	if err == nil {
-		setResult(p.Snapshot, "confirmed")
+	if r.err == nil && r.snapshot != "" {
+		setResult(r.snapshot, "confirmed")
 	}
-	return true, nil
+	return r.ok, r.err
 }
 
 // rollbackCommand is `mr rollback [--boot] [SNAPSHOT]`.
