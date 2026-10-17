@@ -571,7 +571,8 @@ async function doApply(payload, risk){ return runJob(()=>api("apply", Object.ass
 // low / medium risk change is kept by the page itself once it is applied, verified and the page still
 // reaches the router (the confirm window only has to catch changes that cut the administrator off).
 async function runJob(start, auto){
-  try { await start(); } catch(e){
+	let handoff = null;
+	try { handoff = await start(); } catch(e){
     const msg = e.data&&e.data.pending ? "有待确认的更改（"+(VIA[e.data.pending.via]||e.data.pending.via)+"）：请先在页面顶部点“保留”或“回滚”。"
       : e.data&&e.data.errors ? e.data.errors.join("\n") : e.message;
     return modal("应用失败", h("pre",{}, msg), [h("button",{class:"btn p",onclick:ev=>ev.target.closest(".modal").remove()},"关闭")]);
@@ -583,7 +584,18 @@ async function runJob(start, auto){
   let seenOk = 0, fails = 0;
   const poll = async ()=>{
     let j;
-    try { j = await api("job"); fails = 0; } catch(e){ fails++; stateEl.textContent = tr("暂时连不上路由器（"+fails+"）… 如果是改了 LAN 地址，请到新地址访问；超时未确认会自动回滚。"); return setTimeout(poll, 2000); }
+    try { j = await api("job"); fails = 0; } catch(e){
+      fails++;
+      if (handoff && handoff.confirm_token && handoff.confirm_ip && fails === 1) {
+        stateEl.textContent = tr("LAN 地址已切换，正在打开新地址并自动确认…");
+        const port = location.port ? ":"+location.port : "";
+        const target = location.protocol+"//"+handoff.confirm_ip+port+"/#confirm="+encodeURIComponent(handoff.confirm_token);
+        setTimeout(()=>location.replace(target), 150);
+        return;
+      }
+      stateEl.textContent = tr("暂时连不上路由器（"+fails+"）… 如果是改了 LAN 地址，请到新地址访问；超时未确认会自动回滚。");
+      return setTimeout(poll, 2000);
+    }
     const job = j.job||{}; log.textContent = job.output||"";
     if (job.state==="running") return setTimeout(poll, 1200);
     if (job.state==="failed"){
@@ -614,6 +626,24 @@ async function runJob(start, auto){
     }
   };
   poll();
+}
+
+// A LAN renumber changes the origin and therefore the session-cookie scope. The apply
+// response supplies a one-time token; the new origin accepts it only for POST /confirm.
+async function settleHandoff(token){
+  if (!token) return false;
+  for (let i=0; i<125; i++) {
+    try {
+      await api("confirm", {token});
+      history.replaceState(null, "", location.pathname+location.search+"#overview");
+      return true;
+    } catch(e) {
+      if (e.data && e.data.error && /invalid|only allowed|no matching/.test(e.data.error)) break;
+      await new Promise(resolve=>setTimeout(resolve, 1000));
+    }
+  }
+  history.replaceState(null, "", location.pathname+location.search+"#overview");
+  return false;
 }
 
 // ---------- first-run setup wizard ----------
@@ -700,6 +730,8 @@ function renderLogin(setup){
 
 async function boot(opts={}){
   await LANG_READY;
+  const handoffMatch = location.hash.match(/^#confirm=([^&]+)/);
+  if (handoffMatch) await settleHandoff(decodeURIComponent(handoffMatch[1]));
   let s;
   try { s = await api("session"); } catch(e){ $("#root").replaceChildren(h("div",{class:"login"},h("div",{class:"err"},"无法连接路由器："+e.message))); return; }
   if (!s.authenticated) return renderLogin(!s.password_set);

@@ -40,12 +40,13 @@ const (
 
 // the apply job's input and state (variables so tests can point them elsewhere)
 var (
-	CandidateYAML  = RunDir + "/candidate.yaml"
-	CandidateSec   = RunDir + "/candidate-secrets.yaml"
-	JobFile        = RunDir + "/job.json"
-	JobLog         = RunDir + "/job.log"
-	loadLANConfig  = func() (*Config, error) { return loadConfig(ConfigPath, SecretsPath) }
-	lanBridgeAddrs = func(bridge string) ([]net.Addr, error) {
+	CandidateYAML    = RunDir + "/candidate.yaml"
+	CandidateSec     = RunDir + "/candidate-secrets.yaml"
+	JobFile          = RunDir + "/job.json"
+	JobLog           = RunDir + "/job.log"
+	confirmTokenFile = RunDir + "/confirm-token"
+	loadLANConfig    = func() (*Config, error) { return loadConfig(ConfigPath, SecretsPath) }
+	lanBridgeAddrs   = func(bridge string) ([]net.Addr, error) {
 		i, err := net.InterfaceByName(bridge)
 		if err != nil {
 			return nil, err
@@ -118,6 +119,52 @@ func normalizedRemoteIP(remote string) net.IP {
 	return net.ParseIP(strings.SplitN(normalizeRemoteAddr(remote), "%", 2)[0])
 }
 
+func newConfirmToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func lanIPv4Host(cidr string) string {
+	ip, _, err := net.ParseCIDR(cidr)
+	if err != nil || ip.To4() == nil {
+		return ""
+	}
+	return ip.To4().String()
+}
+
+// confirmWithToken is deliberately separate from the normal session path. The token
+// is scoped to the current pending marker, expires with it, is accepted only here,
+// and is consumed by confirm (which removes the marker atomically under its lock).
+func confirmWithToken(token, remote string) apiResp {
+	if len(token) < 32 || len(token) > 128 {
+		return errResp(401, "invalid confirmation token")
+	}
+	okLAN, err := fromLAN(remote)
+	if err != nil {
+		return errResp(403, "confirmation is only allowed from the LAN")
+	}
+	if !okLAN {
+		return errResp(403, "confirmation is only allowed from the LAN")
+	}
+	p, err := readPending()
+	if err != nil || p.ConfirmHash == "" || p.left() <= 0 {
+		return errResp(409, "no matching LAN confirmation is pending")
+	}
+	h := sha256.Sum256([]byte(token))
+	want, err := hex.DecodeString(p.ConfirmHash)
+	if err != nil || subtle.ConstantTimeCompare(want, h[:]) != 1 {
+		return errResp(401, "invalid confirmation token")
+	}
+	ok, err := confirm()
+	if err != nil {
+		return errResp(409, "%v", err)
+	}
+	return apiResp{body: map[string]any{"ok": true, "confirmed": ok}, authed: true}
+}
+
 func runAPI() error {
 	r := apiReq{
 		method: os.Getenv("REQUEST_METHOD"),
@@ -175,6 +222,17 @@ func handleAPI(r apiReq) apiResp {
 		return apiLogin(r, secrets)
 	case "setup":
 		return apiSetup(r, secrets)
+	}
+	// A LAN renumber changes the browser's origin, so the old session cookie is not
+	// available at the new address. The apply response hands the browser a short-lived,
+	// single-use token that is accepted only by this POST action and only from the LAN.
+	if r.action == "confirm" && r.method == "POST" {
+		var in struct {
+			Token string `json:"token"`
+		}
+		if json.Unmarshal(r.body, &in) == nil && in.Token != "" {
+			return confirmWithToken(in.Token, r.remote)
+		}
 	}
 	if !validSession(r.cookie) {
 		return errResp(401, "not logged in")
@@ -666,6 +724,19 @@ func apiApply(r apiReq) apiResp {
 	if via == "" {
 		via = "web UI"
 	}
+	// Keep the raw handoff token only in a root-readable tmpfs file while the apply
+	// worker starts. The persistent pending marker stores its SHA-256 digest only.
+	confirmToken, confirmIP := "", ""
+	if via == "web UI" {
+		os.Remove(confirmTokenFile)
+		if live, e := loadConfig(ConfigPath, SecretsPath); e == nil && live.LAN.IPv4 != c.LAN.IPv4 {
+			confirmToken = newConfirmToken()
+			if confirmToken == "" || writeAtomic(confirmTokenFile, []byte(confirmToken), 0600) != nil {
+				return errResp(500, "cannot create LAN confirmation token")
+			}
+			confirmIP = lanIPv4Host(c.LAN.IPv4)
+		}
+	}
 	if err := writeAtomic(CandidateYAML, y, 0600); err != nil {
 		return errResp(500, "%v", err)
 	}
@@ -675,7 +746,12 @@ func apiApply(r apiReq) apiResp {
 	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: via, From: r.remote, Comment: in.Comment, BaseRev: base})
 	self, _ := os.Executable()
 	startDetached(self, "apply-job", strconv.Itoa(confirmSecs))
-	return apiResp{body: map[string]any{"ok": true, "confirm": confirmSecs}}
+	body := map[string]any{"ok": true, "confirm": confirmSecs}
+	if confirmToken != "" {
+		body["confirm_token"] = confirmToken
+		body["confirm_ip"] = confirmIP
+	}
+	return apiResp{body: body}
 }
 
 // runApplyJob executes a web-UI apply in the background and records the outcome for polling.
@@ -685,7 +761,9 @@ func runApplyJob(confirmSecs int) error {
 	j0 := readJob()
 	j0.Pid = os.Getpid()
 	writeJob(j0)
-	o := applyOpts{Via: j0.Via, From: j0.From, Comment: j0.Comment, BaseRev: j0.BaseRev}
+	tokenBytes, _ := os.ReadFile(confirmTokenFile)
+	os.Remove(confirmTokenFile)
+	o := applyOpts{Via: j0.Via, From: j0.From, Comment: j0.Comment, BaseRev: j0.BaseRev, ConfirmToken: strings.TrimSpace(string(tokenBytes))}
 	if o.Via == "" {
 		o.Via = "web UI"
 	}

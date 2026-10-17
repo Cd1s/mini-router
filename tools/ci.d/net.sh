@@ -255,6 +255,15 @@ inC sh "$T/net2.sh" 2> "$T/net.sh.err" || { cat "$T/net.sh.err"; fail "network.s
 a=$(ip -n "$C" -4 -o addr show dev wan2)
 has "static address changed" "$a" "inet 10.98.0.3/24"
 hasnt "static address changed" "$a" "10.98.0.2/"
+
+# LAN renumber: rerunning network.sh must remove the old bridge address and flap the
+# wired LAN port so clients promptly renew DHCP on the new subnet.
+sed 's#192\.168\.1\.6/24#192.168.2.1/24#g' "$T/net.sh" > "$T/net-lan-renumber.sh"
+inC sh "$T/net-lan-renumber.sh" 2> "$T/net.sh.err" || { cat "$T/net.sh.err"; fail "network.sh (LAN renumber)"; }
+lanaddrs=$(ip -n "$C" -4 -o addr show dev br-lan)
+has "LAN renumber new address" "$lanaddrs" "192.168.2.1/24"
+hasnt "LAN renumber old address" "$lanaddrs" "192.168.1.6/24"
+grep -q 'ip link set lan2 down' "$T/net-lan-renumber.sh" || fail "LAN renumber did not flap the wired port"
 echo "net: functional test ok"
 
 step "functional: policy route by domain (dnsmasq nftset -> nft set -> WAN mark), three network namespaces"

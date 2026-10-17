@@ -1,13 +1,45 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestLANConfirmTokenIsScopedAndHashed(t *testing.T) {
+	oldConfirm, oldLoad := ConfirmFile, loadLANConfig
+	t.Cleanup(func() { ConfirmFile, loadLANConfig = oldConfirm, oldLoad })
+	ConfirmFile = t.TempDir() + "/confirm-pending"
+	loadLANConfig = func() (*Config, error) { return &Config{LAN: LAN{IPv4: "192.168.2.1/24"}}, nil }
+	token := newConfirmToken()
+	h := sha256.Sum256([]byte(token))
+	if len(token) < 32 || token == newConfirmToken() {
+		t.Fatal("confirmation token is missing entropy")
+	}
+	if err := setPending(pendingApply{Snapshot: "/tmp/snap", State: statePending, Deadline: time.Now().Unix() + 60, ConfirmHash: hex.EncodeToString(h[:])}); err != nil {
+		t.Fatal(err)
+	}
+	if got := confirmWithToken(token+"x", "192.168.2.44"); got.status != 401 {
+		t.Fatalf("wrong token status = %d, want 401", got.status)
+	}
+	if _, err := os.Stat(ConfirmFile); err != nil {
+		t.Fatalf("wrong token consumed pending marker: %v", err)
+	}
+	// A token cannot confirm while the apply is still running, even when its hash matches.
+	if err := setPending(pendingApply{Snapshot: "/tmp/snap", State: stateApplying, Pid: os.Getpid(), ConfirmHash: hex.EncodeToString(h[:])}); err != nil {
+		t.Fatal(err)
+	}
+	if got := confirmWithToken(token, "192.168.2.44"); got.status != 409 {
+		t.Fatalf("applying token status = %d, want 409", got.status)
+	}
+}
 
 func TestNormalizeRemoteAddrBusyboxFormats(t *testing.T) {
 	for _, tc := range []struct {

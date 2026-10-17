@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -635,7 +637,7 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 	appendChangeLog(fmt.Sprintf("mr apply: %s", summary(p)))
 	fmt.Printf("applied (snapshot %s)\n", filepath.Base(snap))
 	if confirmSecs > 0 {
-		armConfirm(snap, confirmSecs, o.Via)
+		armConfirm(snap, confirmSecs, o.Via, o.ConfirmToken)
 		setResult(snap, "pending")
 		fmt.Printf("run `mr confirm` within %ds or this change is rolled back\n", confirmSecs)
 	} else {
@@ -852,11 +854,12 @@ func appendChangeLogAt(t time.Time, line string) {
 
 // pendingApply is the content of ConfirmFile.
 type pendingApply struct {
-	Snapshot string `json:"snapshot"`           // history snapshot taken before the change
-	State    string `json:"state"`              // stateApplying | statePending | stateReverting
-	Deadline int64  `json:"deadline,omitempty"` // unix time the confirm timer rolls back at (statePending)
-	Via      string `json:"via"`                // origin: mr apply | web UI | restore
-	Pid      int    `json:"pid,omitempty"`      // the applying process (stateApplying)
+	Snapshot    string `json:"snapshot"`               // history snapshot taken before the change
+	State       string `json:"state"`                  // stateApplying | statePending | stateReverting
+	Deadline    int64  `json:"deadline,omitempty"`     // unix time the confirm timer rolls back at (statePending)
+	Via         string `json:"via"`                    // origin: mr apply | web UI | restore
+	Pid         int    `json:"pid,omitempty"`          // the applying process (stateApplying)
+	ConfirmHash string `json:"confirm_hash,omitempty"` // sha256 of the one-time LAN handoff token
 }
 
 // interrupted: an apply whose process is gone (killed, out of memory). Nothing finishes or undoes it
@@ -1023,8 +1026,13 @@ func startRevert(snap string) (*pendingApply, bool) {
 	return p, true
 }
 
-func armConfirm(snap string, secs int, via string) {
-	setPending(pendingApply{Snapshot: snap, State: statePending, Deadline: time.Now().Unix() + int64(secs), Via: via})
+func armConfirm(snap string, secs int, via, token string) {
+	p := pendingApply{Snapshot: snap, State: statePending, Deadline: time.Now().Unix() + int64(secs), Via: via}
+	if token != "" {
+		h := sha256.Sum256([]byte(token))
+		p.ConfirmHash = hex.EncodeToString(h[:])
+	}
+	setPending(p)
 	self, _ := os.Executable()
 	startDetached(self, "rollback-if-unconfirmed", snap, fmt.Sprint(secs))
 }

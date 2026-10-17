@@ -103,6 +103,13 @@ expired token, 403 not allowed, 404 unknown, 405 POST required, 409 conflict, 42
 | `POST apply` | `{patch \| yaml \| config, base_rev, confirm (s, default 120), comment, secrets?}` (`yaml`: the whole router.yaml text, written as typed — the web UI's 系统 → router.yaml 原文) → `{ok, confirm}`: the apply job starts; 409 when `base_rev` is stale or another change waits for confirmation |
 | `GET job` | → `{job: {state: running \| ok \| failed, output}, confirm_pending, pending}` |
 | `POST confirm` / `POST revert` | keep / undo the pending change (a token: only its own) |
+
+When a Web UI apply changes `lan.ipv4`, the response additionally contains `confirm_token` and
+`confirm_ip`. The browser uses `http://confirm_ip/#confirm=confirm_token` after the old origin goes
+away. The token is 256 bits of random data, valid only for this pending apply and its 120-second
+window, accepted only by `POST confirm` from a LAN source, and consumed by the first successful
+confirmation. The pending marker stores only a SHA-256 digest; the raw token is held briefly in a
+0600 tmpfs file while the apply worker starts and is never written to the job log or history.
 | `GET history`, `POST history.diff {rev}`, `POST rollback {rev}` | revisions; the config from before #rev applied as a new change |
 
 `secrets` sets secret values by name (`{"proxy_jp2": "…"}`; empty = keep) — for new credentials; values

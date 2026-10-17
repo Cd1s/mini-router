@@ -288,7 +288,24 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 			for _, p := range d.ports {
 				fmt.Fprintf(b, "ip link set %s master %s 2>/dev/null; ip link set %s up\n", p, d.br, p)
 			}
-			fmt.Fprintf(b, "ip addr replace %s dev %s\nip link set %s up\n", d.ipv4, d.br, d.br)
+			// `ip addr replace` leaves an address from the previous LAN/network behind.  Drop
+			// every old IPv4 after installing the desired one; otherwise the old subnet keeps
+			// answering ARP and dnsmasq advertises two gateways after a renumber.
+			fmt.Fprintf(b, "mr_old_%s=0\n", strings.ReplaceAll(d.br, "-", "_"))
+			fmt.Fprintf(b, "for a in $(ip -4 -o addr show dev %s 2>/dev/null | awk '{print $4}'); do [ \"$a\" = %s ] || mr_old_%s=1; done\n", d.br, d.ipv4, strings.ReplaceAll(d.br, "-", "_"))
+			fmt.Fprintf(b, "ip addr replace %s dev %s\n", d.ipv4, d.br)
+			fmt.Fprintf(b, "for a in $(ip -4 -o addr show dev %s 2>/dev/null | awk '{print $4}'); do [ \"$a\" = %s ] || ip addr del \"$a\" dev %s 2>/dev/null || true; done\n", d.br, d.ipv4, d.br)
+			fmt.Fprintf(b, "ip link set %s up\n", d.br)
+			if d.br == c.LAN.Bridge {
+				// A short carrier flap on the wired LAN ports makes DHCP clients renew promptly.
+				// It does not restart WiFi or touch WAN hardware offload.
+				name := strings.ReplaceAll(d.br, "-", "_")
+				fmt.Fprintf(b, "if [ \"$mr_old_%s\" = 1 ]; then\n", name)
+				for _, p := range d.ports {
+					fmt.Fprintf(b, "ip link set %s down 2>/dev/null || true; ip link set %s up 2>/dev/null || true\n", p, p)
+				}
+				b.WriteString("fi\n")
+			}
 		}
 		// tagged VLANs: <port>.<vid> joins the network's bridge; the port itself keeps its untagged role
 		for _, n := range c.Networks {
