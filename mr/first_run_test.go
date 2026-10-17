@@ -25,42 +25,20 @@ func TestFirstRunMarkerKinds(t *testing.T) {
 	}
 }
 
-func TestSuppressFirstRunForAcceptedExistingRouter(t *testing.T) {
+func TestFactoryPasswordSetupKeepsWizardPending(t *testing.T) {
 	d := t.TempDir()
-	oldMarker, oldSecrets, oldGen := firstRunMarker, firstRunSecretsPath, firstRunGenDir
+	oldMarker := firstRunMarker
 	firstRunMarker = filepath.Join(d, "state", "first-run")
-	firstRunSecretsPath = filepath.Join(d, "secrets.yaml")
-	firstRunGenDir = filepath.Join(d, "gen")
-	t.Cleanup(func() { firstRunMarker, firstRunSecretsPath, firstRunGenDir = oldMarker, oldSecrets, oldGen })
-	if err := os.MkdirAll(firstRunGenDir, 0700); err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(func() { firstRunMarker = oldMarker })
 	if err := os.MkdirAll(filepath.Dir(firstRunMarker), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(firstRunMarker, []byte("factory\n"), 0600); err != nil {
+	if err := os.WriteFile(firstRunMarker, []byte("factory-done\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(firstRunSecretsPath, []byte("webui_password: pbkdf2-sha256$1$abc\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(firstRunGenDir, "applied.yaml"), []byte("lan:\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if firstRunPending() {
-		t.Fatal("accepted router with stale factory marker entered first run")
-	}
-
-	if !suppressFirstRun("install\n", "webui_password: pbkdf2-sha256$1$abc\n", true) {
-		t.Fatal("accepted router with password was not suppressed")
-	}
-	if suppressFirstRun("install\n", "webui_password: pbkdf2-sha256$1$abc\n", false) {
-		t.Fatal("unapplied config was suppressed")
-	}
-	if !suppressFirstRun("factory\n", "webui_password: pbkdf2-sha256$1$abc\n", true) {
-		t.Fatal("stale factory marker did not suppress an accepted router")
-	}
-	if suppressFirstRun("install\n", "wifi_key: only\n", true) {
-		t.Fatal("router without admin password was suppressed")
+	// render can create applied.yaml in the read-only factory layer and setup
+	// writes the password before the wizard continues; the marker is decisive.
+	if !firstRunPending() {
+		t.Fatal("factory password setup incorrectly hid the wizard")
 	}
 }

@@ -72,15 +72,12 @@ mr doctor                 # 体检：每项 ok / warn / risk，附修复方法
 
 ### 首次设置向导
 
-安装脚本会在 `/etc/mini-router/state/first-run` 写入一次性标记（包括
-`MR_APPLY=0` 安装）；AX6000 出厂镜像和恢复出厂也由镜像的 `mr-preinit` /
-`factory-reset` 写入同一标记。没有管理员密码的出厂机先从 LAN 进入现有的首次设密页，
-设置成功后直接进入向导。向导包含时区、WAN 自动
-探测、LAN 冲突建议、WiFi 和变更预览都走普通的 validate → plan → apply →
-confirm 流程。应用失败会自动回滚；修改 LAN 地址后请在新地址继续确认。
-安装阶段已经设置管理员密码，因此不会出现“局域网抢先设置密码”；没有密码
-的出厂镜像仍只允许从当前 LAN 地址执行首次密码设置，并且沿用登录限速。
-向导确认后标记被删除，老用户永远不会再次弹出。
+安装脚本会在 `/etc/mini-router/state/first-run` 写入一次性标记；AX6000 出厂镜像和
+新建、擦除后的 `rootfs_data` 由 `mr-preinit` 创建同一标记。没有管理员密码的出厂机
+先从当前 LAN 进入现有的首次设密页，设置成功后直接进入向导。向导包含时区、WAN
+自动探测、LAN 冲突建议、WiFi 和变更预览，都走普通的 validate → plan → apply →
+confirm 流程。应用失败会自动回滚；向导只提示 LAN 冲突，不会自动改 LAN 地址。
+向导确认后标记被删除；没有标记的旧 overlay 不会被升级过程重新弹出向导。
 
 ## 6. 出问题怎么办
 

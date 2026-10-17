@@ -38,8 +38,8 @@ PATH="$OUT/bin:$PATH"
 export PATH
 step() { printf '\n== %s\n' "$*"; }
 
-for tool in shellcheck nft dnsmasq; do
-	command -v "$tool" >/dev/null || { step "install $tool"; apt-get install -y -qq shellcheck nftables dnsmasq-base >/dev/null; break; }
+for tool in shellcheck nft dnsmasq pppoe-discovery pppoe-server; do
+	command -v "$tool" >/dev/null || { step "install $tool"; apt-get install -y -qq shellcheck nftables dnsmasq-base ppp pppoe >/dev/null; break; }
 done
 
 step "gofmt"

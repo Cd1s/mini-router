@@ -9,30 +9,10 @@ import (
 // or factory-reset. It is intentionally outside router.yaml so importing an
 // old configuration never triggers the wizard for an existing owner.
 var firstRunMarker = "/etc/mini-router/state/first-run"
-var firstRunSecretsPath = SecretsPath
-var firstRunGenDir = GenDir
 
 func firstRunPending() bool {
-	b, err := os.ReadFile(firstRunMarker)
-	if err != nil {
-		return false
-	}
-	if _, pwErr := os.Stat(firstRunSecretsPath); pwErr == nil {
-		if _, appliedErr := os.Stat(firstRunGenDir + "/applied.yaml"); appliedErr == nil {
-			secrets, _ := os.ReadFile(firstRunSecretsPath)
-			if suppressFirstRun(string(b), string(secrets), true) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func suppressFirstRun(marker, secrets string, applied bool) bool {
-	// A marker can survive an image upgrade in the writable overlay.  Once an
-	// accepted generation and administrator password exist, it is an existing
-	// router regardless of whether the stale marker says install or factory.
-	return applied && strings.TrimSpace(marker) != "" && strings.Contains(secrets, pwSecretKey+":")
+	_, err := os.Stat(firstRunMarker)
+	return err == nil
 }
 
 // Factory images use a marker value until apiSetup has safely established the

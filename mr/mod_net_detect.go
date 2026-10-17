@@ -134,23 +134,31 @@ func probeWAN(ctx context.Context, port string) (detectObservation, error) {
 		kind string
 		ppp  detectPPPoE
 		dhcp detectDHCP
+		ra   detectRA
 		err  error
 	}
-	results := make(chan result, 2)
+	results := make(chan result, 3)
 	pppCtx, pppCancel := context.WithTimeout(ctx, 3*time.Second)
 	dhcpCtx, dhcpCancel := context.WithTimeout(ctx, 4*time.Second)
+	raCtx, raCancel := context.WithTimeout(ctx, 3*time.Second)
 	defer pppCancel()
 	defer dhcpCancel()
+	defer raCancel()
 	go func() { p, err := probePPPoE(pppCtx, port); results <- result{kind: "pppoe", ppp: p, err: err} }()
 	go func() { d, err := probeDHCP(dhcpCtx, port); results <- result{kind: "dhcp", dhcp: d, err: err} }()
+	go func() { r, err := probeRA(raCtx, port); results <- result{kind: "ra", ra: r, err: err} }()
 	var pppErr, dhcpErr error
-	for n := 0; n < 2; n++ {
+	for n := 0; n < 3; n++ {
 		select {
 		case r := <-results:
 			if r.kind == "pppoe" {
 				out.PPPoE, pppErr = r.ppp, r.err
 			} else {
-				out.DHCP, dhcpErr = r.dhcp, r.err
+				if r.kind == "dhcp" {
+					out.DHCP, dhcpErr = r.dhcp, r.err
+				} else {
+					out.RA = r.ra
+				}
 			}
 		case <-ctx.Done():
 			return out, ctx.Err()
