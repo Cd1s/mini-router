@@ -44,11 +44,9 @@ wan:
   - {name: wan, device: eth0, vlan: 10, proto: pppoe, username: "…", password_secret: pppoe_password, metric: 10}
 ```
 
-先用 `MR_APPLY=0` 安装可以把配置留到网页向导审核；安装器仍会停用 Alpine 的
-`networking`/`dhcpcd`、保留 `mr-unconfirmed`，并只渲染并启动 LAN 网络和 `mr-panel`
-供向导访问。它不会启动 WAN、DNS、防火墙或 WiFi 服务；向导最后一次 `plan → apply`
-会接管并验证完整配置。也可以按上面改好 `/etc/mini-router/router.yaml`，再 `mr plan` /
-`mr apply --confirm 120`。
+先用 `MR_APPLY=0` 安装会只写配置和首次设置标记，不停用 Alpine 网络、不重配网卡；
+在控制台编辑 `/etc/mini-router/router.yaml` 后，运行 `mr plan` / `mr apply --confirm 120`
+完成接管。这样可以先审核配置，再在正常确认/回滚窗口内切换网络。
 
 ## 4. 安装
 

@@ -16,8 +16,7 @@
 #   MR_VERSION        release tag (default latest)       MR_REPO        GitHub repo (default Cd1s/mini-router)
 #   MR_LOCAL          directory with mr-linux-<arch> + mini-router-rootfs.tar.gz (offline install)
 #   MR_YES=1          do not ask anything; fail if a required value is missing
-#   MR_APPLY=0        install and write the config; prepare the takeover and start the panel,
-#                     but leave the first full apply to the web wizard / `mr apply`
+#   MR_APPLY=0        install and write the config, but do not apply it (run `mr apply` later)
 #
 # What it changes: installs Alpine packages, /usr/sbin/mr, OpenRC services (mr-*), the web UI in
 # /www, writes /etc/mini-router/{router.yaml,secrets.yaml}, disables Alpine's `networking` service
@@ -324,8 +323,11 @@ printf '%s\n' "$MR_ADMIN_PASS" | /usr/sbin/mr passwd > /dev/null
 /usr/sbin/mr validate || die "router.yaml is not valid (fix $CONF/router.yaml and run: mr apply)"
 
 # ---------------------------------------------------------------- takeover / apply
-# This must happen even with MR_APPLY=0: otherwise Alpine's networking and
-# dhcpcd continue to own the same devices and the first web apply races them.
+if [ "${MR_APPLY:-1}" = 0 ]; then
+	say "MR_APPLY=0: configuration written, nothing applied. Run 'mr apply' when ready."
+	exit 0
+fi
+
 takeover_network() {
 	for s in networking dhcpcd; do
 		for rl in boot default; do rc-update del "$s" "$rl" > /dev/null 2>&1 || :; done
@@ -335,20 +337,6 @@ takeover_network() {
 	# rolled back at the next boot.
 	rc-update add mr-unconfirmed boot > /dev/null 2>&1 || :
 }
-
-if [ "${MR_APPLY:-1}" = 0 ]; then
-	takeover_network
-	# Generate the panel/network prerequisites without recording an apply.  The
-	# network service is started so the panel has its LAN address; the wizard's
-	# first apply then enables the remaining services atomically.
-	/usr/sbin/mr render / || die "could not render the panel prerequisites"
-	rc-update add mr-panel default > /dev/null 2>&1 || :
-	rc-service mr-network start || die "could not start mini-router network"
-	rc-service mr-panel start || die "could not start mini-router panel"
-	say "MR_APPLY=0: takeover prepared; panel ready at http://$host/"
-	echo "Run the first setup wizard, or 'mr apply' from the console."
-	exit 0
-fi
 
 say "5/5 应用 / applying"
 [ "$MR_MODE" = router ] || echo "mode $MR_MODE · main router $MR_GATEWAY"

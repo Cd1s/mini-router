@@ -228,6 +228,7 @@ stat -c '%a %u %g' / > $R/rootmode
 cat /etc/mini-router/gen/services > $R/services 2>&1
 ls /etc/runlevels/default > $R/default 2>&1
 if [ -e /etc/mini-router/.firstboot ]; then echo yes; else echo no; fi > $R/firstboot
+if [ -e /etc/mini-router/state/first-run ]; then echo yes; else echo no; fi > $R/first-run
 grep -m1 'ipv4:' /etc/mini-router/router.yaml > $R/lan 2>&1
 if [ -e /etc/config/network ]; then echo visible; else echo hidden; fi > $R/foreign
 if touch /probe-was-here; then echo ok; else echo fail; fi > $R/writable
@@ -302,6 +303,19 @@ PROBE
 	has P3 'wiped at the next boot' factory-reset
 	has P3 'applied the provisioned router.yaml' kmsg
 	echo "P3 ok ($(wc -l < /t/res/P3/default) services)"
+
+	say "P3b: an existing overlay survives an image upgrade without a wizard marker"
+	fresh
+	datamount
+	mkdir -p /data/mr/upper/etc/mini-router/gen /data/mr/work
+	cp /t/prov-out/overlay.tar.gz /tmp/old-overlay.tar.gz
+	tar -C /data/mr/upper -xzf /tmp/old-overlay.tar.gz
+	: > /data/mr/upper/etc/mini-router/gen/applied.yaml
+	rm -f /data/mr/upper/etc/mini-router/state/first-run
+	umount /data
+	boot P3b
+	has P3b '^no$' first-run
+	echo "P3b ok"
 
 	say "P4: the boot after factory-reset"
 	boot P4

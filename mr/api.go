@@ -307,7 +307,7 @@ func apiSetup(r apiReq, secrets map[string]string) apiResp {
 		return errResp(500, "%v", err)
 	}
 	if err := markFirstRunPasswordDone(); err != nil && !os.IsNotExist(err) {
-		return errResp(500, "%v", err)
+		appendChangeLog("webui: first-run marker update deferred: " + err.Error())
 	}
 	appendChangeLog("webui: admin password set")
 	return apiResp{body: map[string]any{"ok": true}, cookie: sessionCookie(newSession())}

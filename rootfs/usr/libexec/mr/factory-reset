@@ -51,10 +51,6 @@ if [ "$yes" = 0 ]; then
 fi
 
 : > /overlay/.mr-factory-reset || exit 1
-# Keep an explicit marker for images that were built before the factory
-# marker was added. The wipe restores the squashfs marker on the next boot.
-mkdir -p /etc/mini-router/state
-printf 'factory\n' > /etc/mini-router/state/first-run
 sync
 logger -t factory-reset "rootfs_data will be wiped at the next boot" 2>/dev/null
 echo "factory-reset: rootfs_data will be wiped at the next boot"

@@ -152,4 +152,5 @@ U-Boot 本身损坏时才需要（要用编程器或 mtk_uartboot，超出本文
 
 `/usr/libexec/mr/factory-reset`（输入 YES）→ 重启 → 出厂配置：网线接 LAN 口，`http://192.168.31.1/` 设置管理员密码；
 WiFi 关闭，SSH 没有密钥。之后可以用 `sysupgrade --data overlay.tar.gz <镜像>`（在内存系统里）或 Web UI 重新配置。
-首次登录会显示设置向导；它会探测 WAN、检查上游与 LAN 网段冲突，并在确认窗口内自动保留可达的应用。
+首次登录会显示设置向导；marker 只在新的/擦除后的 rootfs_data 上由 `mr-preinit` 创建，旧 overlay
+升级不会误弹。向导会探测 WAN、检查上游与 LAN 网段冲突，并在确认窗口内等待用户保留或回滚应用。

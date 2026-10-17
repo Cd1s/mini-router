@@ -6,10 +6,12 @@ package main
 // secret.  It never changes the running configuration or starts hostapd.
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type wifiRadioSuggestion struct {
@@ -39,6 +41,40 @@ func suggestedRadio(band string, logical int) wifiRadioSuggestion {
 	}
 }
 
+func suggestedModes() (twoG, fiveG string) {
+	ents, err := os.ReadDir("/sys/class/ieee80211")
+	if err != nil {
+		return "", ""
+	}
+	for _, ent := range ents {
+		if !strings.HasPrefix(ent.Name(), "phy") {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		b, err := exec.CommandContext(ctx, "iw", "phy", ent.Name(), "info").Output()
+		cancel()
+		if err != nil {
+			continue
+		}
+		s := string(b)
+		he, vht := strings.Contains(s, "HE Iftypes"), strings.Contains(s, "VHT Capabilities")
+		if strings.Contains(s, "Band 1:") {
+			twoG = map[bool]string{true: "HE40", false: "HT40"}[he]
+		}
+		if strings.Contains(s, "Band 2:") {
+			switch {
+			case he:
+				fiveG = "HE80"
+			case vht:
+				fiveG = "VHT80"
+			default:
+				fiveG = "HT20"
+			}
+		}
+	}
+	return twoG, fiveG
+}
+
 // wifiHardwareBands returns one logical radio per supported band.  The
 // logical names are stable (phy0/phy1); renderNetwork resolves them to the
 // kernel phy by band, so a driver may enumerate hardware in another order.
@@ -65,12 +101,21 @@ func wifiHardwareBands() (twoG, fiveG bool) {
 
 func suggestedWiFiRadios() []wifiRadioSuggestion {
 	twoG, fiveG := wifiHardwareBands()
+	twoMode, fiveMode := suggestedModes()
 	var out []wifiRadioSuggestion
 	if twoG {
-		out = append(out, suggestedRadio("2g", 0))
+		r := suggestedRadio("2g", 0)
+		if twoMode != "" {
+			r.HTMode = twoMode
+		}
+		out = append(out, r)
 	}
 	if fiveG {
-		out = append(out, suggestedRadio("5g", 1))
+		r := suggestedRadio("5g", 1)
+		if fiveMode != "" {
+			r.HTMode = fiveMode
+		}
+		out = append(out, r)
 	}
 	return out
 }

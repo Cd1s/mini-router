@@ -12,7 +12,21 @@ var firstRunMarker = "/etc/mini-router/state/first-run"
 
 func firstRunPending() bool {
 	_, err := os.Stat(firstRunMarker)
-	return err == nil
+	if err != nil {
+		return false
+	}
+	// A marker in the read-only factory layer can become visible after a
+	// sysupgrade. Existing routers have an accepted rendered config and an
+	// administrator password; those must never be re-enrolled.
+	if _, pwErr := os.Stat(SecretsPath); pwErr == nil {
+		if _, appliedErr := os.Stat(GenDir + "/applied.yaml"); appliedErr == nil {
+			b, _ := os.ReadFile(SecretsPath)
+			if strings.Contains(string(b), pwSecretKey+":") {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // Factory images use a marker value until apiSetup has safely established the

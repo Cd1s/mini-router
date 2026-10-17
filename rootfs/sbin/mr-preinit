@@ -168,9 +168,11 @@ EOF
 
 # ---- flash: squashfs root + UBIFS overlay ----
 data=
+fresh=0
 vol=$(ubi_vol rootfs_data) && ubi=${vol%_*}
 if [ -n "$vol" ] && mount -t ubifs -o noatime "$ubi:rootfs_data" /overlay 2>/dev/null; then
 	data=ubifs
+	[ -d /overlay/mr/upper ] || fresh=1
 	if [ -e /overlay/.mr-factory-reset ]; then
 		log "factory reset: wiping rootfs_data ($vol)"
 		umount /overlay
@@ -184,7 +186,7 @@ if [ -n "$vol" ] && mount -t ubifs -o noatime "$ubi:rootfs_data" /overlay 2>/dev
 fi
 if [ -z "$data" ]; then
 	log "rootfs_data unavailable: settings live in RAM and are lost at reboot"
-	mount -t tmpfs -o mode=0755,size=25% tmpfs /overlay && data=tmpfs
+	mount -t tmpfs -o mode=0755,size=25% tmpfs /overlay && data=tmpfs && fresh=1
 fi
 # The volume may also hold a foreign overlay (OpenWrt's upper/ and work/): only mr/ is used.
 # The upper dir's own mode becomes the mode of / (0755 root, whatever created it).
@@ -198,6 +200,11 @@ if [ -n "$data" ] && mkdir -p /overlay/mr/upper /overlay/mr/work &&
 	done
 	# devtmpfs, if the kernel auto-mounted it on the old root (else OpenRC's devfs mounts it)
 	grep -q " /rom/dev " /proc/mounts && { mount -o move /rom/dev /dev || log "moving /rom/dev failed"; }
+	if [ "$fresh" = 1 ]; then
+		mkdir -p /etc/mini-router/state
+		printf 'factory\n' > /etc/mini-router/state/first-run
+		chmod 0600 /etc/mini-router/state/first-run
+	fi
 	unconfirmed
 	firstboot
 else

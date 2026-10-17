@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -67,6 +68,8 @@ type detectObservation struct {
 	RA    detectRA
 }
 
+var detectMu sync.Mutex
+
 // detectProbe is injectable in tests.  Production probing intentionally has no
 // persistent state and is bounded by the context supplied by detectWAN.
 type detectProbe func(context.Context, string) (detectObservation, error)
@@ -81,7 +84,7 @@ func linkDetect(port string) detectLink {
 
 func detectWAN(c *Config, port string, timeout time.Duration) wanDetectResult {
 	started := time.Now()
-	r := wanDetectResult{Port: port, Link: linkDetect(port), Recommendation: "dhcp"}
+	r := wanDetectResult{Port: port, Link: linkDetect(port), Recommendation: "unknown"}
 	if timeout <= 0 || timeout > 8*time.Second {
 		timeout = 8 * time.Second
 	}
@@ -94,8 +97,6 @@ func detectWAN(c *Config, port string, timeout time.Duration) wanDetectResult {
 		r.Recommendation = "pppoe"
 	case r.DHCP.Offer:
 		r.Recommendation = "dhcp"
-	case r.Link.Carrier:
-		r.Recommendation = "static"
 	}
 	if r.DHCP.Offer {
 		if _, n, err := net.ParseCIDR(c.LAN.IPv4); err == nil {
@@ -114,34 +115,48 @@ func suggestLAN(upstream *net.IPNet) string {
 	// Prefer the familiar 192.168.2.0/24, then private 10/8 subnets.
 	for _, s := range []string{"192.168.2.1/24", "192.168.50.1/24", "10.0.0.1/24", "10.10.0.1/24"} {
 		_, n, _ := net.ParseCIDR(s)
-		if !n.Contains(upstream.IP) {
+		if !ipnetsOverlap(n, upstream) {
 			return s
 		}
 	}
 	return "10.254.0.1/24"
 }
 
+func ipnetsOverlap(a, b *net.IPNet) bool {
+	return a.Contains(b.IP) || b.Contains(a.IP)
+}
+
 func probeWAN(ctx context.Context, port string) (detectObservation, error) {
+	detectMu.Lock()
+	defer detectMu.Unlock()
 	var out detectObservation
-	// pppoe-discovery is part of the Alpine ppp package on supported images.  It
-	// sends PADI/PADR discovery only and never starts pppd or changes the link.
-	if p, err := exec.LookPath("pppoe-discovery"); err == nil {
-		sec := int(time.Until(deadline(ctx)).Seconds())
-		if sec < 1 {
-			sec = 1
-		}
-		cmd := exec.CommandContext(ctx, p, "-I", port, "-t", strconv.Itoa(sec))
-		if b, e := cmd.Output(); e == nil {
-			out.PPPoE = parsePPPoEDiscovery(string(b))
-		}
-	}
-	if d, err := probeDHCP(ctx, port); err == nil {
-		out.DHCP = d
-	}
-	if r, err := probeRA(ctx, port); err == nil {
-		out.RA = r
+	var wg sync.WaitGroup
+	var pppErr, dhcpErr, raErr error
+	pppCtx, pppCancel := context.WithTimeout(ctx, 3*time.Second)
+	dhcpCtx, dhcpCancel := context.WithTimeout(ctx, 4*time.Second)
+	raCtx, raCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer pppCancel()
+	defer dhcpCancel()
+	defer raCancel()
+	wg.Add(3)
+	go func() { defer wg.Done(); out.PPPoE, pppErr = probePPPoE(pppCtx, port) }()
+	go func() { defer wg.Done(); out.DHCP, dhcpErr = probeDHCP(dhcpCtx, port) }()
+	go func() { defer wg.Done(); out.RA, raErr = probeRA(raCtx, port) }()
+	wg.Wait()
+	if pppErr != nil && dhcpErr != nil && raErr != nil {
+		return out, fmt.Errorf("wan probes: pppoe=%v dhcp=%v ra=%v", pppErr, dhcpErr, raErr)
 	}
 	return out, nil
+}
+
+func probePPPoE(ctx context.Context, port string) (detectPPPoE, error) {
+	p, err := exec.LookPath("pppoe-discovery")
+	if err != nil {
+		return detectPPPoE{}, err
+	}
+	cmd := exec.CommandContext(ctx, p, "-I", port, "-U", "-a", "1", "-t", "1")
+	b, err := cmd.CombinedOutput()
+	return parsePPPoEDiscovery(string(b), err == nil), err
 }
 
 func deadline(ctx context.Context) time.Time {
@@ -152,12 +167,12 @@ func deadline(ctx context.Context) time.Time {
 	return d
 }
 
-func parsePPPoEDiscovery(s string) detectPPPoE {
-	p := detectPPPoE{PADO: strings.Contains(strings.ToLower(s), "pado") || strings.Contains(strings.ToLower(s), "access concentrator")}
+func parsePPPoEDiscovery(s string, success bool) detectPPPoE {
+	p := detectPPPoE{PADO: false}
 	for _, line := range strings.Split(s, "\n") {
 		l := strings.TrimSpace(line)
 		low := strings.ToLower(l)
-		for _, key := range []string{"ac-name", "access concentrator", "service-name", "service name"} {
+		for _, key := range []string{"access-concentrator", "ac-name", "access concentrator", "service-name", "service name"} {
 			if i := strings.Index(low, key); i >= 0 {
 				v := strings.Trim(strings.TrimSpace(l[i+len(key):]), "=: \t\"")
 				if strings.Contains(key, "service") {
@@ -168,6 +183,7 @@ func parsePPPoEDiscovery(s string) detectPPPoE {
 			}
 		}
 	}
+	p.PADO = success && p.AC != ""
 	return p
 }
 
@@ -185,9 +201,15 @@ func probeDHCP(ctx context.Context, port string) (detectDHCP, error) {
 	// Keep the one-shot socket on the requested WAN device.  Without this a
 	// wildcard UDP socket can emit the discover through another interface.
 	if raw, e := conn.SyscallConn(); e == nil {
+		var bindErr error
 		_ = raw.Control(func(fd uintptr) {
-			_ = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, port)
+			bindErr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, port)
 		})
+		if bindErr != nil {
+			return out, bindErr
+		}
+	} else {
+		return out, e
 	}
 	if f, e := conn.File(); e == nil {
 		_ = syscall.SetsockoptInt(int(f.Fd()), syscall.SOL_SOCKET, syscall.SO_BROADCAST, 1)
@@ -227,10 +249,18 @@ func probeRA(ctx context.Context, port string) (detectRA, error) {
 	defer pc.Close()
 	if raw, ok := pc.(syscall.Conn); ok {
 		if sc, e := raw.SyscallConn(); e == nil {
+			var bindErr error
 			_ = sc.Control(func(fd uintptr) {
-				_ = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, port)
+				bindErr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, port)
 			})
+			if bindErr != nil {
+				return out, bindErr
+			}
+		} else {
+			return out, e
 		}
+	} else {
+		return out, fmt.Errorf("raw ICMPv6 socket unavailable")
 	}
 	_ = pc.SetReadDeadline(deadline(ctx))
 	buf := make([]byte, 2048)
@@ -328,7 +358,7 @@ func apiNetWANDetect(r apiReq) apiResp {
 		Port    string `json:"port"`
 		Timeout int    `json:"timeout"`
 	}
-	if json.Unmarshal(r.body, &in) != nil || !validDev(in.Port) {
+	if json.Unmarshal(r.body, &in) != nil || !validDetectPort(in.Port) {
 		return errResp(400, "bad port")
 	}
 	if in.Timeout == 0 {
@@ -358,8 +388,25 @@ func wanDetectCommand(c *Config, args []string) error {
 			return fmt.Errorf("mr wan detect PORT [--timeout SECONDS]")
 		}
 	}
-	if !validDev(port) || timeout < 1 || timeout > 8 {
+	if !validDetectPort(port) || timeout < 1 || timeout > 8 {
 		return fmt.Errorf("bad port or timeout (1-8 seconds)")
 	}
 	return json.NewEncoder(os.Stdout).Encode(detectWAN(c, port, time.Duration(timeout)*time.Second))
+}
+
+func validDetectPort(port string) bool {
+	if !validDev(port) {
+		return false
+	}
+	d := filepath.Join("/sys/class/net", port)
+	if _, err := os.Stat(filepath.Join(d, "address")); err != nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(d, "bridge")); err == nil {
+		return false
+	}
+	if port == "lo" || strings.HasPrefix(port, "br-") || strings.HasPrefix(port, "ppp") || strings.HasPrefix(port, "tun") {
+		return false
+	}
+	return true
 }

@@ -1,10 +1,23 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"net"
 	"testing"
+	"time"
 )
+
+func TestParsePPPoEDiscoveryRealOutput(t *testing.T) {
+	s := "Access-Concentrator: testAC\nService-Name: testSvc\nCookie: deadbeef\nAC-Ethernet-Address: de:f2:00:00:00:01\n"
+	p := parsePPPoEDiscovery(s, true)
+	if !p.PADO || p.AC != "testAC" || p.Service != "testSvc" {
+		t.Fatalf("pppoe=%+v", p)
+	}
+	if p := parsePPPoEDiscovery(s, false); p.PADO {
+		t.Fatalf("failed command accepted: %+v", p)
+	}
+}
 
 func TestParseDHCPOffer(t *testing.T) {
 	b := make([]byte, 240, 280)
@@ -34,5 +47,22 @@ func TestSuggestLANAvoidsUpstream(t *testing.T) {
 	_, n, _ := net.ParseCIDR("192.168.1.0/24")
 	if got := suggestLAN(n); got == "192.168.1.1/24" {
 		t.Fatal(got)
+	}
+}
+
+func TestDetectWANRecommendationAndUnknown(t *testing.T) {
+	old := wanDetectProbe
+	t.Cleanup(func() { wanDetectProbe = old })
+	c := &Config{}
+	c.LAN.IPv4 = "192.168.1.1/24"
+	wanDetectProbe = func(context.Context, string) (detectObservation, error) {
+		return detectObservation{PPPoE: detectPPPoE{PADO: true, AC: "ac"}}, nil
+	}
+	if got := detectWAN(c, "lo", time.Second).Recommendation; got != "pppoe" {
+		t.Fatalf("pppoe recommendation=%q", got)
+	}
+	wanDetectProbe = func(context.Context, string) (detectObservation, error) { return detectObservation{}, nil }
+	if got := detectWAN(c, "lo", time.Second).Recommendation; got != "unknown" {
+		t.Fatalf("empty recommendation=%q", got)
 	}
 }

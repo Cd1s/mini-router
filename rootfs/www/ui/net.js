@@ -140,7 +140,7 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
     const detect = h("button",{class:"btn sm",onclick:async()=>{
       try {
         const d = await api("net.wan_detect",{port:w.device,timeout:8});
-        const apply = ()=>{ w.proto=d.recommendation||w.proto; if(w.proto==="pppoe"){w.password_secret||="pppoe_password";w.mtu=1492;} if(w.proto==="static"&&d.dhcp){w.ipv4=d.dhcp.address+"/24";w.gateway=d.dhcp.gateway;w.dns=d.dhcp.dns||[];} touch(); m.remove(); draw(); };
+        const apply = ()=>{ if(!d.recommendation||d.recommendation==="unknown") return toast("未得到可靠的上网方式建议",4000); w.proto=d.recommendation||w.proto; if(w.proto==="pppoe"){w.password_secret||="pppoe_password";w.mtu=1492;} if(w.proto==="static"&&d.dhcp&&d.dhcp.offer){const bits=(d.dhcp.mask||"255.255.255.0").split(".").reduce((n,x)=>{let v=+x;while(v){n+=v&1;v>>=1;}return n;},0);w.ipv4=d.dhcp.address+"/"+bits;w.gateway=d.dhcp.gateway;w.dns=d.dhcp.dns||[];} touch(); m.remove(); draw(); };
         const m = modal("检测上网方式", [h("p",{},d.recommendation==="pppoe"?"检测到 PPPoE PADO":d.recommendation==="dhcp"?"检测到 DHCP OFFER":"未发现 DHCP / PPPoE，建议静态地址"), d.dhcp&&d.dhcp.offer?h("pre",{},JSON.stringify(d.dhcp,null,2)):null, d.lan_conflict?h("div",{class:"tag warn"},"与当前 LAN 冲突，建议 "+d.suggested_lan):null], [h("button",{class:"btn",onclick:()=>m.remove()},"关闭"),h("button",{class:"btn p",onclick:apply},"套用建议")]);
       } catch(e) { toast("检测失败："+e.message,4000); }
     }},"检测上网方式");
