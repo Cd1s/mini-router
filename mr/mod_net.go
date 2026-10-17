@@ -56,7 +56,7 @@ type Modem struct {
 
 func normalizedModemAddress(w WAN) string {
 	ip := net.ParseIP(w.Modem.Address)
-	if ip == nil || ip.To4() == nil || strings.TrimSpace(w.Modem.Address) != w.Modem.Address {
+	if ip == nil || ip.To4() == nil || strings.Contains(w.Modem.Address, ":") || strings.TrimSpace(w.Modem.Address) != w.Modem.Address {
 		return ""
 	}
 	return ip.To4().String()
@@ -643,7 +643,7 @@ func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
 			ip := net.ParseIP(w.Modem.Address)
 			if w.Proto != "pppoe" {
 				v.Add("%s.modem: only supported on pppoe WANs (the DHCP client replaces link addresses)", p)
-			} else if ip == nil || ip.To4() == nil || strings.TrimSpace(w.Modem.Address) != w.Modem.Address {
+			} else if ip == nil || ip.To4() == nil || strings.Contains(w.Modem.Address, ":") || strings.TrimSpace(w.Modem.Address) != w.Modem.Address {
 				v.Add("%s.modem.address: IPv4 address required, got %q", p, w.Modem.Address)
 			} else if !ip.IsPrivate() || ip.IsUnspecified() || ip.IsLoopback() || ip.IsMulticast() {
 				v.Add("%s.modem.address: private unicast address required, got %q", p, w.Modem.Address)
