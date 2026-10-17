@@ -117,6 +117,13 @@ func hookPPP(c *Config, up bool, args []string) error {
 	if w == nil {
 		return fmt.Errorf("ppp hook: unknown wan %q", ipparam)
 	}
+	// pppd can report a delayed ip-up/ip-down after an apply changed this WAN to
+	// another protocol (or moved it to another link).  Its lease and routes now
+	// belong to the current protocol, so a stale PPP event must not tear them down.
+	if w.Proto != "pppoe" || w.Ifname() != ifname {
+		logf("wan %s: ignoring stale PPP event on %s (current %s on %s)", w.Name, ifname, w.Proto, w.Ifname())
+		return nil
+	}
 	if up {
 		logf("wan %s up on %s (%s)", w.Name, ifname, args[3])
 		l := wanLease{IP: args[3], Since: time.Now().Unix(), Dev: ifname}
@@ -324,8 +331,15 @@ func wanDown(c *Config, w *WAN) {
 func dropStaleWANs(c *Config) {
 	ents, _ := os.ReadDir(wanRunDir)
 	live := map[string]bool{}
+	liveWAN := map[string]bool{}
 	for _, w := range c.WAN {
 		live[w.Ifname()] = true
+		liveWAN[w.Name] = true
+		// A disabled IPv6/PD WAN must not keep an old delegated prefix record;
+		// lan6Renumber will retire the addresses recorded for it.
+		if !w.IPv6 || !w.IPv6PD {
+			os.Remove(pd6File(w.Name))
+		}
 	}
 	for _, e := range ents {
 		name, ok := strings.CutSuffix(e.Name(), ".json")
@@ -346,6 +360,15 @@ func dropStaleWANs(c *Config) {
 			}
 		}
 		removeLease(name)
+	}
+	// pd6 files are runtime records too, but unlike leases they may outlive the
+	// last IPv4 event.  Remove records for WANs deleted from the config so the
+	// IPv6 policy sets and renumbering code cannot resurrect them.
+	for _, e := range ents {
+		name, ok := strings.CutSuffix(e.Name(), ".pd6")
+		if ok && !liveWAN[name] {
+			os.Remove(filepath.Join(wanRunDir, e.Name()))
+		}
 	}
 }
 
@@ -386,6 +409,7 @@ func refreshRoutes(c *Config) {
 	}
 	srcDefaults6(c) // health changes move it with the WAN metrics
 	writeResolv(c)
+	lan6Renumber(c)
 }
 
 // writeResolv rewrites resolvConf from the WANs that are up (healthy first, then by metric).

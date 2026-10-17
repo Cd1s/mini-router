@@ -131,6 +131,19 @@ func lan6Plan(prev lan6State, cur map[string][]string) (stale map[string][]strin
 			}
 		}
 	}
+	// A key that disappeared from cur belongs to a WAN or RA bridge removed from
+	// the configuration.  It cannot be preserved as a temporary empty state: the
+	// old prefix must be announced as deprecated once so LAN clients retire it.
+	for k, old := range prev.Addrs {
+		if _, present := cur[k]; present {
+			continue
+		}
+		for _, a := range old {
+			if s, valid := lan6CIDR(a); valid && !containsString(stale[k], s) {
+				stale[k] = append(stale[k], s)
+			}
+		}
+	}
 	return stale, next
 }
 
@@ -200,13 +213,27 @@ func lan6Renumber(c *Config) {
 	pds := map[string][]netip.Prefix{}
 	for _, w := range c.WAN {
 		wans = append(wans, w.Name)
+		// A WAN with IPv6 or PD disabled has no owner for its old prefix.  Omit
+		// its keys so lan6Plan emits them as stale instead of preserving the
+		// transient empty state used during a normal dhcpcd release.
+		if !w.IPv6 || !w.IPv6PD {
+			continue
+		}
 		for _, l := range strings.Fields(readFile(pd6File(w.Name))) {
 			if p, err := netip.ParsePrefix(l); err == nil {
 				pds[w.Name] = append(pds[w.Name], p)
 			}
 		}
 	}
-	stale, next := lan6Plan(prev, lan6ByWAN(cur, wans, pds))
+	curByWAN := lan6ByWAN(cur, wans, pds)
+	for _, w := range c.WAN {
+		if !w.IPv6 || !w.IPv6PD {
+			for br := range cur {
+				delete(curByWAN, lan6Key(w.Name, br))
+			}
+		}
+	}
+	stale, next := lan6Plan(prev, curByWAN)
 	var keys []string
 	for k := range stale {
 		keys = append(keys, k)
@@ -216,7 +243,7 @@ func lan6Renumber(c *Config) {
 		_, br, _ := strings.Cut(k, " ")
 		for _, a := range stale[k] {
 			logf("lan6: %s on %s was advertised and is gone: announcing it as stale (RFC 9096)", a, br)
-			run("ip", "-6", "addr", "add", a, "dev", br, "valid_lft", strconv.Itoa(lease[br]),
+			run("ip", "-6", "addr", "replace", a, "dev", br, "valid_lft", strconv.Itoa(lease[br]),
 				"preferred_lft", strconv.Itoa(lan6StalePreferred), "noprefixroute", "nodad")
 		}
 	}

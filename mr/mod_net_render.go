@@ -266,6 +266,8 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 				fmt.Fprintf(b, "for a in $(ip -4 -o addr show dev %s | awk '{print $4}'); do [ \"$a\" = %s ] || ip addr del \"$a\" dev %s; done\n", w.LinkDev(), w.IPv4, w.LinkDev())
 			}
 		}
+		wanVLANCleanupSh(c, b)
+		wanMACRestoreSh(c, b)
 		wanIPv6OffSh(c, b)
 		macvlanSh(c, b, need)
 		snoop := 0
@@ -337,6 +339,69 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 		b.WriteString(perfScript)
 	}
 	modeNetSh(c, phase, b)
+}
+
+// wanVLANCleanupSh removes VLAN links left by a previous WAN configuration.  The
+// generated config only knows links it currently needs; scanning each configured
+// parent catches a changed/cancelled VID while keeping unrelated parent links out
+// of the cleanup.
+func wanVLANCleanupSh(c *Config, b *strings.Builder) {
+	parents := map[string]bool{}
+	keep := map[string]bool{}
+	for _, w := range c.WAN {
+		parents[w.Device] = true
+		if w.VLAN > 0 {
+			keep[w.LinkDev()] = true
+		}
+	}
+	for _, n := range c.Networks {
+		for _, p := range n.Trunk {
+			parents[p] = true
+			if n.VLAN > 0 {
+				keep[fmt.Sprintf("%s.%d", p, n.VLAN)] = true
+			}
+		}
+	}
+	var kept []string
+	for k := range keep {
+		kept = append(kept, k)
+	}
+	sort.Strings(kept)
+	caseList := strings.Join(kept, " ")
+	var ps []string
+	for p := range parents {
+		ps = append(ps, p)
+	}
+	sort.Strings(ps)
+	for _, p := range ps {
+		fmt.Fprintf(b, "for d in /sys/class/net/%s.*; do [ -e \"$d\" ] || continue; n=${d##*/}; case \" %s \" in *\" $n \"*) continue;; esac; ip link del \"$n\" 2>/dev/null; done\n", p, caseList)
+	}
+}
+
+// wanMACRestoreSh restores the permanent hardware address after a cloned WAN
+// MAC is cleared.  ethtool reads the address burned into the NIC, so this also
+// works when the previous value is not present in the current configuration.
+func wanMACRestoreSh(c *Config, b *strings.Builder) {
+	devs := map[string]bool{}
+	protected := map[string]bool{}
+	for _, w := range c.WAN {
+		if w.MAC != "" && wanMacvlan(c, w) == "" {
+			protected[w.Device] = true
+		}
+	}
+	for _, w := range c.WAN {
+		if w.MAC == "" && wanMacvlan(c, w) == "" && !protected[w.Device] {
+			devs[w.Device] = true
+		}
+	}
+	var xs []string
+	for d := range devs {
+		xs = append(xs, d)
+	}
+	sort.Strings(xs)
+	for _, d := range xs {
+		fmt.Fprintf(b, "perm=$(ethtool -P %s 2>/dev/null | awk '/Permanent address:/ {print $3}'); if [ -n \"$perm\" ] && [ \"$(cat /sys/class/net/%s/address 2>/dev/null)\" != \"$perm\" ]; then ip link set %s down; ip link set dev %s address \"$perm\"; fi\n", d, d, d, d)
+	}
 }
 
 // wanIPv6OffSh: a WAN link device that no IPv6-enabled DHCP / static WAN uses as its interface takes no
