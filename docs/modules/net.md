@@ -365,6 +365,8 @@ conntrack 会把后续包当作 invalid 丢掉。
 | API `net.ports` | 网口 / 接口状态（`/sys`） |
 | API `net.routes` | 所有表的 v4/v6 路由 + 规则 |
 | API `net.wan` | 同 `mr wan status` |
+| `mr wan detect <port> [--timeout N]` | 一次性探测链路、PPPoE PADO、DHCP OFFER 和 IPv6 RA；默认最多 8 秒，不申请租约、不改地址 / 路由 / 服务 |
+| API `net.wan_detect` | POST `{"port":"wan","timeout":8}`，返回探测结果、`recommendation`（`pppoe` / `dhcp` / `static` / `unknown`）及 LAN 冲突建议 |
 | API `net.redial` | POST `{"wan":"wan2"}`：重启该 WAN 的服务（重新拨号 / 重新获取） |
 
 ## 对家里配置（examples/router.yaml）输出的改动（都是有意的）
@@ -386,7 +388,7 @@ conntrack 会把后续包当作 invalid 丢掉。
 - **状态 → 接口状态**：上面一排是前面板网口（绿 = 千兆以上，黄 = 百兆 / 十兆，灰 = 没插线），下面是全部接口的速率、流量、错误，
   每 3 秒刷新；“邻居表”看 ARP / NDP。
 - **网络 → WAN 外网**：每条 WAN 一张卡片，顶部显示当前地址、网关、在线时长、DNS、健康状态。
-  “协议”切换 PPPoE / DHCP / 静态，字段跟着变；需要 VLAN 的运营商填 VLAN；“重新拨号 / 重新获取”立即重连这一条线。
+  “检测上网方式”只做发现并显示建议，可一键填入协议和静态地址，之后仍需“保存并应用”；“协议”切换 PPPoE / DHCP / 静态，字段跟着变；需要 VLAN 的运营商填 VLAN；“重新拨号 / 重新获取”立即重连这一条线。
   “+ 添加 PPPoE（多拨）”在同一个口上再拨一条；“+ 添加 DHCP / 静态 WAN”用于出差插别人的网络或固定 IP 专线。
 - **网络 → 多线路**：上面是实时线路状态（健康、延迟、连续失败、当前默认路由 metric——超过 10000 就是被判故障降级了）。
   下面选模式：关闭 / 主备切换 / 负载均衡 + 主备；检测目标建议填两个不同运营商的地址（在国内可填 223.5.5.5、119.29.29.29）。
@@ -400,6 +402,10 @@ conntrack 会把后续包当作 invalid 丢掉。
   只走这条线，断线时不换线（`fallback: drop`）；下面是实时 `ip rule`（v4 / v6）。
 - **路由 → 静态路由**：静态路由表格 + 当前所有路由表。
 - 所有修改点底部“保存并应用”：先校验、显示变更计划，应用后 120 秒内点“保留”，否则自动回滚。
+
+### WAN 自动探测
+
+`mr wan detect` 使用独立的 PPPoE discovery 会话和一次性 DHCP DISCOVER，只等待 OFFER，不发送 DHCP REQUEST，也不会写租约或安装路由。PPPoE AC / 服务名、DHCP 地址 / 掩码 / 网关 / DNS、链路速率和 RA 的 M/O 标志会以 JSON 返回。若 DHCP 地址落在当前 `lan.ipv4`，结果带 `lan_conflict: true` 和一个不冲突的 `suggested_lan`（优先 `192.168.2.1/24`）。探测总超时限制为 1–8 秒。
 
 ### router.yaml / agent
 

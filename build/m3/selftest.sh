@@ -229,6 +229,7 @@ stat -c '%a %u %g' / > $R/rootmode
 cat /etc/mini-router/gen/services > $R/services 2>&1
 ls /etc/runlevels/default > $R/default 2>&1
 if [ -e /etc/mini-router/.firstboot ]; then echo yes; else echo no; fi > $R/firstboot
+if [ -e /etc/mini-router/state/first-run ]; then echo yes; else echo no; fi > $R/first-run
 if [ -e /etc/mini-router/router.yaml.rejected ]; then echo yes; else echo no; fi > $R/rejected
 if [ -e /etc/mini-router/secrets.yaml.rejected ]; then echo yes; else echo no; fi > $R/secrets-rejected
 if [ -s /etc/mini-router/gen/applied.yaml ] && [ -s /etc/mini-router/gen/applied-secrets ]; then echo yes; else echo no; fi > $R/applied
@@ -281,6 +282,7 @@ PROBE
 	has P1 '192.168.31.1' lan
 	has P1 '^ok$' writable
 	has P1 '^mr-panel$' default
+	has P1 '^yes$' first-run
 	datamount
 	[ -e /data/mr/upper/probe-was-here ] || fail "P1: write did not reach rootfs_data"
 	umount /data
@@ -314,12 +316,36 @@ PROBE
 	has P3 'applied the provisioned router.yaml' kmsg
 	echo "P3 ok ($(wc -l < /t/res/P3/default) services)"
 
+	say "P3b: an existing overlay survives an image upgrade without a wizard marker"
+	fresh
+	datamount
+	mkdir -p /data/mr/upper/etc/mini-router/gen /data/mr/work
+	cp /t/prov-out/overlay.tar.gz /tmp/old-overlay.tar.gz
+	tar -C /data/mr/upper -xzf /tmp/old-overlay.tar.gz
+	rm -f /data/mr/upper/etc/mini-router/.firstboot
+	: > /data/mr/upper/etc/mini-router/gen/applied.yaml
+	# Simulate an existing owner: accepted config plus an administrator password
+	# in the preserved overlay. The new image must not create first-run state.
+	printf 'webui_password: pbkdf2-sha256$1$old$hash\n' > /data/mr/upper/etc/mini-router/secrets.yaml
+	rm -f /data/mr/upper/etc/mini-router/state/first-run
+	umount /data
+	boot P3b
+	has P3b '^no$' firstboot
+	has P3b '^no$' first-run
+	# P3b starts with a fresh overlay to model an upgrade fixture. Re-arm the
+	# factory-reset marker so P4 exercises the reset boot after that fixture.
+	datamount
+	: > /data/.mr-factory-reset
+	umount /data
+	echo "P3b ok"
+
 	say "P4: the boot after factory-reset"
 	boot P4
 	has P4 'factory reset' kmsg
 	has P4 '192.168.31.1' lan
 	has P4 '^mr-panel$' default
 	if grep -q '^tailscale$' /t/res/P4/default; then fail "P4: provisioned services survived"; fi
+	has P4 '^yes$' first-run
 	datamount
 	[ ! -e /data/.mr-factory-reset ] || fail "P4: flag still set"
 	[ ! -e /data/mr/upper/etc/mini-router/secrets.yaml ] || fail "P4: secrets survived"
@@ -365,6 +391,7 @@ PROBE
 	has P6 '^tmpfs /overlay tmpfs$' mounts
 	has P6 '^overlay / overlay$' mounts
 	has P6 '^ok$' writable
+	has P6 '^yes$' first-run
 	has P6 'rootfs_data unavailable' kmsg
 	echo "P6 ok"
 

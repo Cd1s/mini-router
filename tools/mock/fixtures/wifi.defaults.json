@@ -1,0 +1,22 @@
+{
+  "radios": [
+    {
+      "phy": "phy0",
+      "band": "2g",
+      "channel": "auto",
+      "htmode": "HE40",
+      "profile": "generic",
+      "txpower": 0,
+      "ssids": [{"ssid": "MiniRouter-2.4G", "key_secret": "wifi_key", "encryption": "psk2"}]
+    },
+    {
+      "phy": "phy1",
+      "band": "5g",
+      "channel": "auto",
+      "htmode": "HE80",
+      "profile": "generic",
+      "txpower": 0,
+      "ssids": [{"ssid": "MiniRouter-5G", "key_secret": "wifi_key", "encryption": "psk2"}]
+    }
+  ]
+}

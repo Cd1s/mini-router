@@ -197,6 +197,7 @@ LAN→WiFi 的流量走 WED 硬件转发时绕过 mac80211 的软件空口公平
 | action | 方法 | 返回 / 参数 |
 |---|---|---|
 | `wifi.status` | GET | 每个 SSID 一项：`ifname ssid phy band network up state channel htmode clients bssid cac_left` |
+| `wifi.defaults` | GET | 只读硬件建议：从当前 `/sys/class/ieee80211` + `iw` 能力生成可直接提交的 2.4/5 GHz `radios`（含默认 SSID、`wifi_key` 引用名）；不改配置、不启动 hostapd；API token 需要 `read` |
 | `wifi.stations` | GET | `{stations:[{ifname ssid band network mac signal signal_dbm tx_rate rx_rate tx_mbps rx_mbps tx_bytes rx_bytes tx_retries tx_failed connected inactive_ms mfp airtime_tx_us airtime_rx_us}]}`；tx = 路由器→终端；airtime = 连接以来占用的空口时间（µs，驱动不报时没有这两项） |
 | `wifi.health` | GET | `{time, self_heal, radios:[{phy band kphy state stations temp_c crit_c tx_duty fw_busy tx_acked has_tx atf fw_resets ser stalled_s heal_stage heal_actions}], steering:{enabled min_signal_2g excluded pairs counts since recent}}`；API token 的 read 范围 |
 | `clients` | GET | 同 `wifi.stations`（旧页面在用） |

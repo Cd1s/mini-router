@@ -939,9 +939,11 @@ func hookHealth(c *Config) error {
 // wanCommand: `mr wan dhcp EVENT` (udhcpc script), `mr wan health` (net-wanmon), `mr wan status`.
 func wanCommand(c *Config, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: mr wan dhcp EVENT | health | status | dial-wait WAN | dial-restore | mac WAN")
+		return fmt.Errorf("usage: mr wan detect PORT [--timeout SECONDS] | dhcp EVENT | health | status | dial-wait WAN | dial-restore | mac WAN")
 	}
 	switch args[0] {
+	case "detect":
+		return wanDetectCommand(c, args)
 	case "dial-wait":
 		if len(args) == 2 {
 			dialWait(c, args[1])

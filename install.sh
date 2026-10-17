@@ -329,13 +329,28 @@ umask 077
 chmod 600 "$CONF/secrets.yaml"
 umask 022
 printf '%s\n' "$MR_ADMIN_PASS" | /usr/sbin/mr passwd > /dev/null
+/bin/mkdir -p "$CONF/state"
 /usr/sbin/mr validate || die "router.yaml is not valid (fix $CONF/router.yaml and run: mr apply)"
 
-# ---------------------------------------------------------------- apply
+# ---------------------------------------------------------------- takeover / apply
 if [ "${MR_APPLY:-1}" = 0 ]; then
+	# Deferred installs enter the browser wizard after the operator reviews the
+	# generated config. An immediately applied install already completed setup.
+	/usr/bin/printf 'install\n' > "$CONF/state/first-run"
 	say "MR_APPLY=0: configuration written, nothing applied. Run 'mr apply' when ready."
 	exit 0
 fi
+
+takeover_network() {
+	for s in networking dhcpcd; do
+		for rl in boot default; do rc-update del "$s" "$rl" > /dev/null 2>&1 || :; done
+	done
+	[ -f /etc/network/interfaces ] && mv /etc/network/interfaces /etc/network/interfaces.before-mini-router
+	# A change that was never confirmed (power cut in the confirm window) is
+	# rolled back at the next boot.
+	rc-update add mr-unconfirmed boot > /dev/null 2>&1 || :
+}
+
 say "5/5 应用 / applying"
 [ "$MR_MODE" = router ] || echo "mode $MR_MODE · main router $MR_GATEWAY"
 echo "WAN $MR_WAN ($MR_WAN_PROTO) · LAN $MR_LAN_PORTS · $MR_LAN_IP · WiFi $([ "$MR_WIFI" = 1 ] && echo "$MR_WIFI_SSID" || echo off)"
@@ -345,13 +360,7 @@ if [ "$YES" != 1 ]; then
 	read -r go < /dev/tty || go=y
 	case ${go:-y} in y | Y | yes) ;; *) die "stopped; run 'mr apply' when ready" ;; esac
 fi
-# mr-network owns the interfaces from now on; Alpine's ifupdown and its dhcpcd service would fight it
-for s in networking dhcpcd; do
-	for rl in boot default; do rc-update del "$s" "$rl" > /dev/null 2>&1 || :; done
-done
-[ -f /etc/network/interfaces ] && mv /etc/network/interfaces /etc/network/interfaces.before-mini-router
-# a change that was never confirmed (power cut in the confirm window) is rolled back at the next boot
-rc-update add mr-unconfirmed boot > /dev/null 2>&1 || :
+takeover_network
 /usr/sbin/mr apply || die "apply failed (it was rolled back); see 'mr plan' and /var/log/messages"
 say "完成 / done: http://$host/  (admin password as entered)"
 echo "配置文件 / config: $CONF/router.yaml · 命令 / commands: mr plan | mr apply | mr status | mr rollback"
