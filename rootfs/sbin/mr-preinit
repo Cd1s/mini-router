@@ -65,13 +65,24 @@ wipe_vol() {
 firstboot() {
 	[ -e /etc/mini-router/.firstboot ] && [ -x /usr/sbin/mr ] || return 0
 	if ! out=$(/usr/sbin/mr validate 2>&1); then
-		log "provisioned router.yaml is invalid, keeping the factory files: $(echo "$out" | sed -n 2p)"
+		firstboot_reject "validate failed: $(first_nonempty "$out")" || return 1
+		return 0
+	fi
+	render_tmp=$(mktemp -d /tmp/mr-firstboot.XXXXXX 2>/dev/null) || {
+		log "mr firstboot: cannot create a temporary render directory"
+		return 1
+	}
+	if ! out=$(/usr/sbin/mr render "$render_tmp" 2>&1); then
+		rm -rf "$render_tmp"
+		firstboot_reject "render failed: $(first_nonempty "$out")" || return 1
+		return 0
+	fi
+	if ! install_rendered "$render_tmp"; then
+		rm -rf "$render_tmp"
+		log "mr firstboot: installing the rendered factory files failed"
 		return 1
 	fi
-	if ! out=$(/usr/sbin/mr render / 2>&1); then
-		log "mr render failed: $out"
-		return 1
-	fi
+	rm -rf "$render_tmp"
 	want=/etc/mini-router/gen/services
 	rl=/etc/runlevels/default
 	if [ -s "$want" ]; then
@@ -92,6 +103,79 @@ firstboot() {
 	fi
 	rm -f /etc/mini-router/.firstboot
 	log "applied the provisioned router.yaml"
+	return 0
+}
+
+first_nonempty() {
+	echo "$1" | sed '/^[[:space:]]*$/d; q'
+}
+
+# Copy a successful render into / without removing the existing generated tree. The render itself
+# happens in a temporary tree, so a bad secrets file or a module error cannot destroy the live gen/.
+install_rendered() {
+	root=$1
+	list=$root/.files
+	find "$root" -type f ! -name .files > "$list" || return 1
+	while read -r f; do
+		dst=/${f#"$root"/}
+		mkdir -p "$(dirname "$dst")" || return 1
+		cp -p "$f" "$dst.new" || return 1
+		mv -f "$dst.new" "$dst" || return 1
+	done < "$list"
+}
+
+# Keep a bad provisioned file for diagnosis, then expose the factory config before any service
+# starts. This prevents hooks and the setup API from reading a config that disagrees with factory
+# generated files and locking the owner out on first boot.
+firstboot_reject() {
+	reason=$1
+	factory=/rom/etc/mini-router/router.yaml
+	if [ ! -r "$factory" ]; then
+		log "cannot restore factory router.yaml from /rom"
+		return 1
+	fi
+	cfg=/etc/mini-router/router.yaml
+	sec=/etc/mini-router/secrets.yaml
+	if cmp -s "$cfg" "$factory"; then
+		# A second boot must never move the already restored factory config to .rejected again.
+		if [ -e "$sec" ]; then
+			mv -f "$sec" "$sec.rejected" || return 1
+		fi
+		log "factory router.yaml render failed ($reason); keeping the factory files"
+		return 1
+	fi
+	new=$cfg.new
+	if ! cp "$factory" "$new"; then
+		log "cannot stage factory router.yaml from /rom"
+		return 1
+	fi
+	sec_new=$sec.new
+	if [ -r /rom/etc/mini-router/secrets.yaml ]; then
+		cp /rom/etc/mini-router/secrets.yaml "$sec_new" || { rm -f "$new"; return 1; }
+	else
+		rm -f "$sec_new"
+	fi
+	if [ -e "$cfg" ]; then
+		mv -f "$cfg" "$cfg.rejected" || { rm -f "$new" "$sec_new"; return 1; }
+	fi
+	if [ -e "$sec" ]; then
+		mv -f "$sec" "$sec.rejected" || { mv -f "$cfg.rejected" "$cfg"; rm -f "$new" "$sec_new"; return 1; }
+	fi
+	mv -f "$new" "$cfg" || return 1
+	if [ -e "$sec_new" ]; then
+		mv -f "$sec_new" "$sec" || return 1
+	fi
+	render_tmp=$(mktemp -d /tmp/mr-firstboot.XXXXXX 2>/dev/null) || return 1
+	if ! out=$(/usr/sbin/mr render "$render_tmp" 2>&1) || ! install_rendered "$render_tmp"; then
+		rm -rf "$render_tmp"
+		log "provisioned router.yaml rejected ($reason); factory render failed: $(first_nonempty "$out")"
+		logger -t mr-preinit "provisioned router.yaml rejected; factory render failed" 2>/dev/null
+		return 1
+	fi
+	rm -rf "$render_tmp"
+	rm -f /etc/mini-router/.firstboot
+	log "provisioned router.yaml rejected ($reason); restored factory configuration"
+	logger -t mr-preinit "provisioned router.yaml rejected ($reason); factory configuration restored" 2>/dev/null
 	return 0
 }
 

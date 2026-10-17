@@ -1927,6 +1927,7 @@
 "标准": "Standard",
 "终端 / 利用率": "Clients / utilization",
 "（没有发现其他网络）": "(no other networks found)",
+"配置文件缺失或无效，请通过串口执行 /usr/libexec/mr/factory-reset，或重新刷写固件": "Config missing/invalid. Run /usr/libexec/mr/factory-reset over serial, or reflash the firmware.",
 "HTTPS 反向代理 (mr edge)": "HTTPS reverse proxy (mr edge)",
 "WiFi 重启：无线设备断开几秒后自动重连": "WiFi restart: wireless devices drop for a few seconds, then reconnect",
 " 重新拨号：断网约 5–10 秒，公网地址可能改变": " redial: internet down about 5–10 s, the public address may change",

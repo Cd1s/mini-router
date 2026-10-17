@@ -102,8 +102,8 @@ func TestLoginThrottleKeys(t *testing.T) {
 			advance(loginMaxLock)
 		}
 	}
-	for k, want := range map[string]string{"192.0.2.1": "192.0.2.1", "::ffff:192.0.2.1": "192.0.2.1",
-		"2001:db8::1": "2001:db8::/64", "bogus": "unknown"} {
+	for k, want := range map[string]string{"192.0.2.1": "192.0.2.1", "::ffff:192.0.2.1": "192.0.2.1", "[::ffff:192.0.2.1]": "192.0.2.1",
+		"[2001:db8::1]": "2001:db8::/64", "[fe80::1%br-lan]": "fe80::/64", "bogus": "unknown"} {
 		if got := loginKey(k); got != want {
 			t.Errorf("loginKey(%q) = %q, want %q", k, got, want)
 		}
