@@ -175,7 +175,7 @@ func wanDNSFromPeers(c *Config) bool {
 			return true
 		}
 	}
-	return false
+	return len(c.DNS.Fallback) > 0
 }
 
 // The net hooks keep resolvConf = nameservers of every WAN that is up (healthy first); the dns
@@ -336,9 +336,70 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 			fmt.Fprintf(b, "%s 2>/dev/null\n", strings.Join(args, " "))
 		}
 	case "tail":
+		modemSh(c, b)
 		b.WriteString(perfScript)
 	}
 	modeNetSh(c, phase, b)
+}
+
+// modemAlias returns a usable host address in the modem's subnet for the optional management alias.
+func modemAlias(c *Config, w WAN) string {
+	_, lanNet, _ := net.ParseCIDR(c.LAN.IPv4)
+	target := net.ParseIP(w.Modem.Address).To4()
+	if lanNet == nil || target == nil {
+		return ""
+	}
+	mask := net.CIDRMask(24, 32)
+	n := &net.IPNet{IP: target.Mask(mask), Mask: mask}
+	reserved := map[string]bool{net.ParseIP(w.Modem.Address).String(): true}
+	for _, ln := range c.LANNets() {
+		if ip, _, err := net.ParseCIDR(ln.IPv4); err == nil {
+			reserved[ip.String()] = true
+		}
+	}
+	for _, x := range c.WAN {
+		if ip := net.ParseIP(strings.SplitN(x.IPv4, "/", 2)[0]).To4(); ip != nil {
+			reserved[ip.String()] = true
+		}
+	}
+	ip := append(net.IP(nil), n.IP...)
+	for i := 0; i < 1<<16; i++ {
+		ip[len(ip)-1]++
+		if !n.Contains(ip) {
+			break
+		}
+		if !reserved[ip.String()] {
+			return fmt.Sprintf("%s/32", ip)
+		}
+	}
+	return ""
+}
+
+func modemSh(c *Config, b *strings.Builder) {
+	b.WriteString("if [ -r /run/mini-router/modem-aliases ]; then while read -r d a t; do ip addr del \"$a\" dev \"$d\" 2>/dev/null || true; ip route del \"$t/32\" dev \"$d\" 2>/dev/null || true; done < /run/mini-router/modem-aliases; fi\n: > /run/mini-router/modem-aliases\n")
+	b.WriteString("if [ -r /run/mini-router/modem-neigh ]; then while read -r ip d; do ip neigh del proxy \"$ip\" dev \"$d\" 2>/dev/null || true; done < /run/mini-router/modem-neigh; fi\n: > /run/mini-router/modem-neigh\n")
+	for _, w := range c.WAN {
+		address := normalizedModemAddress(w)
+		if address == "" || w.Proto != "pppoe" {
+			continue
+		}
+		alias := modemAlias(c, w)
+		if alias == "" {
+			continue
+		}
+		fmt.Fprintf(b, "ip addr replace %s dev %s\n", alias, w.LinkDev())
+		fmt.Fprintf(b, "ip route replace %s/32 dev %s src %s\n", address, w.LinkDev(), strings.TrimSuffix(alias, "/32"))
+		fmt.Fprintf(b, "echo %s %s %s >> /run/mini-router/modem-aliases\n", w.LinkDev(), alias, address)
+		for _, ln := range c.LANNets() {
+			if ln.Zone != "lan" {
+				continue
+			}
+			if _, n, err := net.ParseCIDR(ln.IPv4); err == nil && n.Contains(net.ParseIP(address)) {
+				fmt.Fprintf(b, "ip neigh replace proxy %s dev %s 2>/dev/null || true\n", address, ln.Bridge)
+				fmt.Fprintf(b, "echo %s %s >> /run/mini-router/modem-neigh\n", address, ln.Bridge)
+			}
+		}
+	}
 }
 
 // wanVLANCleanupSh removes VLAN links left by a previous WAN configuration.  The
@@ -714,6 +775,12 @@ func netNft(c *Config, hook string, n *Nft) {
 		for _, r := range lanGatewayRouteNAT(c) {
 			n.W("%s", r)
 		}
+		for _, r := range wanGatewayNATRules(c) {
+			n.W("%s", r)
+		}
+		for _, r := range modemNATRules(c) {
+			n.W("%s", r)
+		}
 	case "forward_first":
 		for _, r := range policyFallbackRules(c) {
 			n.W("%s", r)
@@ -747,6 +814,57 @@ func netNft(c *Config, hook string, n *Nft) {
 			}
 		}
 	}
+}
+
+func modemNATRules(c *Config) []string {
+	var out []string
+	for _, w := range c.WAN {
+		address := normalizedModemAddress(w)
+		if address == "" || w.Proto != "pppoe" {
+			continue
+		}
+		ip := net.ParseIP(address)
+		if ip == nil || ip.To4() == nil {
+			continue
+		}
+		for _, ln := range c.LANNets() {
+			if ln.Zone != "lan" {
+				continue
+			}
+			_, n, err := net.ParseCIDR(ln.IPv4)
+			if err != nil {
+				continue
+			}
+			out = append(out, fmt.Sprintf("iifname %q oifname %q ip daddr %s ip saddr %s masquerade comment \"modem:%s\"", ln.Bridge, w.LinkDev(), ip, n, w.Name))
+		}
+	}
+	return out
+}
+
+// wanGatewayNATRules keeps LAN clients' packets to an overlapping DHCP/static gateway on the WAN.
+// The lease is runtime state, so fwLoad after a WAN hook picks up changes without config edits.
+func wanGatewayNATRules(c *Config) []string {
+	var out []string
+	for _, w := range c.WAN {
+		l, ok := readLease(w.Name)
+		if !ok || l.Gateway == "" || l.Dev == "" {
+			continue
+		}
+		gw := net.ParseIP(l.Gateway)
+		if gw == nil || gw.To4() == nil {
+			continue
+		}
+		for _, ln := range c.LANNets() {
+			if ln.Zone != "lan" {
+				continue
+			}
+			_, n, err := net.ParseCIDR(ln.IPv4)
+			if err == nil && n.Contains(gw) {
+				out = append(out, fmt.Sprintf("iifname %q oifname %q ip daddr %s ip saddr %s masquerade comment \"wan-gateway:%s\"", ln.Bridge, l.Dev, gw, n, w.Name))
+			}
+		}
+	}
+	return out
 }
 
 // sortedWANs returns WAN names ordered by preference: healthy first, then metric, then config order.

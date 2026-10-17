@@ -74,9 +74,10 @@ type DNS struct {
 	StaleCache   int      `yaml:"use_stale_cache"`
 	NoNegCache   bool     `yaml:"no_negcache"`
 	EDNS         int      `yaml:"edns_packet_max"`
-	Upstream     string   `yaml:"upstream"` // isp (DNS from PPPoE, default) | manual (servers) | dot (stubby)
-	Servers      []string `yaml:"servers"`  // manual upstreams: ip[#port]
-	DoT          DoT      `yaml:"dot"`      // stubby, used when services.stubby is enabled
+	Upstream     string   `yaml:"upstream"`           // isp (DNS from PPPoE, default) | manual (servers) | dot (stubby)
+	Servers      []string `yaml:"servers"`            // manual upstreams: ip[#port]
+	Fallback     []string `yaml:"fallback,omitempty"` // isp fallback when no WAN currently supplies DNS
+	DoT          DoT      `yaml:"dot"`                // stubby, used when services.stubby is enabled
 	ServersFile  string   `yaml:"servers_file"`
 	AddnHosts    []string `yaml:"addn_hosts"`
 	Rebind       bool     `yaml:"rebind_protection"`
@@ -703,8 +704,8 @@ func dnsUpstreamLines(c *Config) []string {
 			}
 		}
 	default:
-		// dnsmasq polls every resolv file and uses the newest: pppd's own file covers the moments
-		// before the net hooks have written the merged one (e.g. right after boot or an upgrade)
+		// The merged file follows current leases; pppd's own file remains a transient bootstrap
+		// source while a PPP session is coming up or the merged hook state is being rebuilt.
 		out = append(out, "resolv-file="+ResolvPPP)
 		if wanDNSFromPeers(c) {
 			out = append(out, "resolv-file="+resolvConf)
@@ -935,11 +936,27 @@ func validUpstream(c *Config, v *Validator) {
 	d := c.DNS
 	switch d.Upstream {
 	case "isp":
+		if len(c.DNS.Fallback) > 3 {
+			v.Add("dns.fallback: at most 3 servers")
+		}
+		for _, s := range c.DNS.Fallback {
+			if net.ParseIP(s) == nil {
+				v.Add("dns.fallback: IPv4 or IPv6 address (port is not supported), got %q", s)
+			} else if serverLoops(c, s) {
+				v.Add("dns.fallback: %s is dnsmasq itself", s)
+			}
+		}
 	case "manual":
+		if len(c.DNS.Fallback) > 0 {
+			v.Add("dns.fallback: only valid with dns.upstream: isp")
+		}
 		if len(d.Servers) == 0 {
 			v.Add("dns.servers: upstream manual needs at least one server")
 		}
 	case "dot":
+		if len(c.DNS.Fallback) > 0 {
+			v.Add("dns.fallback: only valid with dns.upstream: isp")
+		}
 		if !c.Services.Stubby.Enabled {
 			v.Add("dns.upstream: dot needs services.stubby.enabled")
 		}

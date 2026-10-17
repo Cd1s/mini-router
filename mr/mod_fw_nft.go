@@ -119,7 +119,15 @@ func renderNft(c *Config, exists func(string) bool) string {
 	r("meta nfproto ipv6 icmpv6 type { destination-unreachable, packet-too-big, time-exceeded, parameter-problem, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept")
 	r("meta nfproto ipv6 icmpv6 type echo-request limit rate 20/second accept")
 	r("ip6 saddr fe80::/10 icmpv6 type { mld-listener-query, mld-listener-report, mld-listener-done, mld2-listener-report } accept")
-	r("ip6 saddr fc00::/6 ip6 daddr fc00::/6 udp dport 546 accept comment \"dhcpv6-client\"")
+	var dhcp6WAN []string
+	for _, x := range c.WAN {
+		if x.IPv6 {
+			dhcp6WAN = append(dhcp6WAN, x.Ifname())
+		}
+	}
+	if len(dhcp6WAN) > 0 {
+		r("iifname { %s } ip6 daddr fe80::/10 udp sport 547 udp dport 546 accept comment \"dhcpv6-client\"", quoteList(dhcp6WAN))
+	}
 	var dhcpWAN []string
 	for _, x := range c.WAN {
 		if x.Proto == "dhcp" {
@@ -244,6 +252,17 @@ func fwNft(c *Config, hook string, n *Nft) {
 			if on(x.Enabled) && x.Dest != "router" {
 				for _, l := range fwRuleLines(c, x, fwClockFor(c)) {
 					n.W("%s", l)
+				}
+			}
+		}
+		for _, w := range c.WAN {
+			address := normalizedModemAddress(w)
+			if address == "" || w.Proto != "pppoe" {
+				continue
+			}
+			for _, ln := range c.LANNets() {
+				if ln.Zone == "lan" {
+					n.W("iifname %q oifname %q ip daddr %s accept comment \"modem:%s\"", ln.Bridge, w.LinkDev(), address, w.Name)
 				}
 			}
 		}

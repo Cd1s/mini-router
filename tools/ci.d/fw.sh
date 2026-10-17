@@ -27,6 +27,8 @@ for s in \
 	'flags offload'; do
 	grep -qF -- "$s" "$H" || fail "home ruleset lacks: $s"
 done
+grep -qF 'ip6 daddr fe80::/10 udp sport 547 udp dport 546 accept comment "dhcpv6-client"' "$H" || fail "home: DHCPv6 client rule"
+if grep -qF 'ip6 saddr fc00::/6 ip6 daddr fc00::/6 udp dport 546' "$H"; then fail "home: stale restrictive DHCPv6 rule"; fi
 if grep -q 'ac_4\|meta hour' "$H"; then fail "home ruleset has access-control / schedule rules it did not ask for"; fi
 
 echo "-- lab: packets through the lab ruleset"
