@@ -216,14 +216,18 @@ func lan6Renumber(c *Config) {
 		// A WAN with IPv6 or PD disabled has no owner for its old prefix.  Omit
 		// its keys so lan6Plan emits them as stale instead of preserving the
 		// transient empty state used during a normal dhcpcd release.
+		retire := false
 		if !w.IPv6 || !w.IPv6PD {
 			for k := range prev.Addrs {
 				if strings.HasPrefix(k, w.Name+" ") {
+					retire = true
 					os.Remove(pd6File(w.Name))
 					break
 				}
 			}
-			continue
+			if retire {
+				continue
+			}
 		}
 		for _, l := range strings.Fields(readFile(pd6File(w.Name))) {
 			if p, err := netip.ParsePrefix(l); err == nil {
@@ -234,6 +238,16 @@ func lan6Renumber(c *Config) {
 	curByWAN := lan6ByWAN(cur, wans, pds)
 	for _, w := range c.WAN {
 		if !w.IPv6 || !w.IPv6PD {
+			retire := false
+			for k := range prev.Addrs {
+				if strings.HasPrefix(k, w.Name+" ") {
+					retire = true
+					break
+				}
+			}
+			if !retire {
+				continue
+			}
 			for br := range cur {
 				delete(curByWAN, lan6Key(w.Name, br))
 			}
