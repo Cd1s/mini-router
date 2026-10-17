@@ -795,14 +795,15 @@ func apiSysUpdateCheck(r apiReq) apiResp {
 	if r.method != "POST" {
 		return errResp(405, "POST required")
 	}
-	c, err := loadConfig(ConfigPath, SecretsPath)
+	c, err := loadConfig(sysConfigPath, sysSecretsPath)
 	if err != nil {
 		return errResp(500, "%v", err)
 	}
-	if err := updateCheck(c, ddnsHTTP()); err != nil {
+	result, err := updateCheckResult(c, ddnsHTTP())
+	if err != nil {
 		return errResp(502, "%v", err)
 	}
-	return apiResp{body: map[string]any{"ok": true}}
+	return apiResp{body: result}
 }
 
 // notifyCommand: `mr notify status | test [NAME] | flush [--hook]`.

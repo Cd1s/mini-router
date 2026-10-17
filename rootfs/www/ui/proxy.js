@@ -483,7 +483,7 @@ registerPage("proxy", "proxy-rules", "分流规则", 20, async ()=>{
     ed);
 });
 
-// ---------------- 例外设备 ----------------
+// ---------------- 按设备全局代理 ----------------
 registerPage("proxy", "proxy-global", "按设备全局代理", 25, async ()=>{
   const p = P(); p.global ||= [];
   const devices = (S.cfg.devices||[]).map(d=>[d.name,d.name]);
@@ -564,8 +564,8 @@ registerPage("proxy", "proxy-status", "代理状态", 40, async ()=>{
   };
   await draw();
   S.timer = setInterval(()=>draw().catch(()=>{}), 3000);
-  const check = h("button",{class:"btn sm",onclick:async e=>{ e.target.disabled=true; try { await api("proxy.check",{}); toast("代理自检通过"); } catch(err){ toast((err.data&&err.data.errors?err.data.errors.join("\n"):err.message),6000); } finally { e.target.disabled=false; } }},"代理自检");
-  const ex = p.extra_config ? h("div",{},h("span",{class:"mono"},p.extra_config),h("div",{class:"mut"},"只读：该路径的 sing-box JSON 片段会在应用时合并；内容和密钥不会在面板回显。")) : h("span",{class:"mut"},"未设置");
+  const check = h("button",{class:"btn sm",onclick:async e=>{ if(!p.enabled) return toast("代理未启用"); e.target.disabled=true; try { await api("proxy.check",{}); toast("代理自检通过"); } catch(err){ toast((err.data&&err.data.errors?err.data.errors.join("\n"):err.message),6000); } finally { e.target.disabled=false; } }},"代理自检");
+  const ex = p.extra_config ? h("div",{},h("span",{class:"mono"},p.extra_config),h("div",{class:"mut"},"只读：该路径的 sing-box JSON 片段会在应用时合并；内容和密钥不会在面板回显。此外部文件不包含在 mr backup 中。")) : h("span",{class:"mut"},"未设置");
   return h("div",{}, top, card("代理自检 / 额外配置", [h("div",{class:"row"},check,h("span",{class:"sp"}),ex)]), card(connTitle, connBox, filter, true));
 });
 })();

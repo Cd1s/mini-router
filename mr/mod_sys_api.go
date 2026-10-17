@@ -268,6 +268,37 @@ func apiSysServices(r apiReq) apiResp {
 	return apiResp{body: body}
 }
 
+// apiSysTSLogin starts the interactive Tailscale login flow for the current
+// web session. It is intentionally session-only (not in TokenScope): the
+// returned URL is a one-time enrollment flow and must not be exposed to API
+// tokens.
+func apiSysTSLogin(r apiReq) apiResp {
+	if r.method != "POST" {
+		return errResp(405, "POST required")
+	}
+	c, err := loadConfig(ConfigPath, SecretsPath)
+	if err != nil {
+		return errResp(500, "%v", err)
+	}
+	if !c.Services.Tailscale.Enabled {
+		return errResp(409, "Tailscale is disabled")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tailscale", "login")
+	_ = cmd.Run() // login may time out while waiting for the browser; status still carries AuthURL
+	statusCtx, statusCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer statusCancel()
+	raw, _ := exec.CommandContext(statusCtx, "tailscale", "status", "--json").Output()
+	if ts, perr := tailscaleStatus(raw); perr == nil {
+		if u, ok := ts["auth_url"].(string); ok && u != "" {
+			return apiResp{body: map[string]any{"state": ts["state"], "auth_url": u}}
+		}
+		return apiResp{body: map[string]any{"state": ts["state"]}}
+	}
+	return errResp(502, "Tailscale login status unavailable")
+}
+
 // ---- system log ----
 
 // logFiles: busybox syslogd's file and its rotation (older first). Variable for tests.

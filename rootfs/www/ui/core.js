@@ -548,7 +548,7 @@ async function startApply(payload){
   try { v = await api("validate", payload); } catch(e){
     return toast(e.data&&e.data.rev ? "配置已被其它来源修改（另一个浏览器、命令行或 API）：请刷新页面后重做这次修改。" : "校验请求失败："+e.message, 6000); }
   if (v.errors && v.errors.length){
-    const items = v.errors.map(x=>h("li",{}, x, String(x).startsWith("guard.") ? [" ", h("a",{href:"#guard-card",onclick:()=>m.remove()},"跳到安全基线")]:null));
+    const items = v.errors.map(x=>h("li",{}, x, String(x).startsWith("guard.") ? [" ", h("a",{href:"#system",onclick:()=>{m.remove();setTimeout(()=>document.getElementById("guard-card")?.scrollIntoView({behavior:"smooth"}),100);}},"跳到安全基线")]:null));
     const m = modal("配置有误，未应用", h("ul",{class:"err"}, items), [h("button",{class:"btn p",onclick:()=>m.remove()},"返回修改")]);
     return;
   }

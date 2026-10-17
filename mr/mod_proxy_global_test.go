@@ -33,6 +33,13 @@ func TestProxyGlobalDevice(t *testing.T) {
 		t.Errorf("port collision not caught: %s", errs)
 	}
 	c.Proxy.APIPort = 0
+	c.Proxy.Global = []ProxyGlobal{{Name: "kids", Device: "group:kids", Outbound: "jp1"}}
+	if errs := c.Validate(); len(errs) > 0 {
+		t.Fatalf("group global: %v", errs)
+	}
+	if nft := renderNft(c, func(string) bool { return true }); !strings.Contains(nft, "02:00:00:00:00:31") {
+		t.Fatalf("group global MAC missing from nft: %s", nft)
+	}
 	// unknown outbound, a group, both keys
 	c.Proxy.Global = []ProxyGlobal{{Name: "a", MAC: "aa:bb:cc:00:00:01", Outbound: "nowhere"}, {Name: "b", Device: "group:kids", Outbound: "jp1"}, {Name: "c", MAC: "aa:bb:cc:00:00:02", Device: "tv-box", Outbound: "jp1"}}
 	errs := strings.Join(c.Validate(), "\n")

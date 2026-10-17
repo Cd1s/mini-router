@@ -41,13 +41,20 @@ addCSS(`
 // ---------- shared bits ----------
 const mono = s => h("span",{class:"mono"}, s);
 const dash = v => (v===undefined || v===null || v==="") ? h("span",{class:"mut"},"—") : v;
+// Optional booleans in router.yaml use missing = enabled. Keep that default visible
+// without materialising a `true` key when the user has not changed the setting.
+const defaultBool = (obj, key)=>h("label",{class:"sw"}, h("input",{type:"checkbox",checked:obj[key]!==false,onchange:e=>{
+  if (e.target.checked) delete obj[key]; else obj[key]=false; touch();
+}}), h("span"));
 const C = ()=>{
+  const clean = S.orig === JSON.stringify(S.cfg);
   const c = S.cfg;
   c.system ||= {}; c.system.ntp ||= []; c.system.sysctl ||= {};
   c.services ||= {};
   for (const k of ["tailscale","dstatus","stubby","ssh","panel"]) c.services[k] ||= {};
   c.services.ssh.authorized_keys ||= [];
   c.schedules ||= [];
+  if (clean) S.orig = JSON.stringify(S.cfg);
   return c;
 };
 const errText = e => e && e.data && e.data.errors ? e.data.errors.join("\n") : (e && e.message) || String(e);
@@ -220,6 +227,16 @@ function edgeCard(c, st, svc){
   const editRoute = (orig, save)=>{
     const o = clone(orig), auth = o.auth || {};
     if (o.enabled === undefined) o.enabled = true;
+    const originalSecret = auth.password_secret || "";
+    const secretKey = ()=>{
+      if (auth.password_secret) return auth.password_secret;
+      const base = String(o.name||o.host||"site").toLowerCase().replace(/[^a-z0-9_-]/g,"_").replace(/^_+|_+$/g,"") || "site";
+      auth.password_secret = ("edge_"+base.slice(0,28)+"_pw").slice(0,40);
+      return auth.password_secret;
+    };
+    const password = h("input",{type:"password",autocomplete:"new-password",placeholder:auth.password_secret&&S.secretsSet[auth.password_secret]?"已设置（留空不变）":"未设置",value:auth.password_secret&&S.secrets[auth.password_secret]||"",
+      oninput:e=>{ const n=secretKey(); if(e.target.value) S.secrets[n]=e.target.value; else if(!S.secretsSet[n]) delete S.secrets[n]; touch(); }});
+    const cleanup = ()=>{ if (auth.password_secret && auth.password_secret!==originalSecret && S.secrets[auth.password_secret] && !S.secretsSet[auth.password_secret]) delete S.secrets[auth.password_secret]; };
     const m = modal(orig.name ? "编辑站点 · "+orig.name : "添加站点", form(
       ...field("启用", inBool(o,"enabled")),
       ...field("名称", inText(o,"name",{placeholder:"nas"})),
@@ -229,15 +246,19 @@ function edgeCard(c, st, svc){
       ...field("说明", inText(o,"desc",{placeholder:"可选"})),
       h("h4",{style:"grid-column:1/-1;margin:10px 0 0"},"Basic Auth（可选）"),
       ...field("用户名", inText(auth,"user",{placeholder:"alice"})),
-      ...field("密码引用名", inText(auth,"password_secret",{placeholder:"edge_nas_pw",class:"mono"}), "密码只写入 secrets.yaml，已设置的密码不会回显"),
-      ...field("密码", inSecret(auth,"password_secret"))
-    ), [h("button",{class:"btn",onclick:()=>m.remove()},"取消"), h("button",{class:"btn p",onclick:()=>{
+      ...field("密码引用名", h("input",{type:"text",value:auth.password_secret||"",readonly:true,class:"mono"}), "密码只写入 secrets.yaml，引用名会按站点自动生成"),
+      ...field("密码", password)
+    ), [h("button",{class:"btn",onclick:()=>{cleanup();m.remove();}},"取消"), h("button",{class:"btn p",onclick:()=>{
+      if (auth.user && !auth.password_secret) return toast("请填写 Basic Auth 密码");
+      if (S.secrets[auth.password_secret] && !auth.user) return toast("请填写 Basic Auth 用户名");
       o.auth = (auth.user || auth.password_secret) ? auth : undefined;
+      if (!auth.user && !S.secrets[auth.password_secret]) { delete o.auth; cleanup(); }
+      if (o.enabled) delete o.enabled;
       for (const k of ["desc","allow","auth"]) if (o[k]===undefined || o[k]==="" || (Array.isArray(o[k])&&!o[k].length)) delete o[k];
       save(o); m.remove(); attach(); drawRoutes(); }} ,"确定")]);
   };
   const drawRoutes = ()=>routeBody.replaceChildren(...(routes.length ? routes.map((r,i)=>h("tr",{},
-    h("td",{},inBool(r,"enabled")), h("td",{},mono(r.name||"")), h("td",{},mono(r.host||"")), h("td",{},mono(r.to||"")),
+    h("td",{},defaultBool(r,"enabled")), h("td",{},mono(r.name||"")), h("td",{},mono(r.host||"")), h("td",{},mono(r.to||"")),
     h("td",{},allowText(r.allow)), h("td",{},r.desc||""), h("td",{},h("button",{class:"btn sm",onclick:()=>editRoute(r,o=>{routes[i]=o; drawRoutes();})},"编辑")," ",h("button",{class:"btn sm d",onclick:()=>{routes.splice(i,1);attach();drawRoutes();}},"删除")))) : [h("tr",{},h("td",{colspan:7,class:"mut"},"（空）"))]));
   drawRoutes();
   const t = {el:h("div",{class:"tw"},h("table",{},h("thead",{},h("tr",{},["启用","名称","域名","转发到","允许访问","说明",""] .map(x=>h("th",{},x)))),routeBody)), add:h("button",{class:"btn sm p",onclick:()=>editRoute(EDGE_BLANK(),o=>{routes.push(o);attach();drawRoutes();})},"+ 添加站点")};
@@ -278,6 +299,8 @@ function edgeCard(c, st, svc){
       ...field("HTTPS 端口", h("input",{type:"number", min:1, max:65535, value:ed.port??443, style:"max-width:110px",
         oninput:e=>{ ed.port = e.target.value===""?443:Number(e.target.value); attach(); }})),
       ...field("对外网开放", sw(!!ed.open, v=>{ ed.open = v; }), "打开后外网（IPv4 + IPv6）能访问这个端口；每个站点还可以用“允许访问”限制来源。不要再在防火墙里开放同一端口（会被拒绝）"),
+      ...field("外网端口", h("input",{type:"number", min:0, max:65535, value:ed.wan_port||"", disabled:!ed.open, placeholder:"留空 = 不使用", style:"max-width:130px",
+        oninput:e=>{ if(e.target.value===""||Number(e.target.value)===0) delete ed.wan_port; else ed.wan_port=Number(e.target.value); attach(); }}), "需先开启“对外网开放”；留空 / 0 = 只使用 HTTPS 端口"),
       ...field("局域网解析", sw(ed.lan_dns!==false, v=>{ if (v) delete ed.lan_dns; else ed.lan_dns = false; }), "局域网里这些域名直接解析到路由器（不绕公网，WAN 断了也能用）"),
       ...field("证书邮箱", tx(acme,"email","可留空","260px")),
       ...field("DNS 验证", inSel(acme,"provider",["cloudflare","alidns","dnspod"].map(k=>[k, DDNS_P[k][0]]), ()=>{ attach(); drawAcme(); })),
@@ -294,6 +317,7 @@ function edgeCard(c, st, svc){
 
 // ---------- 服务 ----------
 registerPage("services", "services", "服务", 10, async ()=>{
+  const pageClean = S.orig === JSON.stringify(S.cfg);
   const c = C(), sv = c.services;
   let d = {services:[], others:[]}, dns = null, edge = null;
   try { [d, dns, edge] = await Promise.all([api("sys.services"), api("sys.ddns").catch(()=>null), api("sys.edge").catch(()=>null)]); } catch(e){ toast("读取服务状态失败："+e.message, 4000); }
@@ -327,7 +351,7 @@ registerPage("services", "services", "服务", 10, async ()=>{
     ts.error ? [h("dt",{},"错误"), h("dd",{class:"err"}, ts.error)] : null));
   if (ts && ts.auth_url) tsBody.push(h("div",{class:"sys-warnbox"}, "此路由器尚未登录 Tailscale：", h("a",{href:ts.auth_url,target:"_blank",rel:"noopener noreferrer"},"点此登录"), "，登录后刷新本页。"));
   tsBody.push(h("div",{class:"row",style:"margin-top:8px"}, h("button",{class:"btn sm",onclick:async e=>{
-    e.target.disabled=true; try { const x=await api("sys.services"); const u=x.tailscale&&x.tailscale.auth_url; if(u) window.open(u,"_blank","noopener"); else toast("Tailscale 已登录或暂时没有登录链接"); } catch(err){ toast(err.message,4000); } finally { e.target.disabled=false; }
+    e.target.disabled=true; try { const x=await api("sys.tslogin",{}); if(x.auth_url) window.open(x.auth_url,"_blank","noopener"); else toast(x.state==="Running"?"Tailscale 已登录":"登录链接暂时不可用"); } catch(err){ toast(err.message,4000); } finally { e.target.disabled=false; }
   }},"获取登录链接")));
 
   const cards = [
@@ -354,6 +378,7 @@ registerPage("services", "services", "服务", 10, async ()=>{
       p.online ? "现在" : (p.last_seen && !p.last_seen.startsWith("0001") ? new Date(p.last_seen).toLocaleString() : "-"),
     ])), null, true) : null;
   const others = d.others||[];
+  if (pageClean) S.orig = JSON.stringify(S.cfg);
   return h("div",{},
     h("div",{class:"row",style:"margin-bottom:12px"}, h("span",{class:"mut",style:"flex:1"},"开关改动需要“保存并应用”；重启按钮立即生效。"),
       h("button",{class:"btn sm",onclick:()=>show("services")},"刷新")),
@@ -394,6 +419,7 @@ function tzPicker(sys){
   draw(); return box;
 }
 registerPage("system", "system", "系统设置", 10, async ()=>{
+  const pageClean = S.orig === JSON.stringify(S.cfg);
   const c = C(), s = c.system;
   const clock = h("span",{class:"sys-clock mono"},"…");
   const sync = h("span");
@@ -415,18 +441,19 @@ registerPage("system", "system", "系统设置", 10, async ()=>{
   const st = etable(sys, [{k:"k",l:"参数",ph:"net.ipv4.tcp_congestion_control"},{k:"v",l:"值",ph:"bbr"}], {k:"",v:""}, {noMove:true});
   st.el.addEventListener("input", syncSys); st.el.addEventListener("click", ()=>setTimeout(syncSys));
   st.add.addEventListener("click", ()=>setTimeout(syncSys));
+  if (pageClean) S.orig = JSON.stringify(S.cfg);
   return h("div",{},
     card("基本设置", form(
       ...field("主机名", inText(s,"hostname",{maxlength:63})),
       ...field("zram 压缩内存", inBool(s,"zram"), "内存的 1/4 做压缩交换（zstd），内存紧张时更稳"),
-      ...field("指示灯", inBool(s,"leds"), "关闭路由器前面板状态 / 网络灯；默认开启"),
-      ...field("硬件看门狗", inBool(s,"watchdog"), "没有 /dev/watchdog 的硬件请关闭，否则应用会回滚"),
-      ...field("历史快照数", inNum(s,"history",{min:5,max:200}), "保留 5–200 次配置快照，默认 20"),
+      ...field("指示灯", defaultBool(s,"leds"), "关闭路由器前面板状态 / 网络灯；默认开启"),
+      ...field("硬件看门狗", defaultBool(s,"watchdog"), "没有 /dev/watchdog 的硬件请关闭，否则应用会回滚"),
+      ...field("历史快照数", h("input",{type:"number",min:5,max:200,value:s.history||"",placeholder:"20",oninput:e=>{if(e.target.value==="")delete s.history;else s.history=Number(e.target.value);touch();}}), "保留 5–200 次配置快照，默认 20"),
       ...field("按设备流量统计", inBool(s,"traffic_stats"), "每月统计设备和 WAN 流量，使用少量闪存"))),
     card("断网自救（watchcat）", form(
       ...field("启用", inBool(s.watchcat ||= {},"enabled"), "所有 WAN 断网后自动重拨、重启网络，最后才重启路由器"),
-      ...field("首次动作等待（分钟）", inNum(s.watchcat,"after",{min:3,max:240}), "3–240 分钟；后续动作按指数退避"),
-      ...field("重启最短间隔（小时）", inNum(s.watchcat,"reboot_hours",{min:1,max:168}), "两次 watchcat 重启之间至少 1–168 小时"),
+      ...field("首次动作等待（分钟）", h("input",{type:"number",min:3,max:240,value:s.watchcat.after||"",placeholder:"10",oninput:e=>{if(e.target.value==="")delete s.watchcat.after;else s.watchcat.after=Number(e.target.value);touch();}}), "3–240 分钟；后续动作按指数退避，默认 10"),
+      ...field("重启最短间隔（小时）", h("input",{type:"number",min:1,max:168,value:s.watchcat.reboot_hours||"",placeholder:"6",oninput:e=>{if(e.target.value==="")delete s.watchcat.reboot_hours;else s.watchcat.reboot_hours=Number(e.target.value);touch();}}), "两次 watchcat 重启之间至少 1–168 小时，默认 6"),
       ...field("探测地址", inList(s.watchcat,"targets",{placeholder:"1.1.1.1, 223.5.5.5"}), "最多 4 个 IPv4；为空时使用多 WAN 设置或默认地址"))),
     h("div",{id:"guard-card"}, card("安全基线 guard", [roTable(["键","当前值"], [["never_expose",(c.guard&&c.guard.never_expose||[]).join(", ")||"—"],["always_bypass",(c.guard&&c.guard.always_bypass||[]).join(", ")||"—"],["offload",(c.guard&&c.guard.offload)||"—"],["ssh_lan_only",String(!!(c.guard&&c.guard.ssh_lan_only))]]),
       h("div",{class:"sys-warnbox"}, "这些设置决定路由器的最低安全边界。降低保护可能暴露管理端口或让设备绕过代理，请确认风险后再保存。"),
@@ -1124,7 +1151,7 @@ async function pageNotify(){
       ...field("后台体检（分钟）", num("doctor_interval", chans.length?30:0, {min:0, max:1440}), "每隔多久后台跑一次 mr doctor，新问题记为事件；0 = 关闭。有渠道时默认 30"),
       ...field("自动修复", inBool(n,"auto_heal",attach), "后台体检时先重启已启用但没在运行的服务（每个服务 10 分钟内最多一次），记为体检事件；需要后台体检"),
       ...field("检查新版本", inBool(n,"update_check",attach), "每天查一次 GitHub 上的新版本，有新版本记为事件；只提醒，不会下载或安装"),
-      h("span"), h("div",{},h("button",{class:"btn sm",onclick:async e=>{e.target.disabled=true;try{await api("sys.updatecheck",{});toast("已检查更新");}catch(err){toast(err.message,5000);}finally{e.target.disabled=false;}}},"检查更新")))),
+      h("span"), h("div",{},h("button",{class:"btn sm",onclick:async e=>{e.target.disabled=true;try{const r=await api("sys.updatecheck",{});toast(r.newer?"发现新版本："+r.latest:"已是最新版本（"+r.current+"）",5000);}catch(err){toast(err.message,5000);}finally{e.target.disabled=false;}}},"检查更新")))),
     card("发送状态", status, null, true));
 }
 registerPage("status", "doctor", "体检与事件", 60, ()=>tabs([["doctor","体检",pageDoctor], ["events","事件",pageEvents], ["notify","通知",pageNotify]]));

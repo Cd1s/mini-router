@@ -25,6 +25,9 @@
    "bypass": [
     {"name": "desktop", "mac": "02:c3:06:d6:7f:8a"}
    ],
+   "global": [
+    {"name": "tv", "device": "tv-box", "outbound": "auto"}
+   ],
    "subscriptions": [
     {"name": "airport", "url_secret": "proxy_airport_sub"}
    ]

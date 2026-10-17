@@ -354,6 +354,7 @@ func init() {
 			"sys.time":          apiSysTime,
 			"sys.sshkeys":       apiSysSSHKeys,
 			"sys.services":      apiSysServices,
+			"sys.tslogin":       apiSysTSLogin,
 			"sys.logs":          apiSysLogs,
 			"sys.backup":        apiSysBackup,
 			"sys.restore":       apiSysRestore,
@@ -435,9 +436,23 @@ func sysValidate(c *Config, v *Validator) {
 	}
 	for _, route := range sv.Tailscale.AdvertiseRoutes {
 		pfx, err := netip.ParsePrefix(route)
-		if err != nil || !pfx.IsValid() {
+		if err != nil || !pfx.IsValid() || pfx.Bits() == 0 || pfx != pfx.Masked() {
 			v.Add("services.tailscale.advertise_routes: invalid CIDR %q", route)
+		} else if pfx.Addr().Is4() {
+			inside := false
+			for _, n := range c.LANNets() {
+				if lan, e := netip.ParsePrefix(n.IPv4); e == nil && pfx.Bits() >= lan.Bits() && lan.Contains(pfx.Addr()) {
+					inside = true
+					break
+				}
+			}
+			if !inside {
+				v.Add("services.tailscale.advertise_routes: IPv4 CIDR must be inside a LAN network, got %q", route)
+			}
 		}
+	}
+	if len(sv.Tailscale.AdvertiseRoutes) > 0 && !sv.Tailscale.Enabled {
+		v.Add("services.tailscale.advertise_routes: needs services.tailscale.enabled")
 	}
 	if sv.Lucky != nil {
 		v.Add("services.lucky: removed — use services.ddns and services.edge (docs/modules/sys.md)")

@@ -244,9 +244,11 @@ type clashConn struct {
 	Rule     string    `json:"rule"`
 }
 
+var proxyConfigPath, proxySecretsPath = ConfigPath, SecretsPath
+
 // proxyLive loads the live config for API handlers.
 func proxyLive() (*Config, *apiResp) {
-	c, err := loadConfig(ConfigPath, SecretsPath)
+	c, err := loadConfig(proxyConfigPath, proxySecretsPath)
 	if err != nil {
 		r := errResp(500, "%v", err)
 		return nil, &r
