@@ -17,7 +17,7 @@ step lab isp "$ID" 1 pppoe
 check "ISP back: PPPoE redials and the LAN client is online within 90 s" retry 90 online
 step lab isp "$ID" 1 dhcp
 sleep 30
-step lab console "$ID" 'mr doctor 2>&1 | tail -25; mr status 2>&1 | head -25'
+info lab console "$ID" 'mr doctor 2>&1 | tail -25; mr status 2>&1 | head -25'
 check "ISP moved to DHCP: mr doctor names the cause (no PPPoE server / DHCP on the line)" lab console "$ID" 'mr doctor 2>&1 | grep -iE "pado|no pppoe server|access concentrator|dhcp (offer|server)|改成 dhcp"'
 step lab isp "$ID" 1 pppoe
 check "ISP back to PPPoE: LAN client online again within 90 s" retry 90 online

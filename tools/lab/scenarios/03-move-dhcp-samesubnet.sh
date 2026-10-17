@@ -14,7 +14,7 @@ check "install.sh completes (PPPoE WAN)" lab install "$ID" --wan-proto pppoe
 check "baseline: LAN client online over PPPoE" online
 step lab isp "$ID" 1 dhcp --subnet 192.168.1.0/24 --gw 254
 check "panel API switches the WAN to DHCP (confirmed)" lab change "$ID" '[{"op":"set","path":"wan[wan].proto","value":"dhcp"},{"op":"del","path":"wan[wan].username"},{"op":"del","path":"wan[wan].password_secret"}]'
-step lab console "$ID" 'ip -br addr; ip -4 route; ip neigh show proxy'
+info lab console "$ID" 'ip -br addr; ip -4 route; ip neigh show proxy'
 check "modem .254: router got a WAN lease in 192.168.1.0/24" lab console "$ID" 'ip -4 addr show eth0 | grep -q "inet 192.168.1."'
 check "modem .254: router still answers the LAN client on 192.168.1.1" retry 60 lab lan "$ID" exec 'curl -fsS -o /dev/null --max-time 5 http://192.168.1.1/'
 check "modem .254: LAN client renews and is online" retry 60 online

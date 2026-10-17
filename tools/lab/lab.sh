@@ -24,23 +24,49 @@ use_flavor(){
 use_flavor "${MR_LAB_KERNEL:-lts}"
 MIRROR=$IMGDIR/apk-mirror
 ALPINE=v3.24
+# Downloads used as root on this host are pinned: fixed versions and their SHA256 (checked against
+# Alpine's published .sha256 / .sha512 when pinned). A mismatch stops the command.
+CDN=https://dl-cdn.alpinelinux.org/alpine/$ALPINE/releases
+CLOUD_URL=$CDN/cloud/generic_alpine-3.24.1-x86_64-bios-cloudinit-r0.qcow2
+CLOUD_SHA256=6e2e6fe0572b6632527f268d3659e8fccebda4e1ee470fafe2c4d7b85b6a4df6
+MINIROOTFS_URL=$CDN/x86_64/alpine-minirootfs-3.24.2-x86_64.tar.gz
+MINIROOTFS_SHA256=c5ca053cfe1d85c5b96dff8b9bc57045f7f184a30ffb6b65776409ca90388677
 ADMIN_PASS=labpass1
 mkdir -p "$IMGDIR" "$RUNDIR"
 
 HOST_GUARD_DIR=$RUNDIR/.host-guard
+HOST_GUARD_BASE=$HOST_GUARD_DIR/baseline
 host_manifest(){
   sha256sum /etc/resolv.conf /etc/hosts 2>/dev/null || true
   if [ -d /etc/ppp ]; then
-    find /etc/ppp -type f -print 2>/dev/null | sort | while IFS= read -r f; do sha256sum "$f"; done
+    find /etc/ppp \( -type f -o -type l \) -print 2>/dev/null | sort | while IFS= read -r f; do
+      if [ -L "$f" ]; then printf 'link %s -> %s\n' "$f" "$(readlink "$f")"; else sha256sum "$f"; fi
+    done
   fi
 }
+# The manifest is compared before/after every command, and against a baseline kept across commands:
+# a lab daemon that changes a host file between two commands is caught by the next command.
 host_guard_start(){
   mkdir -p "$HOST_GUARD_DIR"
+  for f in "$HOST_GUARD_DIR"/*.before; do
+    [ -e "$f" ] || continue; gp=${f##*/}; gp=${gp%.before}; [ -d "/proc/$gp" ] || rm -f "$f"
+  done
   HOST_GUARD_FILE=$HOST_GUARD_DIR/$$.before
   host_manifest > "$HOST_GUARD_FILE"
+  if [ "${1:-}" = guard-reset ] || [ ! -s "$HOST_GUARD_BASE" ]; then cp "$HOST_GUARD_FILE" "$HOST_GUARD_BASE"; fi
+  if ! cmp -s "$HOST_GUARD_BASE" "$HOST_GUARD_FILE"; then
+    echo "lab: HOST FILES CHANGED since the guard baseline (between lab commands)" >&2
+    diff -u "$HOST_GUARD_BASE" "$HOST_GUARD_FILE" >&2 || true
+    echo "lab: find the cause first; if the change is not a lab's: tools/lab/lab.sh guard-reset" >&2
+    rm -f "$HOST_GUARD_FILE"; exit 1
+  fi
 }
+MNT=; TMPS=
 host_guard_end(){
   rc=$?
+  umount_image
+  # shellcheck disable=SC2086
+  [ -z "$TMPS" ] || rm -rf $TMPS
   after=$HOST_GUARD_DIR/$$.after
   host_manifest > "$after"
   if ! cmp -s "$HOST_GUARD_FILE" "$after"; then
@@ -51,8 +77,10 @@ host_guard_end(){
   rm -f "$HOST_GUARD_FILE" "$after"
   exit "$rc"
 }
-host_guard_start
+host_guard_start "${1:-}"
 trap host_guard_end EXIT
+# dash runs the EXIT trap on exit only: turn the signals into exits
+trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
 
 die(){ echo "lab: $*" >&2; exit 1; }
 need(){ command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
@@ -69,6 +97,36 @@ ns_etc_setup(){
   printf 'nameserver %s\n' "$2" > "/etc/netns/$1/resolv.conf"
 }
 ns_etc_remove(){ case $1 in mrlab[1-8]-*) rm -rf "/etc/netns/$1";; esac; }
+# temp_dir VAR prefix: a new directory under the image dir, removed when the command ends
+temp_dir(){ _t=$(mktemp -d "$IMGDIR/.$2.XXXXXX"); TMPS="$TMPS $_t"; eval "$1=\$_t"; }
+# one read-only loop mount at a time on a fresh mount point; host_guard_end unmounts it on any exit
+mount_image(){
+  MNT=$(mktemp -d "$IMGDIR/.mnt.XXXXXX")
+  mount -o loop,ro "$1" "$MNT" 2>/dev/null || { rmdir "$MNT"; MNT=; die "cannot mount $1"; }
+}
+umount_image(){
+  [ -n "$MNT" ] || return 0
+  umount "$MNT" 2>/dev/null || umount -l "$MNT" 2>/dev/null || true
+  rmdir "$MNT" 2>/dev/null || true; MNT=
+}
+# The shared image directory (base images, kernels, mirror, release cache) is initialised by one
+# lab command at a time.
+lock_images(){ exec 9>"$IMGDIR/.build.lock"; flock 9; }
+unlock_images(){ flock -u 9; }
+# fetch_pinned URL SHA256 DEST
+fetch_pinned(){
+  _fd=; temp_dir _fd dl
+  curl -fL --retry 3 -o "$_fd/f" "$1" || die "download failed: $1"
+  [ "$(sha256sum < "$_fd/f" | cut -d' ' -f1)" = "$2" ] || die "SHA256 mismatch for $1 (expected $2)"
+  mv "$_fd/f" "$3"
+}
+# verified once per file: SHA256 against the pin, remembered in <file>.ok
+verify_pinned(){
+  # shellcheck disable=SC3013
+  [ "$1.ok" -nt "$1" ] && return 0
+  [ "$(sha256sum < "$1" | cut -d' ' -f1)" = "$2" ] || die "SHA256 mismatch for $1 (expected $2): delete it to download again"
+  : > "$1.ok"
+}
 
 alpine_pkgs(){
   # the lts kernel of the lab base image, the package list of install.sh step 1, then what it adds
@@ -78,21 +136,26 @@ alpine_pkgs(){
   echo dnsmasq-dnssec-nftset
 }
 ensure_cloud(){
-  [ -s "$CLOUD" ] && return 0
-  need curl; need qemu-img
-  echo "Downloading Alpine 3.24 cloud image..."
-  curl -fL --retry 3 -o "$CLOUD.part" "https://dl-cdn.alpinelinux.org/alpine/$ALPINE/releases/cloud/generic_alpine-3.24.1-x86_64-bios-cloudinit-r0.qcow2"
-  mv "$CLOUD.part" "$CLOUD"
-  qemu-img info "$CLOUD" >/dev/null || die "invalid Alpine image"
+  if [ ! -s "$CLOUD" ]; then
+    need curl; need qemu-img
+    echo "lab: downloading the Alpine 3.24 cloud image..." >&2
+    fetch_pinned "$CLOUD_URL" "$CLOUD_SHA256" "$CLOUD"
+  fi
+  verify_pinned "$CLOUD" "$CLOUD_SHA256"
+}
+# raw_of IMG: RAW = a raw copy next to the qcow2 (for read-only loop mounts), written atomically
+raw_of(){
+  RAW=${1%.qcow2}.raw; _rd=
+  # shellcheck disable=SC3013  # -nt: dash and busybox sh have it
+  if [ ! -s "$RAW" ] || [ "$1" -nt "$RAW" ]; then temp_dir _rd raw; qemu-img convert -O raw "$1" "$_rd/r"; mv "$_rd/r" "$RAW"; fi
 }
 # copies /boot/vmlinuz-<flavor> and initramfs-<flavor> out of a qcow2 image
 extract_boot(){
-  img=$1; fl=$2; raw=${img%.qcow2}.raw
-  [ -s "$raw" ] || qemu-img convert -O raw "$img" "$raw"
-  mnt=$IMGDIR/.mnt; mkdir -p "$mnt"
-  mount -o loop,ro "$raw" "$mnt" 2>/dev/null || die "cannot mount $raw"
-  cp "$mnt/boot/vmlinuz-$fl" "$IMGDIR/vmlinuz-$fl"; cp "$mnt/boot/initramfs-$fl" "$IMGDIR/initramfs-$fl"
-  umount "$mnt"; rmdir "$mnt" 2>/dev/null || true
+  img=$1; fl=$2
+  raw_of "$img"; mount_image "$RAW"
+  cp "$MNT/boot/vmlinuz-$fl" "$IMGDIR/vmlinuz-$fl.new"; cp "$MNT/boot/initramfs-$fl" "$IMGDIR/initramfs-$fl.new"
+  umount_image
+  mv "$IMGDIR/vmlinuz-$fl.new" "$IMGDIR/vmlinuz-$fl"; mv "$IMGDIR/initramfs-$fl.new" "$IMGDIR/initramfs-$fl"
 }
 # The lts base: the cloud image booted once, offline, with linux-lts installed from the mirror and
 # cloud-init's state cleaned, so every lab still starts as a never-booted machine.
@@ -101,7 +164,7 @@ ensure_lts_base(){
   [ -s "$lb" ] && [ -s "$IMGDIR/vmlinuz-lts" ] && [ -s "$IMGDIR/initramfs-lts" ] && return 0
   ensure_mirror "$ROOT"
   [ -s "$IMGDIR/vmlinuz-virt" ] || extract_boot "$CLOUD" virt
-  pd=$IMGDIR/.prep; rm -rf "$pd"; mkdir -p "$pd/seed"
+  pd=; temp_dir pd prep; mkdir -p "$pd/seed"
   qemu-img create -f qcow2 -F qcow2 -b "$CLOUD" "$pd/disk.qcow2" >/dev/null; qemu-img resize "$pd/disk.qcow2" 1G >/dev/null
   cp "$LABDIR/guest/prep-lts.yaml" "$pd/seed/user-data"
   printf 'instance-id: mrlab-prep\n' > "$pd/seed/meta-data"
@@ -112,11 +175,12 @@ ensure_lts_base(){
     -append "root=LABEL=/ rootflags=rw rw modules=sd-mod,usb-storage,virtio_blk,ext4 init=/sbin/init console=ttyS0,115200n8" \
     -drive "file=$pd/disk.qcow2,if=virtio,format=qcow2" -drive "file=$pd/seed.iso,if=virtio,format=raw,readonly=on" \
     -nic none -serial "file:$pd/console.log" -display none -no-reboot </dev/null >/dev/null 2>&1 || true
-  grep -q MRLAB-PREP-OK "$pd/console.log" || die "lts base preparation failed (see $pd/console.log)"
+  grep -q MRLAB-PREP-OK "$pd/console.log" || { cp "$pd/console.log" "$IMGDIR/prep-failed.log"; die "lts base preparation failed (see $IMGDIR/prep-failed.log)"; }
   rm -f "${lb%.qcow2}.raw"
-  qemu-img convert -O qcow2 "$pd/disk.qcow2" "$lb"
+  qemu-img convert -O qcow2 "$pd/disk.qcow2" "$pd/lts.qcow2"
+  mv "$pd/lts.qcow2" "$lb"
   extract_boot "$lb" lts
-  rm -rf "$pd" "${lb%.qcow2}.raw"
+  rm -f "${lb%.qcow2}.raw"
 }
 ensure_base(){
   ensure_cloud
@@ -126,25 +190,30 @@ ensure_base(){
 # every package the guest's `apk add` will want. That set is found by installing the base image's
 # world and install.sh's packages into a scratch root inside an Alpine chroot (apk fetch -R would
 # miss install_if packages such as nftables-openrc), minus what the base image already has.
+# Trust: the chroot comes from the pinned minirootfs; its apk checks the signature of every APKINDEX
+# with the keys in that minirootfs and every package against the index. The index files copied into
+# the mirror must be byte-identical to those apk verified. In the guest, apk verifies them again with
+# the keys of the (pinned) cloud image.
 ensure_mirror(){
   pkgs=$(alpine_pkgs "${1:-$ROOT}")
   [ -s "$MIRROR/$ALPINE/main/x86_64/APKINDEX.tar.gz" ] && [ "$(cat "$MIRROR/.pkgs" 2>/dev/null)" = "$pkgs" ] && return 0
   need curl; ensure_cloud
-  [ -s "$IMGDIR/alpine-3.24-x86_64.raw" ] || qemu-img convert -O raw "$CLOUD" "$IMGDIR/alpine-3.24-x86_64.raw"
+  mrfs=$IMGDIR/${MINIROOTFS_URL##*/}
+  [ -s "$mrfs" ] || fetch_pinned "$MINIROOTFS_URL" "$MINIROOTFS_SHA256" "$mrfs"
+  verify_pinned "$mrfs" "$MINIROOTFS_SHA256"
   cr=$IMGDIR/pkgbuild
-  if [ ! -x "$cr/sbin/apk" ]; then
-    mkdir -p "$cr"
-    curl -fL --retry 3 -o "$cr/minirootfs.tar.gz" "https://dl-cdn.alpinelinux.org/alpine/$ALPINE/releases/x86_64/alpine-minirootfs-3.24.2-x86_64.tar.gz"
-    tar -xzf "$cr/minirootfs.tar.gz" -C "$cr"
+  # the chroot is always the content of the verified tarball (re-extracted when that changes)
+  if [ "$(cat "$cr/.minirootfs" 2>/dev/null)" != "$MINIROOTFS_SHA256" ]; then
+    rm -rf "$cr"; mkdir -p "$cr"; tar -xzf "$mrfs" -C "$cr"; echo "$MINIROOTFS_SHA256" > "$cr/.minirootfs"
   fi
   cp /etc/resolv.conf "$cr/etc/resolv.conf"
   printf '%s\n' "https://dl-cdn.alpinelinux.org/alpine/$ALPINE/main" "https://dl-cdn.alpinelinux.org/alpine/$ALPINE/community" > "$cr/etc/apk/repositories"
-  mnt=$IMGDIR/.mnt; mkdir -p "$mnt"
-  mount -o loop,ro "$IMGDIR/alpine-3.24-x86_64.raw" "$mnt" || die "cannot mount Alpine base image"
-  cp "$mnt/etc/apk/world" "$cr/tmp/base-world"
-  awk '/^P:/{p=substr($0,3)} /^V:/{print p"-"substr($0,3)}' "$mnt/lib/apk/db/installed" | sort > "$cr/tmp/base-installed"
-  umount "$mnt"; rmdir "$mnt" 2>/dev/null || true
-  rm -rf "$MIRROR.new" "$cr/tmp/fetch" "$cr/tmp/sim"; mkdir -p "$cr/tmp/fetch" "$cr/tmp/sim"
+  raw_of "$CLOUD"; mount_image "$RAW"
+  cp "$MNT/etc/apk/world" "$cr/tmp/base-world"
+  awk '/^P:/{p=substr($0,3)} /^V:/{print p"-"substr($0,3)}' "$MNT/lib/apk/db/installed" | sort > "$cr/tmp/base-installed"
+  umount_image
+  new=; temp_dir new apk-mirror
+  rm -rf "$cr/tmp/fetch" "$cr/tmp/sim"; mkdir -p "$cr/tmp/fetch" "$cr/tmp/sim"
   chroot "$cr" /sbin/apk update -q
   : > "$cr/tmp/needed"
   # in the same steps as install.sh (and the lts base): dnsmasq first, then dnsmasq-dnssec-nftset
@@ -159,15 +228,15 @@ ensure_mirror(){
   chroot "$cr" /sbin/apk fetch -q -o /tmp/fetch $(sort -u "$cr/tmp/needed")
   rm -rf "$cr/tmp/sim"
   for r in main community; do
-    mkdir -p "$MIRROR.new/$ALPINE/$r/x86_64"
-    curl -fsS --retry 3 -o "$MIRROR.new/$ALPINE/$r/x86_64/APKINDEX.tar.gz" "https://dl-cdn.alpinelinux.org/alpine/$ALPINE/$r/x86_64/APKINDEX.tar.gz"
-    sum=$(sha256sum < "$MIRROR.new/$ALPINE/$r/x86_64/APKINDEX.tar.gz")
+    mkdir -p "$new/$ALPINE/$r/x86_64"
+    curl -fsS --retry 3 -o "$new/$ALPINE/$r/x86_64/APKINDEX.tar.gz" "https://dl-cdn.alpinelinux.org/alpine/$ALPINE/$r/x86_64/APKINDEX.tar.gz"
+    sum=$(sha256sum < "$new/$ALPINE/$r/x86_64/APKINDEX.tar.gz")
     found=0; for f in "$cr"/var/cache/apk/APKINDEX.*.tar.gz; do [ "$(sha256sum < "$f")" = "$sum" ] && found=1; done
     [ "$found" = 1 ] || die "the $r index changed while the mirror was built; run the command again"
-    ln -f "$cr"/tmp/fetch/*.apk "$MIRROR.new/$ALPINE/$r/x86_64/"
+    ln -f "$cr"/tmp/fetch/*.apk "$new/$ALPINE/$r/x86_64/"
   done
-  printf '%s' "$pkgs" > "$MIRROR.new/.pkgs"
-  rm -rf "$MIRROR"; mv "$MIRROR.new" "$MIRROR"
+  printf '%s' "$pkgs" > "$new/.pkgs"
+  chmod 755 "$new"; rm -rf "$MIRROR"; mv "$new" "$MIRROR"
 }
 # Release assets of the working tree (tools/release.sh), cached by the content of the product files.
 ensure_release(){
@@ -185,21 +254,43 @@ ensure_release(){
   echo "$out"
 }
 
-kill_pid(){
-  p=$1
-  [ -s "$p" ] || return 0
-  pid=$(cat "$p"); kill "$pid" 2>/dev/null || true; sleep 0.3; kill -9 "$pid" 2>/dev/null || true; rm -f "$p"
+# stop_pids PID...: TERM (pppd then removes its pid files), KILL what is still there after 3 s
+stop_pids(){
+  [ $# -gt 0 ] || return 0
+  kill "$@" 2>/dev/null || true
+  _n=0
+  while [ "$_n" -lt 15 ]; do
+    _alive=
+    for _p; do [ -d "/proc/$_p" ] && [ "$(cut -d' ' -f3 "/proc/$_p/stat" 2>/dev/null)" != Z ] && _alive=1; done
+    [ -n "$_alive" ] || return 0
+    sleep 0.2; _n=$((_n + 1))
+  done
+  kill -9 "$@" 2>/dev/null || true
 }
+# kill_pid PIDFILE COMM: only a process that still is what the pid file says (no recycled PID)
+kill_pid(){
+  [ -s "$1" ] || { rm -f "$1"; return 0; }
+  _kp=$(cat "$1"); rm -f "$1"
+  [ "$(cat "/proc/$_kp/comm" 2>/dev/null)" = "$2" ] && stop_pids "$_kp"
+  return 0
+}
+# kill_qemu ID [9]: the QEMU whose command line has this lab's overlay (9: no shutdown, a power cut)
 kill_qemu(){
   qov=$(state "$1")/overlay.qcow2
-  for qpid in $(ps -eo pid=,args= | awk -v f="$qov" 'index($0,f)>0 && /qemu-system/ {print $1}'); do
-    kill "$qpid" 2>/dev/null || true; sleep 1; kill -9 "$qpid" 2>/dev/null || true
-  done
+  qp=$(ps -eo pid=,args= | awk -v f="$qov" 'index($0,f)>0 && /qemu-system/ {print $1}')
+  # shellcheck disable=SC2086
+  if [ "${2:-}" = 9 ]; then
+    [ -z "$qp" ] || kill -9 $qp 2>/dev/null || true
+    # the image lock goes with the process: wait for it before the next QEMU opens the overlay
+    for _q in $qp; do _n=0; while [ -d "/proc/$_q" ] && [ "$_n" -lt 50 ]; do sleep 0.1; _n=$((_n + 1)); done; done
+  else stop_pids $qp; fi
   rm -f "$(pidfile "$1")"
 }
-ns_del(){ ip netns pids "$1" 2>/dev/null | xargs -r kill -9 2>/dev/null || true; ip netns del "$1" >/dev/null 2>&1 || true; }
-cleanup_host_links(){
-  for x in mrlab$1s1 mrlab$1s1p mrlab$1s2 mrlab$1s2p mrlab$1sl mrlab$1slp; do ip link del "$x" >/dev/null 2>&1 || true; done
+# every process inside a lab namespace belongs to the lab
+ns_del(){
+  # shellcheck disable=SC2046
+  stop_pids $(ip netns pids "$1" 2>/dev/null)
+  ip netns del "$1" >/dev/null 2>&1 || true
 }
 # The ISP namespace reaches the internet through slirp4netns (user-mode NAT, no host routes) and
 # masquerades the subscriber side with an nftables table that exists only inside that namespace.
@@ -220,10 +311,12 @@ EOF
 up(){
   id=$1; valid_id "$id"; d=$(state "$id"); mkdir -p "$d"
   for s in dnsmasq kea-dhcp6-server radvd; do
-    systemctl is-active --quiet "$s" 2>/dev/null && echo "lab: warning: the host service $s runs; the lab only needs the binary (systemctl disable --now $s)" >&2
+    if systemctl is-active --quiet "$s" 2>/dev/null && [ "${MRLAB_ALLOW_HOST_SERVICES:-0}" != 1 ]; then
+      die "the host service $s runs; the lab only needs the binary: systemctl disable --now $s (or MRLAB_ALLOW_HOST_SERVICES=1)"
+    fi
   done
   if [ -s "$d/flavor" ] && [ -e "$d/overlay.qcow2" ]; then use_flavor "$(cat "$d/flavor")"; else echo "$FLAVOR" > "$d/flavor"; fi
-  ensure_base
+  lock_images; ensure_base; unlock_images
   [ -e "$d/overlay.qcow2" ] || { qemu-img create -f qcow2 -F qcow2 -b "$BASE" "$d/overlay.qcow2" >/dev/null; qemu-img resize "$d/overlay.qcow2" 1G >/dev/null; }
   for n in "$(sw "$id")" "$(isp "$id" 1)" "$(isp "$id" 2)" "$(lan "$id")"; do [ -e "/run/netns/$n" ] || ip netns add "$n"; done
   ns_etc_setup "$(sw "$id")" 127.0.0.1
@@ -236,8 +329,8 @@ up(){
   done
   connect(){ a=$1; b=$2; target=$3; br=$4
     run_ns "$(sw "$id")" ip link show "$a" >/dev/null 2>&1 && return 0
-    cleanup_host_links "$id"
-    ip link add "$a" type veth peer name "$b"; ip link set "$a" netns "$(sw "$id")"; ip link set "$b" netns "$target"
+    # created in the switch namespace with the peer straight in the target: never in the host's
+    ip -n "$(sw "$id")" link add "$a" type veth peer name "$b" netns "$target"
     run_ns "$(sw "$id")" ip link set "$a" master "$br"; run_ns "$(sw "$id")" ip link set "$a" up
     run_ns "$target" ip link set lo up; run_ns "$target" ip link set "$b" up
   }
@@ -273,9 +366,8 @@ up(){
 
 teardown(){
   id=$1; kill_qemu "$id"
-  for w in 1 2; do kill_pid "$(state "$id")/isp$w/slirp.pid"; kill_pid "$(state "$id")/isp$w/slirp-target.pid"; done
+  for w in 1 2; do kill_pid "$(state "$id")/isp$w/slirp.pid" slirp4netns; done
   for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; ns_etc_remove "$n"; done
-  cleanup_host_links "$id"
   rm -rf "$(state "$id")"
 }
 down(){ id=$1; valid_id "$id"; teardown "$id"; echo "down $id"; }
@@ -290,11 +382,12 @@ status(){
 # ---------------------------------------------------------------- ISP simulator
 isp_stop(){
   id=$1; wan=$2; n=$(isp "$id" "$wan"); d=$(state "$id")/isp$wan
-  for p in dnsmasq pppoe radvd kea http; do kill_pid "$d/$p.pid"; done
-  # pppd sessions, radvd and kea started from pppd's ipv6-up script are children of pppoe-server
-  for pid in $(ip netns pids "$n" 2>/dev/null); do
-    case $(cat "/proc/$pid/comm" 2>/dev/null) in pppd|pppoe|radvd|kea-dhcp6|dnsmasq) kill -9 "$pid" 2>/dev/null || true;; esac
-  done
+  # every ISP daemon (dnsmasq, pppoe-server and its pppd/pppoe, the ipv6-up script's radvd and kea, the
+  # modem page) lives in the namespace; only the process slirp4netns is attached to stays
+  anchor=$(cat "$d/slirp-target.pid" 2>/dev/null || echo none)
+  # shellcheck disable=SC2046
+  stop_pids $(ip netns pids "$n" 2>/dev/null | grep -vx "$anchor")
+  rm -f "$d"/dnsmasq.pid "$d"/pppoe.pid "$d"/radvd.pid "$d"/kea.pid "$d"/http.pid
   run_ns "$n" ip addr flush dev "mrlab${id}s${wan}p" 2>/dev/null || true
   run_ns "$n" ip addr flush dev lo scope global 2>/dev/null || true
   run_ns "$n" ip -6 route flush proto static 2>/dev/null || true
@@ -388,7 +481,11 @@ EOF
       # shellcheck disable=SC2086
       run_ns "$n" dnsmasq $dns --listen-address="$subnet.1" --bind-interfaces
       if [ "$nopado" = 0 ]; then
-        run_ns "$n" pppoe-server -I "$dev" -O "$d/pppoe-options" -L "$subnet.1" -R "$subnet.10" -N 8 -X "$d/pppoe.pid"
+        # pppd writes /run/pppN.pid and /run/pppd2.tdb: a private mount namespace with its own /run
+        # (the sessions of every lab are ppp0) keeps them off the host's /run
+        # shellcheck disable=SC2016
+        run_ns "$n" unshare -m --propagation private sh -c 'mount -t tmpfs mrlab-ppp /run && exec "$@"' sh \
+          pppoe-server -I "$dev" -O "$d/pppoe-options" -L "$subnet.1" -R "$subnet.10" -N 8 -X "$d/pppoe.pid"
       fi
       ;;
     *) die "unknown ISP mode: $mode (dhcp|pppoe|static|down)";;
@@ -409,7 +506,7 @@ install_cmd(){
   case $proto in dhcp|pppoe|static) ;; *) die "install: --wan-proto dhcp|pppoe|static";; esac
   need genisoimage
   # labs installing at the same time share the image directory: one mirror / release build at a time
-  exec 9>"$IMGDIR/.build.lock"; flock 9
+  lock_images
   ensure_mirror "$tree"
   d=$(state "$id"); out=$d/install; rm -rf "$out"; mkdir -p "$out/release" "$out/lab"
   if [ -n "$release" ]; then
@@ -446,7 +543,7 @@ EOF
   genisoimage -quiet -r -J -volid cidata -o "$d/seed.iso" -m 'linux-lts-*' -m 'linux-virt-*' -m 'linux-firmware-*' -graft-points \
     user-data="$out/user-data" meta-data="$out/meta-data" network-config="$out/network-config" \
     release="$out/release" lab="$out/lab" apk-mirror="$MIRROR"
-  flock -u 9
+  unlock_images
   # a fresh machine: new overlay over the pristine Alpine image
   kill_qemu "$id"; rm -f "$d/overlay.qcow2" "$d/api.cookies" "$d/flavor"
   printf '%s\n' "${lanip%/*}" > "$d/lan.ip"
@@ -586,7 +683,7 @@ change_cmd(){
 }
 run_cmd(){ id=$1; scen=$2; valid_id "$id"; case $scen in */*) f=$scen;; *) f="$LABDIR/scenarios/$scen.sh";; esac; [ -x "$f" ] || die "scenario not found: $f"; LAB_SH="$LABDIR/lab.sh" "$f" "$id"; }
 reboot_cmd(){ id=$1; valid_id "$id"; agent_exec "$id" 10 'sync; (sleep 1; reboot) &' >/dev/null || true; sleep 8; wait_agent "$id" 180 && echo "rebooted $id"; }
-powercut_cmd(){ id=$1; valid_id "$id"; kill -9 "$(cat "$(pidfile "$id")")" 2>/dev/null || true; kill_qemu "$id"; up "$id" >/dev/null; wait_agent "$id" 180 && echo "power restored $id"; }
+powercut_cmd(){ id=$1; valid_id "$id"; kill_qemu "$id" 9; up "$id" >/dev/null; wait_agent "$id" 180 && echo "power restored $id"; }
 
 usage(){ die "usage: lab.sh up|down|reset|status <id> | isp <id> <wan> dhcp|pppoe|static|down [opts] | install <id> [opts] | lan <id> dhcp|static|check|exec | console|ssh <id> <cmd> | api <id> GET|POST <action> [json] | change <id> <patch-json> [--no-confirm] | reboot|powercut <id> | run <id> <scenario>"; }
 cmd=${1:-}; shift || true
@@ -594,6 +691,7 @@ case $cmd in
   up) up "$@";; down) down "$@";; status) status "$@";; reset) reset "$@";;
   isp) isp_cmd "$@";; install) install_cmd "$@";; lan) lan_cmd "$@";;
   ssh) ssh_cmd "$@";; console) console "$@";; api) api_cmd "$@";; change) change_cmd "$@";; run) run_cmd "$@";;
-  reboot) reboot_cmd "$@";; powercut) powercut_cmd "$@";; mirror) ensure_mirror "${1:-$ROOT}"; echo "$MIRROR";;
+  reboot) reboot_cmd "$@";; powercut) powercut_cmd "$@";; mirror) lock_images; ensure_mirror "${1:-$ROOT}"; echo "$MIRROR";;
+  guard-reset) echo "lab: guard baseline reset ($HOST_GUARD_BASE)";;
   *) usage;;
 esac

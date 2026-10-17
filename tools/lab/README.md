@@ -44,7 +44,9 @@ ip -br link | grep -c mrlab                     # must print 0
 
 Scenarios (TAP output, log in `/tmp/mrlab<ID>-<name>.log`): `$L run $ID 01-fresh-dhcp`,
 `02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`.
-Each starts with `reset`, so give every parallel scenario its own ID.
+Each starts with `reset` and removes its lab when it ends (passed, failed or interrupted;
+`MRLAB_KEEP=1` leaves it up for inspection), so give every parallel scenario its own ID. A failed
+setup step prints `Bail out!` and stops the scenario.
 
 ## Dependencies
 
@@ -53,12 +55,14 @@ services** — every daemon is started by `lab.sh` inside a lab namespace with i
 host dnsmasq would listen on the host's port 53:
 
 ```sh
+# masked first: the packages' postinst would otherwise start radvd / kea on the host for a moment
+systemctl mask dnsmasq kea-dhcp6-server radvd
 apt-get install --no-install-recommends qemu-system-x86 qemu-utils slirp4netns iproute2 nftables \
-  dnsmasq-base ppp pppoe radvd kea-dhcp6-server genisoimage socat curl jq busybox
-systemctl disable --now dnsmasq kea-dhcp6-server radvd 2>/dev/null   # if the packages enabled them
+  dnsmasq-base ppp pppoe radvd kea-dhcp6-server genisoimage python3 openssh-client curl jq busybox
 ```
 
-`lab.sh up` warns when one of those services is running. Kea needs only the package's `/etc/kea`
+`lab.sh up` refuses to start while one of those services runs (`MRLAB_ALLOW_HOST_SERVICES=1`
+overrides). Kea needs only the package's `/etc/kea`
 and `/var/lib/kea` directories (its AppArmor profile allows no other paths), which a private mount
 namespace replaces with lab directories. Go comes from `/etc/profile.d/buildtools.sh`.
 
@@ -142,7 +146,26 @@ with the dnsmasq/pppd/radvd/kea logs). Images and caches are in `/root/build/mr-
 - pppd reads `/etc/netns/<isp>/ppp` (bind-mounted over `/etc/ppp` by `ip netns exec`), never the
   host's `/etc/ppp` scripts. The first PPPoE run loads the host's `ppp_generic` module (via
   `/dev/ppp`), which is the only host-kernel side effect.
+- pppoe-server and its pppd run in a private mount namespace with their own tmpfs `/run`
+  (`/run/ppp0.pid`, `/run/pppd2.tdb` never reach the host); kea likewise. Lab processes are stopped
+  with TERM first (pppd cleans up), KILL after 3 s, and only processes inside the lab's namespaces
+  or ones whose name matches their pid file are signalled.
+- veth pairs are created inside the lab namespaces (`ip -n <sw> link add … peer … netns <ns>`),
+  never in the host's.
+- The host guard compares every command's before/after manifest and a baseline kept across commands
+  (`state/.host-guard/baseline`), so a lab daemon changing a host file between two commands stops
+  the next one. Ctrl-C / TERM still run it. If the change was yours: `lab.sh guard-reset`.
+- Shared images are initialised under a lock (`mr-lab-images/.build.lock`), with temp directories from
+  `mktemp` and loop mounts that are unmounted on every exit.
 - After a run: `sha256sum /etc/resolv.conf` unchanged and `ip -br link | grep -c mrlab` = 0.
+
+### Downloads
+
+The cloud image and the minirootfs used for the package chroot are fixed versions with pinned SHA256s
+in `lab.sh` (checked against Alpine's published `.sha512` / `.sha256` when pinned); a mismatch stops
+the command. apk in the chroot checks every APKINDEX signature against the minirootfs's keys and every
+package against the index; the indexes copied into the mirror must be byte-identical to those it
+verified, and the guest's apk verifies them again with the cloud image's keys.
 
 Never point the lab at a real LAN or a household device.
 
