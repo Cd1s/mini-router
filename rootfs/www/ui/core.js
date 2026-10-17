@@ -633,7 +633,7 @@ function renderWizard(factoryPassword, bootstrapPassword, factoryOrigin){
   const wan=()=>{ if(!c.wan.length)c.wan.push({name:"wan",device:port,proto:"dhcp",metric:0,peerdns:true,ipv6:true,ipv6_pd:true}); return c.wan[0]; };
   const loadPorts=()=>{ if(ports!==null||portsLoading)return; portsLoading=true; api("net.ports").then(j=>{ports=(j.ports||[]).filter(p=>p.kind==="port");portsLoading=false;draw();}).catch(()=>{ports=[];portsLoading=false;draw();}); };
   const applyDetect=(d,w)=>{
-    w.device=port; w.proto=d.recommendation||w.proto||"dhcp"; w.peerdns=true; w.ipv6=true; w.ipv6_pd=true;
+    w.device=port; if(["pppoe","dhcp","static"].includes(d.recommendation))w.proto=d.recommendation; w.peerdns=true; w.ipv6=true; w.ipv6_pd=true;
     if(w.proto==="pppoe"){w.password_secret||="pppoe_password";w.mtu=1492;}
     if(w.proto==="static"&&d.dhcp&&d.dhcp.offer){w.ipv4=d.dhcp.address+"/24";w.gateway=d.dhcp.gateway;w.dns=d.dhcp.dns||[];}
     touch();

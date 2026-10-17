@@ -24,3 +24,18 @@ func TestFirstRunMarkerKinds(t *testing.T) {
 		t.Fatal("factory marker did not transition after setup")
 	}
 }
+
+func TestSuppressFirstRunForAcceptedExistingRouter(t *testing.T) {
+	if !suppressFirstRun("install\n", "webui_password: pbkdf2-sha256$1$abc\n", true) {
+		t.Fatal("accepted router with password was not suppressed")
+	}
+	if suppressFirstRun("install\n", "webui_password: pbkdf2-sha256$1$abc\n", false) {
+		t.Fatal("unapplied config was suppressed")
+	}
+	if !suppressFirstRun("factory\n", "webui_password: pbkdf2-sha256$1$abc\n", true) {
+		t.Fatal("stale factory marker did not suppress an accepted router")
+	}
+	if suppressFirstRun("install\n", "wifi_key: only\n", true) {
+		t.Fatal("router without admin password was suppressed")
+	}
+}

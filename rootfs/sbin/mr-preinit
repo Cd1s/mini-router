@@ -83,14 +83,6 @@ firstboot() {
 		return 1
 	fi
 	rm -rf "$render_tmp"
-	# Provisioned configs are still a first-run handoff: keep the marker even
-	# when the factory marker was absent from an older image.
-	mkdir -p /etc/mini-router/state
-	if grep -q '^webui_password:' /etc/mini-router/secrets.yaml 2>/dev/null; then
-		printf 'install\n' > /etc/mini-router/state/first-run
-	elif [ ! -e /etc/mini-router/state/first-run ]; then
-		printf 'factory\n' > /etc/mini-router/state/first-run
-	fi
 	want=/etc/mini-router/gen/services
 	rl=/etc/runlevels/default
 	if [ -s "$want" ]; then
@@ -259,6 +251,7 @@ if [ -n "$vol" ] && mount -t ubifs -o noatime "$ubi:rootfs_data" /overlay 2>/dev
 	[ -d /overlay/mr/upper ] || fresh=1
 	if [ -e /overlay/.mr-factory-reset ]; then
 		log "factory reset: wiping rootfs_data ($vol)"
+		fresh=1
 		umount /overlay
 		wipe_vol "$vol" || log "wiping $vol failed"
 		mount -t ubifs -o noatime "$ubi:rootfs_data" /overlay 2>/dev/null || data=
