@@ -617,6 +617,11 @@ ip -n "$PDDC" link set dpc up; ip -n "$PDDS" link set dps up
 ip -n "$PDDC" addr add 10.78.0.2/24 dev dpc
 ip -n "$PDDS" addr add 10.78.0.1/24 dev dps
 ip netns exec "$PDDS" dnsmasq --no-resolv --no-hosts --port=0 --interface=dps --bind-interfaces --dhcp-range=10.78.0.10,10.78.0.20,255.255.255.0,1m --pid-file="$T/detect-dnsmasq.pid" --log-facility="$T/detect-dnsmasq.log"
+for i in 1 2 3 4 5; do
+	[ -s "$T/detect-dnsmasq.pid" ] && break
+	sleep .2
+done
+[ -s "$T/detect-dnsmasq.pid" ] || fail "real dnsmasq did not start"
 detectcfg="$T/detect.yaml"; printf 'lan: {ipv4: 192.168.1.1/24}\nwan: []\n' > "$detectcfg"; : > "$T/detect-secrets.yaml"
 ppjson=$(timeout 12 ip netns exec "$PDPC" "$MRH" -c "$detectcfg" -s "$T/detect-secrets.yaml" wan detect pps --timeout 3)
 printf '%s\n' "$ppjson" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["recommendation"]=="pppoe" and x["pppoe"]["ac_name"]=="testAC", x'
