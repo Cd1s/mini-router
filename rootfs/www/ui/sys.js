@@ -363,7 +363,7 @@ function tzPicker(sys){
       TZS.map(([v,l])=>h("option",{value:v, selected:!custom && v===cur}, l)),
       h("option",{value:"__custom", selected:custom}, "自定义 POSIX TZ…"));
     if (!custom && !TZS.some(z=>z[0]===cur)) sel.prepend(h("option",{value:cur, selected:true}, cur||"（未设置 = UTC）"));
-    box.replaceChildren(sel, custom ? h("div",{style:"margin-top:6px"}, inText(sys,"timezone",{class:"mono", placeholder:"例如 <+07>-7 或 CET-1CEST,M3.5.0,M10.5.0/3"})) : null);
+    box.replaceChildren(...[sel, custom ? h("div",{style:"margin-top:6px"}, inText(sys,"timezone",{class:"mono", placeholder:"例如 <+07>-7 或 CET-1CEST,M3.5.0,M10.5.0/3"})) : null].filter(Boolean));
   };
   draw(); return box;
 }

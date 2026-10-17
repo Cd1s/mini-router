@@ -320,7 +320,7 @@ printf '%s\n' "$MR_ADMIN_PASS" | /usr/sbin/mr passwd > /dev/null
 # A marker drives the post-install browser wizard.  It is separate from the
 # password so an install with MR_APPLY=0 cannot be mistaken for an old router;
 # the marker is removed only after the wizard's apply has been confirmed.
-/usr/bin/touch "$CONF/state/first-run"
+/usr/bin/printf 'install\n' > "$CONF/state/first-run"
 /usr/sbin/mr validate || die "router.yaml is not valid (fix $CONF/router.yaml and run: mr apply)"
 
 # ---------------------------------------------------------------- takeover / apply

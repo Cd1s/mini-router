@@ -72,6 +72,14 @@ firstboot() {
 		log "mr render failed: $out"
 		return 1
 	fi
+	# Provisioned configs are still a first-run handoff: keep the marker even
+	# when the factory marker was absent from an older image.
+	mkdir -p /etc/mini-router/state
+	if grep -q '^webui_password:' /etc/mini-router/secrets.yaml 2>/dev/null; then
+		printf 'install\n' > /etc/mini-router/state/first-run
+	elif [ ! -e /etc/mini-router/state/first-run ]; then
+		printf 'factory\n' > /etc/mini-router/state/first-run
+	fi
 	want=/etc/mini-router/gen/services
 	rl=/etc/runlevels/default
 	if [ -s "$want" ]; then

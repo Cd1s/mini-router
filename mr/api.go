@@ -115,7 +115,7 @@ func handleAPI(r apiReq) apiResp {
 	switch r.action {
 	case "session":
 		_, hasPw := secrets[pwSecretKey]
-		return apiResp{body: map[string]any{"authenticated": validSession(r.cookie), "password_set": hasPw, "wizard": firstRunPending()}}
+		return apiResp{body: map[string]any{"authenticated": validSession(r.cookie), "password_set": hasPw, "wizard": firstRunPending(), "wizard_password": firstRunPasswordPending(), "wizard_factory": firstRunFactory()}}
 	case "login":
 		return apiLogin(r, secrets)
 	case "setup":
@@ -304,6 +304,9 @@ func apiSetup(r apiReq, secrets map[string]string) apiResp {
 	}
 	secrets[pwSecretKey] = hashPassword(in.Password)
 	if err := writeSecrets(SecretsPath, secrets); err != nil {
+		return errResp(500, "%v", err)
+	}
+	if err := markFirstRunPasswordDone(); err != nil && !os.IsNotExist(err) {
 		return errResp(500, "%v", err)
 	}
 	appendChangeLog("webui: admin password set")

@@ -77,6 +77,11 @@ echo 'ttyS0::askfirst:/bin/sh -l' >> "$R/etc/inittab"
 # factory configuration: render it inside the image and enable exactly its services
 mkdir -p "$R/etc/mini-router"
 install -m 0644 "$REPO/build/m3/router.yaml" "$R/etc/mini-router/router.yaml"
+mkdir -p "$R/etc/mini-router/state"
+# Factory images have no administrator password.  mr/api only accepts the
+# password setup from LAN, then the browser continues into the first-run wizard.
+printf 'factory\n' > "$R/etc/mini-router/state/first-run"
+chmod 0600 "$R/etc/mini-router/state/first-run"
 touch "$R/etc/router-changes.log"
 chroot "$R" /usr/sbin/mr validate
 chroot "$R" /usr/sbin/mr render /

@@ -622,31 +622,54 @@ function browserPOSIXTZ(){
   const map = {"Asia/Shanghai":"CST-8","Asia/Hong_Kong":"HKT-8","Asia/Singapore":"<+08>-8","Asia/Tokyo":"JST-9","Asia/Seoul":"KST-9","Europe/Berlin":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/London":"GMT0BST,M3.5.0/1,M10.5.0","America/Los_Angeles":"PST8PDT,M3.2.0,M11.1.0","America/New_York":"EST5EDT,M3.2.0,M11.1.0","UTC":"UTC0"};
   return {iana:z, posix:map[z]||"UTC0"};
 }
-function renderWizard(){
+function renderWizard(factoryPassword, bootstrapPassword){
   clearInterval(S.timer); S.wizardApply = false;
   const c=S.cfg, steps=["管理密码","时区","WAN 上网方式","LAN 网段","WiFi 与预览"], root=h("div",{class:"wizard login"}), body=h("div"), foot=h("div",{class:"row"});
-  let n=0, detected=null, port=(c.wan[0]&&c.wan[0].device)||"wan", wifiDefaults=null, wifiDefaultsLoading=false;
+  let n=0, detected=null, port=(c.wan[0]&&c.wan[0].device)||"wan", ports=null, portsLoading=false, probing=false;
+  let wifiDefaults=null, wifiDefaultsLoading=false, sameSSID=true, showWifiPassword=false, admin1="", admin2="";
   const tz=browserPOSIXTZ(); c.system.timezone ||= tz.posix;
+  const wan=()=>{ if(!c.wan.length)c.wan.push({name:"wan",device:port,proto:"dhcp",metric:0,peerdns:true,ipv6:true,ipv6_pd:true}); return c.wan[0]; };
+  const loadPorts=()=>{ if(ports!==null||portsLoading)return; portsLoading=true; api("net.ports").then(j=>{ports=(j.ports||[]).filter(p=>p.kind==="port");portsLoading=false;draw();}).catch(()=>{ports=[];portsLoading=false;draw();}); };
+  const applyDetect=(d,w)=>{
+    w.device=port; w.proto=d.recommendation||w.proto||"dhcp"; w.peerdns=true; w.ipv6=true; w.ipv6_pd=true;
+    if(w.proto==="pppoe"){w.password_secret||="pppoe_password";w.mtu=1492;}
+    if(w.proto==="static"&&d.dhcp&&d.dhcp.offer){w.ipv4=d.dhcp.address+"/24";w.gateway=d.dhcp.gateway;w.dns=d.dhcp.dns||[];}
+    if(d.lan_conflict&&d.suggested_lan)c.lan.ipv4=d.suggested_lan;
+    touch();
+  };
+  const radio=(w,p,label)=>h("label",{class:"radio"},h("input",{type:"radio",name:"wizard-wan-proto",checked:w.proto===p,onchange:()=>{w.proto=p;if(p==="pppoe"){w.password_secret||="pppoe_password";w.mtu=1492;}touch();draw();}}),label);
   const draw=()=>{
     body.replaceChildren();
-    if(n===0) body.append(h("div",{class:"mut"},"这是新路由器的首次设置。管理员密码已经由安装阶段保护；只有登录后的本地会话可以继续。"));
-    if(n===1) body.append(h("div",{},h("p",{},"浏览器时区：",h("b",{},tz.iana||"未知")),h("p",{class:"mut"},"将使用 POSIX TZ：",h("span",{class:"mono"},c.system.timezone)),h("button",{class:"btn",onclick:()=>{c.system.timezone=tz.posix;touch();draw();}},"使用浏览器时区"),h("div",{style:"margin-top:10px"},inText(c.system,"timezone",{class:"mono",placeholder:"例如 CET-1CEST,M3.5.0,M10.5.0/3"}))));
+    if(n===0){
+      if(factoryPassword){
+        const p1=h("input",{type:"password",autocomplete:"new-password",minLength:8,placeholder:"至少 8 位",value:admin1,oninput:e=>{admin1=e.target.value;}}), p2=h("input",{type:"password",autocomplete:"new-password",minLength:8,placeholder:"再次输入",value:admin2,oninput:e=>{admin2=e.target.value;}});
+        body.append(h("p",{},"首次设置密码已完成。为确认管理员密码，请再次输入；至少 8 位。"),form(...field("管理员密码",p1),...field("确认密码",p2)));
+      } else body.append(h("div",{class:"mut"},"管理员密码已由安装程序设置；只有登录后的本地会话可以继续。"));
+    }
+    if(n===1) body.append(h("div",{},h("p",{},"浏览器时区：",h("b",{},tz.iana||"未知")),h("p",{},"人类可读时区：",h("b",{},tz.iana||"未知")),h("p",{class:"mut"},"POSIX TZ：",h("span",{class:"mono"},c.system.timezone)),h("button",{class:"btn",onclick:()=>{c.system.timezone=tz.posix;touch();draw();}},"使用浏览器时区"),h("div",{style:"margin-top:10px"},inText(c.system,"timezone",{class:"mono",placeholder:"例如 CET-1CEST,M3.5.0,M10.5.0/3"}))));
     if(n===2){
-      const result=h("div",{class:"mut"},detected?JSON.stringify(detected,null,2):"还没有探测结果。探测不会申请租约或修改路由。"), select=h("input",{value:port,list:"wizard-ports",oninput:e=>{port=e.target.value;}});
-      body.append(h("label",{},"WAN 物理接口"),select,h("datalist",{id:"wizard-ports"},[...new Set([port,...c.wan.map(w=>w.device).filter(Boolean)])].map(x=>h("option",{value:x}))),h("button",{class:"btn p",onclick:async()=>{try{detected=await api("net.wan_detect",{port,timeout:8});const w=c.wan[0]||{name:"wan",device:port,metric:0};w.device=port;w.proto=detected.recommendation||"dhcp";w.peerdns=true;w.ipv6=true;w.ipv6_pd=true;if(w.proto==="pppoe"){w.password_secret||="pppoe_password";w.mtu=1492;}if(w.proto==="static"&&detected.dhcp){w.ipv4=detected.dhcp.address+"/24";w.gateway=detected.dhcp.gateway;w.dns=detected.dhcp.dns||[];}if(!c.wan.length)c.wan.push(w);touch();draw();}catch(e){toast("探测失败："+e.message,5000);}}},"开始探测"),h("pre",{},result));
+      const w=wan(); loadPorts();
+      const opts=(ports||[]).map(p=>[p.name,p.name+(p.carrier?" · 已连接 "+(p.speed?p.speed+" Mbps":"")+(p.duplex?" "+p.duplex:""):" · 未连接")]);
+      if(!opts.some(x=>x[0]===port))opts.unshift([port,port]);
+      const select=h("select",{onchange:e=>{port=e.target.value;w.device=port;touch();}},opts.map(x=>h("option",{value:x[0],selected:x[0]===port},x[1])));
+      const result=[];
+      if(probing)result.push(h("div",{class:"tag warn"},"正在探测 WAN（最多 8 秒）…"));
+      else if(detected){const pado=detected.pppoe&&detected.pppoe.pado, offer=detected.dhcp&&detected.dhcp.offer;result.push(h("div",{class:"tag "+(pado||offer?"ok":"warn")},pado?"探测到 PPPoE":offer?(detected.lan_conflict?"探测到 DHCP + 上游同网段冲突":"探测到 DHCP"):"未发现 DHCP / PPPoE"));if(detected.lan_conflict)result.push(h("p",{class:"err"},"上游地址 "+(detected.dhcp.address||"")+" 与当前 LAN 冲突，建议改为 "+detected.suggested_lan));}
+      const probe=h("button",{class:"btn p",disabled:probing,onclick:async()=>{probing=true;draw();try{detected=await api("net.wan_detect",{port,timeout:8});applyDetect(detected,w);}catch(e){toast("探测失败："+e.message,5000);}finally{probing=false;draw();}}},probing?"探测中…":"开始探测");
+      body.append(form(...field("WAN 物理网口",select),h("div",{class:"hint"},portsLoading?"正在读取物理网口…":"选择有链路的网口；括号内显示 carrier 和速率。")),h("div",{class:"row",style:"margin:10px 0"},radio(w,"pppoe","PPPoE"),radio(w,"dhcp","自动获取 DHCP"),radio(w,"static","静态 IP")),probe,...result);
+      if(w.proto==="pppoe"){w.password_secret||="pppoe_password";body.append(form(...field("PPPoE 账号",inText(w,"username")),...field("PPPoE 密码",inSecret(w,"password_secret"))));}
+      if(w.proto==="static")body.append(form(...field("静态 IP / 掩码",inText(w,"ipv4",{placeholder:"203.0.113.10/24"})),...field("网关",inText(w,"gateway",{placeholder:"203.0.113.1"})),...field("DNS",inList(w,"dns",{placeholder:"1.1.1.1, 8.8.8.8"}))));
     }
-    if(n===3){const conflict=detected&&detected.lan_conflict;body.append(h("p",{},conflict?"探测到上游网段与当前 LAN 冲突，请换一个网段。":"检查 LAN 网段，避免与上游地址重复。"),h("label",{},"LAN 地址 / 掩码"),inText(c.lan,"ipv4",{placeholder:"192.168.2.1/24"}),conflict?h("div",{class:"row",style:"margin-top:10px"},h("span",{class:"tag warn"},"建议 "+detected.suggested_lan),h("button",{class:"btn",onclick:()=>{c.lan.ipv4=detected.suggested_lan;touch();draw();}},"采用建议")):null);}
+    if(n===3){const conflict=!!(detected&&detected.lan_conflict);body.append(h("p",{class:conflict?"err":"ok"},conflict?"探测到上游网段与当前 LAN 冲突。":"与上级网络不冲突 ✓"),h("label",{},"LAN 地址 / 掩码"),inText(c.lan,"ipv4",{placeholder:"192.168.2.1/24"}));if(conflict)body.append(h("div",{class:"card",style:"margin-top:10px"},h("p",{},"建议使用 ",h("b",{},detected.suggested_lan)),h("p",{class:"mut"},"应用后请用新地址 http://",h("span",{class:"mono"},detected.suggested_lan.split("/")[0])," 打开。"),h("button",{class:"btn p",onclick:()=>{c.lan.ipv4=detected.suggested_lan;touch();draw();}},"采用建议网段")));}
     if(n===4){
-      if(!c.wifi.radios.length && wifiDefaults===null && !wifiDefaultsLoading){
-        wifiDefaultsLoading=true;
-        api("wifi.defaults").then(d=>{wifiDefaults=d.radios||[];if(!c.wifi.radios.length&&wifiDefaults.length){c.wifi.radios=wifiDefaults;touch();}draw();}).catch(()=>{wifiDefaults=[];draw();});
-      }
-      const radios=c.wifi.radios.length?c.wifi.radios:(wifiDefaults||[]);
-      if(!radios.length)body.append(h("p",{class:"mut"},"未检测到无线电，稍后可在无线设置中添加。"));
-      radios.slice(0,2).forEach((r,i)=>{r.ssids ||= [];const s=r.ssids[0] ||= {ssid:i?"Mini-Router-5G":"Mini-Router",key_secret:"wifi_key",encryption:"psk2"};body.append(card((r.band||"")+" WiFi",form(...field("网络名称",inText(s,"ssid")),...field("密码引用名",inText(s,"key_secret")),...field("WiFi 密码",inSecret(s,"key_secret")))));});
-      body.append(card("应用预览",h("pre",{},JSON.stringify({timezone:c.system.timezone,wan:c.wan,lan:c.lan,wifi:c.wifi},null,2))));
+      if(!c.wifi.radios.length&&!wifiDefaultsLoading&&!wifiDefaults){wifiDefaultsLoading=true;api("wifi.defaults").then(d=>{wifiDefaults=d.radios||[];if(!c.wifi.radios.length&&wifiDefaults.length)c.wifi.radios=wifiDefaults;draw();}).catch(()=>{wifiDefaults=[];draw();});}
+      const radios=c.wifi.radios.length?c.wifi.radios:(wifiDefaults||[]);if(!radios.length)body.append(h("p",{class:"mut"},"未检测到无线电，稍后可在无线设置中添加。"));
+      radios.slice(0,2).forEach((r,i)=>{r.ssids||=[];const s=r.ssids[0]|| (r.ssids[0]={ssid:i?"MiniRouter-5G":"MiniRouter-2.4G",key_secret:"wifi_key",encryption:"psk2"});s.key_secret="wifi_key";const name=h("input",{type:"text",value:s.ssid,oninput:e=>{s.ssid=e.target.value;if(sameSSID)radios.forEach(x=>{if(x.ssids[0])x.ssids[0].ssid=e.target.value;});touch();}});body.append(card(r.band==="2g"?"2.4 GHz":"5 GHz",form(...field("网络名称",name))));});
+      if(radios.length){const r=radios[0],s=r.ssids[0];const pass=h("input",{type:showWifiPassword?"text":"password",minLength:8,autocomplete:"new-password",placeholder:"至少 8 位",value:S.secrets.wifi_key||"",oninput:e=>{if(e.target.value)S.secrets.wifi_key=e.target.value;else delete S.secrets.wifi_key;touch();}});body.append(form(...field("WiFi 密码",pass),h("label",{},h("input",{type:"checkbox",checked:showWifiPassword,onchange:e=>{showWifiPassword=e.target.checked;draw();}})," 显示密码"),h("label",{},h("input",{type:"checkbox",checked:sameSSID,onchange:e=>{sameSSID=e.target.checked;draw();}})," 两个频段用同一个名字")));}
+      body.append(card("应用预览",h("p",{class:"mut"},"点击“预览并应用”后将显示语义变更列表、风险和确认倒计时；不会显示原始配置 JSON。")));
     }
-    foot.replaceChildren(n?h("button",{class:"btn",onclick:()=>{n--;draw();}},"上一步"):null,n<steps.length-1?h("button",{class:"btn p",onclick:()=>{n++;draw();}},"下一步"):h("button",{class:"btn p",onclick:()=>{S.wizardApply=true;startApply({config:S.cfg,secrets:S.secrets,base_rev:S.rev});}},"预览并应用"));
+    const next=async()=>{if(n===0&&factoryPassword){if(admin1.length<8)return toast("密码至少需要 8 位",4000);if(admin1!==admin2)return toast("两次输入不一致",4000);if(bootstrapPassword&&admin1!==bootstrapPassword){try{await api("password",{old:bootstrapPassword,new:admin1});}catch(e){return toast(e.message,5000);}}}if(n<steps.length-1){n++;draw();}else{const radios=c.wifi.radios||[];if(radios.length&&(!S.secrets.wifi_key||S.secrets.wifi_key.length<8))return toast("WiFi 密码至少需要 8 位",4000);S.wizardApply=true;startApply({config:S.cfg,secrets:S.secrets,base_rev:S.rev});}};
+    const controls=[];if(n)controls.push(h("button",{class:"btn",onclick:()=>{n--;draw();}},"上一步"));controls.push(h("button",{class:"btn p",onclick:next},n<steps.length-1?"下一步":"预览并应用"));foot.replaceChildren(...controls);
     root.replaceChildren(h("div",{class:"logo"},logo(40),"Mini-Router"),card("首次设置 · "+(n+1)+"/"+steps.length,[h("div",{class:"wizard-steps"},steps.map((x,i)=>h("span",{class:i===n?"act":i<n?"done":""},(i+1)+" "+x))),body],foot),h("div",{class:"mut",style:"text-align:center;margin-top:12px"},"可随时离开；确认窗口会在页面重新可达时自动保留，失败会自动回滚。"));
   };
   draw(); $("#root").replaceChildren(root);
@@ -660,21 +683,21 @@ function renderLogin(setup){
   const err = h("div",{class:"err"});
   const go = async e=>{ e.preventDefault(); err.textContent="";
     if (setup && p.value!==p2.value) return err.textContent=tr("两次输入不一致");
-    try { await api(setup?"setup":"login",{password:p.value}); boot(); } catch(x){ err.textContent=x.message; } };
+    try { await api(setup?"setup":"login",{password:p.value}); boot(setup?{wizardFactory:true,bootstrapPassword:p.value}:{}); } catch(x){ err.textContent=x.message; } };
   $("#root").replaceChildren(h("div",{class:"login"}, h("div",{class:"logo"}, logo(40), "Mini-Router"), h("form",{onsubmit:go}, card(setup?"设置管理员密码":"登录",
     [setup?h("div",{class:"mut"},"首次使用：请设置管理员密码（至少 8 位，只能在内网设置）。"):null, p, p2, err, h("button",{class:"btn p",type:"submit"}, setup?"设置并登录":"登录")])),
     h("div",{class:"mut",style:"text-align:center;margin-top:14px;font-size:12px"}, langLink())));
   p.focus();
 }
 
-async function boot(){
+async function boot(opts={}){
   await LANG_READY;
   let s;
   try { s = await api("session"); } catch(e){ $("#root").replaceChildren(h("div",{class:"login"},h("div",{class:"err"},"无法连接路由器："+e.message))); return; }
   if (!s.authenticated) return renderLogin(!s.password_set);
   S.auth = true;
   try { await loadConfig(); } catch(e){ toast("读取配置失败："+e.message, 5000); }
-  if (s.wizard){ renderWizard(); return; }
+  if (s.wizard){ renderWizard(!!opts.wizardFactory || !!s.wizard_password, opts.bootstrapPassword||""); return; }
   renderShell();
   show(location.hash.slice(1)||"overview");
 }

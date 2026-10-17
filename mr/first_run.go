@@ -1,6 +1,9 @@
 package main
 
-import "os"
+import (
+	"os"
+	"strings"
+)
 
 // firstRunMarker is created by install.sh for a newly flashed image.  It is
 // intentionally outside router.yaml so importing an old configuration never
@@ -10,6 +13,31 @@ var firstRunMarker = "/etc/mini-router/state/first-run"
 func firstRunPending() bool {
 	_, err := os.Stat(firstRunMarker)
 	return err == nil
+}
+
+// Factory images use a marker value until apiSetup has safely established the
+// first password.  Installer-created markers contain "install" and skip that
+// extra password step in the wizard.
+func firstRunPasswordPending() bool {
+	b, err := os.ReadFile(firstRunMarker)
+	return err == nil && strings.TrimSpace(string(b)) == "factory"
+}
+
+func firstRunFactory() bool {
+	b, err := os.ReadFile(firstRunMarker)
+	if err != nil {
+		return false
+	}
+	v := strings.TrimSpace(string(b))
+	return v == "factory" || v == "factory-done"
+}
+
+func markFirstRunPasswordDone() error {
+	b, err := os.ReadFile(firstRunMarker)
+	if err != nil || strings.TrimSpace(string(b)) != "factory" {
+		return err
+	}
+	return os.WriteFile(firstRunMarker, []byte("factory-done\n"), 0600)
 }
 
 func apiSetupComplete(r apiReq) apiResp {
