@@ -59,6 +59,9 @@ sh install.sh
 失败时撤销 mr 自己的更改，但不会重新启用那两个服务 —— 需要回到原来的网络设置时按下面的卸载步骤做。
 无人值守和离线安装的变量见 `install.sh` 开头。
 
+PPPoE 需要内核的 `pppoe` 模块。Alpine 云镜像和不少虚拟机用的 `linux-virt` 内核没有它：选 PPPoE 时 `install.sh` 会先检查，
+不行就停下并提示 `apk add linux-lts && reboot`（`mr doctor` 和 `mr-pppoe` 的日志也会写明原因）。
+
 ## 5. 验证
 
 ```sh
