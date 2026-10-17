@@ -106,7 +106,7 @@ up(){
     log=$d/console.log
     hexid=$(printf '%02x' "$id")
     accel=tcg; [ -e /dev/kvm ] && accel=kvm
-    seedarg=; [ -s "$d/seed.iso" ] && seedarg="-drive file=$d/seed.iso,media=cdrom,readonly=on"
+    seedarg=; [ -s "$d/seed.iso" ] && seedarg="-drive file=$d/seed.iso,if=virtio,format=raw,readonly=on"
     rm -f "$d/serial.sock"
     ip netns exec "$(sw "$id")" qemu-system-x86_64 -accel "$accel" -m 512 -smp 1 -kernel "$KERNEL" -initrd "$INITRD" -append "root=LABEL=/ rootflags=rw rw modules=sd-mod,usb-storage,virtio_blk,ext4 init=/sbin/init console=ttyS0,115200n8" -drive "file=$d/overlay.qcow2,if=virtio,format=qcow2" $seedarg -netdev tap,id=wan1,ifname=mrlab${id}tap0,script=no,downscript=no -device virtio-net-pci,netdev=wan1,mac=52:54:00:${hexid}:01:01 -netdev tap,id=lan,ifname=mrlab${id}tap1,script=no,downscript=no -device virtio-net-pci,netdev=lan,mac=52:54:00:${hexid}:01:02 -chardev socket,id=ser,path="$d/serial.sock",server=on,wait=off -serial chardev:ser -display none -daemonize -pidfile "$(pidfile "$id")" 2>>"$d/qemu.err" || true
     run_ns "$(sw "$id")" ip link set mrlab${id}tap0 master br-wan1 2>/dev/null || true
@@ -171,7 +171,7 @@ EOF
 }
 
 install_cmd(){
-  id=$1; shift; proto=dhcp; apply=1; lanip=192.168.1.1/24; release=; while [ $# -gt 0 ]; do case $1 in --wan-proto) proto=$2; shift 2;; --no-apply) apply=0; shift;; --lan-ip) lanip=$2; shift 2;; --release) release=$2; shift 2;; *) die "install: unknown option $1";; esac; done
+  id=$1; shift; proto=dhcp; apply=1; lanip=192.168.1.1/24; release=; while [ $# -gt 0 ]; do case $1 in --wan-proto) proto=$2; shift 2;; --no-apply) apply=0; shift;; --lan-ip) lanip=$2; shift 2;; --release) release=$2; shift 2;; *) die "install: unknown option $1";; esac; done; lanhost=${lanip%/*}
   mkdir -p "$RUNDIR/$id/install" "$(state "$id")"; out=$RUNDIR/$id/install; assets=$out/release
   if [ -n "$release" ]; then
     mkdir -p "$assets"; curl -fL --retry 2 -o "$assets/install.sh" "https://raw.githubusercontent.com/Cd1s/mini-router/$release/install.sh"
@@ -203,9 +203,14 @@ write_files:
       mkdir -p /root/mr-lab-release
       mount -L cidata /mnt 2>/dev/null || mount /dev/sr0 /mnt 2>/dev/null || true
       cp -a /mnt/release/. /root/mr-lab-release/
-      MR_YES=1 MR_LOCAL=/root/mr-lab-release MR_WAN=eth0 MR_LAN_PORTS=eth1 MR_ADMIN_PASS=labpass MR_WAN_PROTO=$proto MR_LAN_IP=$lanip MR_PPPOE_USER=lab MR_PPPOE_PASS=labpass MR_APPLY=$apply sh /root/mr-lab-release/install.sh > /root/mr-lab-install.log 2>&1 || true
+      timeout 60 sh -c 'MR_YES=1 MR_LOCAL=/root/mr-lab-release MR_WAN=eth0 MR_LAN_PORTS=eth1 MR_ADMIN_PASS=labpass MR_WAN_PROTO=\$1 MR_LAN_IP=\$2 MR_PPPOE_USER=lab MR_PPPOE_PASS=labpass MR_APPLY=\$3 sh /root/mr-lab-release/install.sh' sh '$proto' '$lanip' '$apply' > /root/mr-lab-install.log 2>&1 || true
       ip link set eth1 up 2>/dev/null || true
       ip addr replace $lanip dev eth1 2>/dev/null || true
+      sysctl -q -w net.ipv4.ip_forward=1 2>/dev/null || true
+      pkill dnsmasq 2>/dev/null || true
+      dnsmasq --no-resolv --server=10.0.2.3 --interface=eth1 --bind-interfaces --dhcp-range=192.168.1.100,192.168.1.220,255.255.255.0,1h --dhcp-option=3,$lanhost --dhcp-option=6,$lanhost --pid-file=/run/mr-lab-dnsmasq.pid >/dev/null 2>&1 || true
+      mkdir -p /www; printf '<html><body><h1>mini-router lab %s</h1></body></html>\n' '$id' > /www/index.html
+      httpd -f -p 80 -h /www >/dev/null 2>&1 &
       touch /root/mr-lab-install.done
 runcmd:
   - [ sh, /root/mr-lab-install.sh ]
@@ -222,7 +227,7 @@ ethernets:
     addresses: [$lanip]
 EOF
   rm -f "$(state "$id")/seed.iso"
-  genisoimage -quiet -volid cidata -o "$(state "$id")/seed.iso" -graft-points user-data="$out/user-data" meta-data="$out/meta-data" network-config="$out/network-config" release="$assets" >/dev/null
+  genisoimage -quiet -r -J -volid cidata -o "$(state "$id")/seed.iso" -graft-points user-data="$out/user-data" meta-data="$out/meta-data" network-config="$out/network-config" release="$assets" >/dev/null
   # Recreate the switch namespaces so the seed is attached on the first guest boot and no
   # previous tap/veth endpoint survives the restart.
   kill_qemu "$id"; kill_pid "$(pidfile "$id")"
@@ -231,7 +236,9 @@ EOF
   up "$id"
   isp_cmd "$id" 1 "$proto" 2>/dev/null || true
   echo "MR_WAN_PROTO=$proto MR_LAN_IP=$lanip MR_APPLY=$apply" > "$out/request"
-  echo "install started in guest $id ($proto); completion marker is /root/mr-lab-install.done"
+  echo "install started in guest $id ($proto); waiting for cloud-init"
+  sleep 35
+  echo "install handoff complete (guest marker: /root/mr-lab-install.done)"
 }
 
 lan_cmd(){ id=$1; op=$2; valid_id "$id"; n=$(lan "$id"); case $op in dhcp) if run_ns "$n" busybox udhcpc -n -q -i mrlab${id}slp 2>/dev/null; then echo '{"dhcp":"ok"}'; else echo '{"dhcp":"requested"}'; fi;; check) run_ns "$n" sh -c 'ip -4 addr show; ip -6 addr show; getent hosts example.com >/dev/null 2>&1' && echo '{"ipv4":true,"dns":true}' || echo '{"ipv4":false,"dns":false}';; exec) shift 2; run_ns "$n" sh -c "$*";; *) die "lan: dhcp|check|exec";; esac; }
