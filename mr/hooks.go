@@ -215,8 +215,12 @@ func wanUp(c *Config, w *WAN, ifname, local, gw string) {
 			must(args[0], args[1:]...)
 		}
 		if ln := lanForIP(c, gw); ln != nil && !sameIP(gw, lanAddress(ln.IPv4)) {
-			must("ip", "neigh", "replace", "proxy", gw, "dev", ln.Bridge)
-			eventAdd(c, "doctor", "risk", "wan."+w.Name, fmt.Sprintf("upstream gateway %s is in LAN subnet %s; upstream and LAN share a subnet, consider changing LAN to another range", gw, ln.IPv4), false)
+			if lanHostUsesIP(c, gw) {
+				eventAdd(c, "doctor", "risk", "wan."+w.Name, fmt.Sprintf("LAN host already uses upstream gateway %s; proxy ARP was not installed", gw), false)
+			} else {
+				must("ip", "neigh", "replace", "proxy", gw, "dev", ln.Bridge)
+				eventAdd(c, "doctor", "risk", "wan."+w.Name, fmt.Sprintf("upstream gateway %s is in LAN subnet %s; upstream and LAN share a subnet, consider changing LAN to another range", gw, ln.IPv4), false)
+			}
 		}
 	}
 	if w.Proto == "pppoe" {
@@ -357,6 +361,12 @@ func removeGatewayArtifacts(c *Config, l wanLease) {
 		return
 	}
 	run("ip", "route", "del", l.Gateway+"/32", "dev", l.Dev)
+	// A removed WAN no longer has a name from which to recover its old table number. Remove
+	// the host route from the dynamically allocated WAN tables as well; connected LAN routes
+	// are unaffected and a later refresh re-adds the live WAN's own entry.
+	for table := 200; table <= 250; table++ {
+		run("ip", "route", "del", l.Gateway+"/32", "dev", l.Dev, "table", fmt.Sprint(table))
+	}
 	if ln := lanForIP(c, l.Gateway); ln != nil && !sameIP(l.Gateway, lanAddress(ln.IPv4)) {
 		run("ip", "neigh", "del", "proxy", l.Gateway, "dev", ln.Bridge)
 	}
@@ -394,6 +404,15 @@ func lanForIP(c *Config, ip string) *LANNet {
 		}
 	}
 	return nil
+}
+
+func lanHostUsesIP(c *Config, ip string) bool {
+	for _, h := range c.knownHosts() {
+		if sameIP(h.IP, ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // dropStaleWANs removes what a WAN that left router.yaml (or moved to another interface: renamed,
