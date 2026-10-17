@@ -79,6 +79,17 @@ function schedText(sch){
     return d+" "+(w.time||"全天");
   }).join("；");
 }
+function presencePick(o){
+  const w = o.when ||= {present:[], absent:[]};
+  const refs = [...(S.cfg.devices||[]).map(d=>d.name), ...Object.keys(S.cfg.groups||{}).map(g=>"group:"+g)];
+  const box = h("div");
+  const draw = ()=>box.replaceChildren(...["present","absent"].map(k=>{
+    const sel = h("select",{style:"min-width:150px"}, h("option",{value:""}, k==="present"?"选择在场设备…":"选择离场设备…"), refs.filter(x=>!(w[k]||[]).includes(x)).map(x=>h("option",{value:x},x)));
+    sel.onchange=()=>{ if(sel.value){ w[k] ||= []; w[k].push(sel.value); touch(); draw(); } };
+    return h("div",{class:"row",style:"margin:4px 0"}, h("b",{style:"min-width:46px"},k==="present"?"在场":"离场"), h("span",{class:"row"},(w[k]||[]).map((x,i)=>h("span",{class:"tag"},x,h("button",{class:"btn sm",style:"margin-left:4px",onclick:()=>{w[k].splice(i,1); if(!w[k].length) delete w[k]; touch(); draw();}},"×")))), sel);
+  }), h("div",{class:"hint"},"设备名和 group:分组来自网络 › 设备；一个条件里的设备必须全部满足"));
+  draw(); return box;
+}
 function hits(ctr, key){
   const c = ctr && ctr[key];
   return c ? h("span",{class:"fw-hits",title:fmtBytes(c.bytes)}, c.packets+" 包") : h("span",{class:"mut"},"—");
@@ -274,6 +285,7 @@ registerPage("firewall", "fwrules", "通信规则", 40, async ()=>{
       {l:"目标", f:x=>side(x.dest, x.dest_ip)},
       {l:"协议 / 端口", f:x=>(x.proto||[]).length ? joinL(x.proto).toUpperCase()+(x.dest_port?" "+x.dest_port:"") : "任意"},
       {l:"时间", f:x=>schedText(x.schedule)||"始终"},
+      {l:"在场条件", f:x=>x.when ? (x.when.present||[]).map(y=>"在场: "+y).concat((x.when.absent||[]).map(y=>"离场: "+y)).join("、") : "始终"},
       {l:"命中", f:x=>x.counter ? hits(st.counters,"rule:"+x.name) : h("span",{class:"mut"},"未计数")}],
     {order:true,
      blank:()=>({name:"", enabled:true, action:"drop", src:"lan", dest:"wan", counter:true}),
@@ -288,9 +300,10 @@ registerPage("firewall", "fwrules", "通信规则", 40, async ()=>{
         ...field("协议", protoPick(o,"proto",["tcp","udp","icmp"]), "都不选 = 任意协议"),
         ...field("目标端口", inText(o,"dest_port",{placeholder:"25 或 8000-8100 或 80,443（需选 TCP/UDP）"})),
         ...field("生效时间", schedEdit(o,"schedule"), "按系统时区；跨午夜（如 22:00-07:00）自动算到次日"),
+        ...field("设备在场条件", presencePick(o), "只在指定设备在场 / 离场时启用；留空 = 不按在场判断"),
         ...field("计数", inBool(o,"counter")),
         ...field("日志", inBool(o,"log"), "限速写入内核日志，前缀 mr-rule"),
-        ...field("说明", inText(o,"desc"))), o=>save(prune(o,["src","dest","src_ip","src_mac","dest_ip","proto","dest_port","schedule","desc"]))),
+        ...field("说明", inText(o,"desc"))), o=>{ if(o.when && !(o.when.present||[]).length && !(o.when.absent||[]).length) delete o.when; save(prune(o,["src","dest","src_ip","src_mac","dest_ip","proto","dest_port","schedule","desc"])); }),
      note:"规则在区域默认策略之前匹配，只作用于新建连接。目标为“路由器本机”的规则在 LAN 放行之前生效，可用来限制某台设备访问路由器服务。"}));
 });
 

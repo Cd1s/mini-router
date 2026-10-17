@@ -23,7 +23,7 @@
    "rules": [
     {"name": "no-smtp-out", "enabled": true, "action": "reject", "src": "lan", "dest": "wan", "proto": ["tcp"], "dest_port": "25", "counter": true},
     {"name": "iot-quiet-hours", "enabled": true, "action": "drop", "src": "lan", "dest": "wan", "src_ip": ["192.168.1.160/28"], "schedule": [{"time": "01:00-06:00"}], "counter": true},
-    {"name": "tv-no-router-ssh", "enabled": false, "action": "drop", "dest": "router", "src_mac": ["aa:bb:cc:00:11:22"], "proto": ["tcp"], "dest_port": "22"}
+    {"name": "tv-no-router-ssh", "enabled": false, "action": "drop", "dest": "router", "src_mac": ["aa:bb:cc:00:11:22"], "proto": ["tcp"], "dest_port": "22", "when": {"present": ["tv-box"], "absent": ["office-pc"]}}
    ],
    "access": [
     {"name": "kid-bedtime", "enabled": true, "macs": ["02:c8:61:52:f4:45"], "schedule": [{"days": ["sun", "mon", "tue", "wed", "thu"], "time": "21:30-07:00"}, {"days": ["fri", "sat"], "time": "23:00-08:00"}], "desc": "tablet"},

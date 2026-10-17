@@ -11,7 +11,7 @@ exist, `mr edge serve` only while the reverse proxy is on).
 | UI | `rootfs/www/ui/sys.js` — 服务 (group 服务, with the DDNS and HTTPS 反向代理 cards); 系统设置, 管理与 SSH, 计划任务, 备份与升级, 日志, 网络诊断 (group 系统); 体检与事件 (group 状态: 体检 / 事件 / 通知). The overview (`core.js`) shows the last health check's problems and the newest events. The 唤醒 (WOL) buttons sit on the dns module's pages (`dns.js`: 终端设备, DHCP 静态分配) |
 | rootfs | `rootfs/etc/init.d/{tailscale,mr-panel,mr-zram,dstatus-agent,mr-edge}` (tailscale and mr-panel now read their conf.d); the image and `install.sh` create the user `mr-edge`; events: `mr-bootlog` (`mr event boot` / `shutdown`), `usr/libexec/mr/mon-collect` (the mon module's sampler starts `mr event tick`), NTP sync marker: `mr-clock` + `usr/libexec/mr/clock-save` |
 | Checks | `mr/mod_sys_test.go`, `mr/mod_sys_ddns_test.go` (fake Cloudflare API), `mod_sys_ddns_sign_test.go` (ACS3 / TC3 against the providers' worked examples; fake AliDNS / DNSPod that verify every signature), `mod_sys_ddns_url_test.go` (fake DuckDNS / dyndns2 / webhook / lookup; `mac:` sources; events), `mr/mod_sys_wol_test.go`, `mr/mod_sys_edge_test.go`, `mod_sys_edge_acme_test.go` (in-process ACME server + fake Cloudflare), `mod_sys_edge_serve_test.go`, `mr/mod_sys_{doctor,event,notify}_test.go` (fake system, fake Telegram / webhook; `TestMain` keeps every test's events off the host), `tools/ci.d/sys.sh` (incl. WOL through a bridge in network namespaces; events and a local webhook with real processes; `mr doctor` on the build host), `tools/ci.d/sys-edge.sh` (the proxy process in network namespaces, WAN side through the rendered nft lines, memory), `tools/ci.d/mon.sh` (the sampler's tick trigger), `tools/ci.d/net.sh` (WAN / failover events from the real hooks), lab fragment `examples/lab.d/70-sys.yaml` (+ `mr/testdata/secrets.d/sys.yaml`) |
-| Mock | `tools/mock/fixtures/sys.*.json` (incl. `sys.ddns.json`, `sys.ddnsupdate.post.json`, `sys.wol.post.json`, `sys.edge.json`, `sys.edgerenew.post.json`, `sys.doctor.json`, `sys.events.json`, `sys.notifytest.post.json`), `service.post.json`, `diag.post.json`, `config.d/sys.json`; `status.json` has `doctor` and `events` |
+| Mock | `tools/mock/fixtures/sys.*.json` (incl. `sys.ddns.json`, `sys.ddnsupdate.post.json`, `sys.wol.post.json`, `sys.edge.json`, `sys.edgerenew.post.json`, `sys.tslogin.post.json`, `sys.updatecheck.post.json`, `sys.doctor.json`, `sys.events.json`, `sys.notifytest.post.json`), `service.post.json`, `diag.post.json`, `config.d/sys.json`; `status.json` has `doctor` and `events` |
 
 ## Cost
 
@@ -408,7 +408,12 @@ services:
   tailscale:
     enabled: true
     exit_node: {node: 100.101.102.103, devices: [laptop, "group:kids"], kill_switch: false}  # devices empty = whole LAN zone
+    advertise_routes: [192.168.1.0/24, 2001:db8:1::/64]  # subnet routes approved in the tailnet admin console
 ```
+
+`services.tailscale.advertise_routes` accepts up to 32 IPv4 or IPv6 CIDRs. mr writes the
+comma-separated list to `TS_ADVERTISE_ROUTES` in `/etc/conf.d/tailscale`; the OpenRC hook applies it
+with `tailscale set --advertise-routes` and clears routes previously managed by mr when the list is removed.
 
 Checked on the router (tailscale 1.102, NetfilterMode on): tailscale owns ip rules 5210-5270 and table 52
 (its routes; with an exit node also the default route), its nft tables masquerade only its own 0x40000 mark.
@@ -592,6 +597,8 @@ ruleset uses conntrack), so there is no cost before the firewall. The mon module
 | `sys.doctor` | GET | runs `mr doctor` now (a few seconds) → `{time, risk, warn, ok, checks[] {id, check, sev, title, detail, fix}}`; a router.yaml that does not load is itself the finding (`config.load`). API tokens: read |
 | `sys.events` | GET | `{events[] (newest first, ≤ 200) {seq, t, type, sev, key, msg}, types[], notify[] {name, type, pending, last_ok, error, error_at, retry_in, held: retry \| rate \| quiet_hours}}` — never a secret. API tokens: read |
 | `sys.notifytest` | POST | `{name (optional)}` → `{results[] {name, ok, error}}`: a test message now to that channel (or all) of the applied config, ignoring rate, quiet hours and backoff; 409 without channels. Web UI session only |
+| `sys.updatecheck` | POST | `{current, latest, newer, checked}`: check the GitHub release without installing anything. Web UI session only |
+| `sys.tslogin` | POST | `{state, auth_url}` while Tailscale needs login; starts the interactive login flow. Web UI session only |
 | `sys.sshkeys` | GET | keys in root's authorized_keys: `managed[]`, `other[]` `{type, comment, fingerprint}`, `other_unparsed`, `root_password: set\|locked\|empty` (never the hash) |
 | `sys.services` | GET | `services[]` `{name, label, cfg, wanted, installed, running}`, `others[]`, ports, `tailscale` `{state, self, peers[], peers_online, tailnet, auth_url (only while NeedsLogin)}` |
 | `sys.logs` | GET / POST | `{level 0-7, tag, q, limit ≤ 5000}` → `lines[]` `[time, level, facility, tag, message]` newest first, `total`, `tags{}` (source `/var/log/messages{.0,}`, `logread` if absent) |
@@ -599,7 +606,7 @@ ruleset uses conntrack), so there is no cost before the firewall. The mon module
 | `sys.ddns` | GET | `{enabled, interval, records[]}` — per record and type: `name, type, source, local, published, note, last_ok, changed, checked, error, error_at, retry, stopped, fails` (local addresses as of now; no provider request; never the token or zone id) |
 | `sys.speedtest` | POST | the router's own download / upload through its default route against speed.cloudflare.com (`__down` / `__up`, one connection, ~8 s each; `mod_sys_speedtest.go`) → `{down_mbps, up_mbps, time}`; a lower bound (single stream, TLS on the router's CPU); one at a time; 502 on failure. Button on 系统 › 网络诊断 |
 | `sys.wol` | POST | `{target: MAC \| dhcp.hosts name, network (optional)}` → `{mac, host, network, dev, broadcast}`; 400 for a bad target / network, 500 if sending failed |
-| `sys.edge` | GET | `{enabled, port, open, staging, serving, started, renewing, routes[] {name, host, to, allow, cert, wan, requests, errors, denied}, certs[] {name, domains, state (ok \| due \| missing \| expired \| names changed \| other CA), not_before, not_after, issuer, last_try, last_ok, error, error_at, retry}}` — never a key or the token; token scope `read` |
+| `sys.edge` | GET | `{enabled, port, wan_port, open, staging, serving, started, renewing, routes[] {name, host, to, allow, cert, wan, requests, errors, denied}, certs[] {name, domains, state (ok \| due \| missing \| expired \| names changed \| other CA), not_before, not_after, issuer, last_try, last_ok, error, error_at, retry}}` — never a key or the token; token scope `read` |
 | `sys.edgerenew` | POST | `{}` → `{started: true}`: `mr edge renew` in the background (what is due or missing, ignoring the backoff); 409 while off or while a renewal runs; poll `sys.edge` (`renewing`). Session only |
 | `sys.ddnsupdate` | POST | `{name (optional), force}` → same as `sys.ddns` after an update run (ignores backoff and a stop; `force` also asks the provider for records the state calls published). 409 while DDNS is off |
 | `sys.backup` | POST | `{secrets: bool}` → `{name, data (base64 tar.gz), size, files[], restorable}` |

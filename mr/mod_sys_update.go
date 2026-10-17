@@ -127,41 +127,52 @@ func releaseNewer(cur, tag, pub string) bool {
 	return false
 }
 
-// updateCheck asks GitHub for the latest release; a newer one is an update event (once per tag).
-func updateCheck(c *Config, hc *http.Client) error {
+// updateCheckResult asks GitHub for the latest release and returns the result
+// for the session-only UI action; a newer one is an update event (once per tag).
+func updateCheckResult(c *Config, hc *http.Client) (map[string]any, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET", updateURL, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "mini-router/"+version)
 	resp, err := hc.Do(req)
 	if err != nil {
-		return notifyErr(err)
+		return nil, notifyErr(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("GitHub: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub: HTTP %d", resp.StatusCode)
 	}
 	var r struct {
 		Tag       string `json:"tag_name"`
 		Published string `json:"published_at"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 512<<10)).Decode(&r); err != nil || !reReleaseTag.MatchString(r.Tag) {
-		return errors.New("GitHub: not a release answer")
+		return nil, errors.New("GitHub: not a release answer")
 	}
 	var st updateState
 	readJSONFile(updateStateFile, &st)
 	st.Checked = eventNow().Unix()
-	if releaseNewer(version, r.Tag, r.Published) && st.Tag != r.Tag {
+	newer := releaseNewer(version, r.Tag, r.Published)
+	if newer && st.Tag != r.Tag {
 		st.Tag = r.Tag
 		eventAdd(c, "update", "info", r.Tag, fmt.Sprintf("mini-router %s is available (running %s): https://github.com/Cd1s/mini-router/releases/tag/%s",
 			r.Tag, eventClean(version, 40), r.Tag), true)
 	}
 	b, _ := json.Marshal(st)
-	return writeAtomic(updateStateFile, b, 0600)
+	if err := writeAtomic(updateStateFile, b, 0600); err != nil {
+		return nil, err
+	}
+	return map[string]any{"current": version, "latest": r.Tag, "newer": newer, "checked": st.Checked}, nil
+}
+
+// updateCheck is the CLI/cron compatibility wrapper.
+func updateCheck(c *Config, hc *http.Client) error {
+	_, err := updateCheckResult(c, hc)
+	return err
 }
 
 // updateCronLine: the daily release check, at a minute and hour (10:00-17:59) fixed per router.

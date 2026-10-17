@@ -21,6 +21,15 @@ import (
 	"strings"
 )
 
+// tsAdvertiseConf is consumed by the tailscale OpenRC hook. Keep the value a
+// shell-safe, comma-separated list after validation in sysValidate.
+func tsAdvertiseConf(c *Config) string {
+	if len(c.Services.Tailscale.AdvertiseRoutes) == 0 {
+		return ""
+	}
+	return "TS_ADVERTISE_ROUTES='" + strings.Join(c.Services.Tailscale.AdvertiseRoutes, ",") + "'\n"
+}
+
 // TSExit is services.tailscale.exit_node.
 type TSExit struct {
 	Node       string   `yaml:"node,omitempty"`        // exit node: tailnet IP or MagicDNS name

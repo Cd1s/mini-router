@@ -10,6 +10,9 @@
     "cn.ntp.org.cn"
    ],
    "ntp_server": true,
+   "leds": false,
+   "history": 20,
+   "watchcat": {"enabled": true, "after": 10, "reboot_hours": 6, "targets": ["1.1.1.1"]},
    "sysctl": {
     "net.ipv4.igmp_max_memberships": "100",
     "net.ipv4.tcp_congestion_control": "bbr",
@@ -21,7 +24,9 @@
   "services": {
    "tailscale": {
     "enabled": true,
-    "port": 41641
+    "port": 41641,
+    "advertise_routes": ["192.168.1.0/24"],
+    "exit_node": {"node": "exit-sg", "devices": ["tv-box"], "kill_switch": true}
    },
    "dstatus": {
     "enabled": true
@@ -56,6 +61,7 @@
     "enabled": true,
     "port": 8443,
     "open": true,
+    "wan_port": 10443,
     "acme": {"email": "admin@example.com", "provider": "cloudflare", "token_secret": "cf_ddns_token", "wildcard": ["example.com"]},
     "routes": [
      {"name": "nas", "host": "nas.example.com", "to": "http://192.168.1.10:5000"},

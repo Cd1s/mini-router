@@ -22,6 +22,7 @@ services:
     enabled: true
     port: 41642
     exit_node: {node: exit-sg, devices: [travel-laptop], kill_switch: true}   # travel-laptop leaves via the exit node only
+    advertise_routes: [192.168.1.0/24, 2001:db8:1::/64]
   dstatus: {enabled: true}
   stubby: {enabled: true}
   ssh:
