@@ -42,6 +42,10 @@ var (
 	// the live config files as the apply / rollback bookkeeping sees them
 	cfgFile = ConfigPath
 	secFile = SecretsPath
+	// generated per-WAN files; tests replace this with a temporary directory
+	pppPeersDir = "/etc/ppp/peers"
+	// service-management seam used by rollback and cleanup tests
+	runCommand = run
 )
 
 // Accepted config (Cd1s/mini-router#115): router.yaml and secrets.yaml exactly as they were when the
@@ -149,6 +153,7 @@ func rank(s string) int {
 
 type Plan struct {
 	Changed  []File
+	Remove   []string
 	Services []string
 	Firewall bool
 	Enable   []string
@@ -203,6 +208,7 @@ func plan(c *Config) (*Plan, error) {
 	}
 	sort.Strings(p.Enable)
 	sort.Strings(p.Disable)
+	p.Remove = orphanWANPaths(c)
 	return p, nil
 }
 
@@ -233,7 +239,7 @@ func managedServices(c *Config) []string {
 }
 
 func (p *Plan) Empty() bool {
-	return len(p.Changed) == 0 && !p.Firewall && len(p.Enable) == 0 && len(p.Disable) == 0
+	return len(p.Changed) == 0 && len(p.Remove) == 0 && !p.Firewall && len(p.Enable) == 0 && len(p.Disable) == 0
 }
 
 func (p *Plan) String() string {
@@ -257,6 +263,9 @@ func (p *Plan) String() string {
 	}
 	for _, s := range p.Disable {
 		fmt.Fprintf(&b, "  disable %s\n", s)
+	}
+	for _, f := range p.Remove {
+		fmt.Fprintf(&b, "  remove  %s\n", f)
 	}
 	if b.Len() == 0 && record {
 		b.WriteString("  (no generated file changes: only the record of the applied config)\n")
@@ -333,7 +342,7 @@ func pruneHistory(keep int, keepName string) {
 }
 
 // restore puts a snapshot back and returns the services that need restarting.
-func restore(snap string) ([]string, error) {
+func restore(snap string, stopRemoved ...bool) ([]string, error) {
 	f, err := os.Open(snap)
 	if err != nil {
 		return nil, err
@@ -369,11 +378,27 @@ func restore(snap string) ([]string, error) {
 		}
 	}
 	svc := map[string]bool{}
+	stopped := map[string]bool{}
+	failedStop := map[string]bool{}
+	stopServices := len(stopRemoved) == 0 || stopRemoved[0]
 	for _, p := range covered {
 		if !present[p] {
-			os.Remove(p)
+			remove := true
+			if stopServices {
+				if s := removedWANService(p); s != "" && !stopped[s] {
+					if !stopAndDisableService(s) {
+						remove = false
+						failedStop[s] = true
+					} else {
+						stopped[s] = true
+					}
+				}
+			}
+			if remove {
+				os.Remove(p)
+			}
 		}
-		if s := serviceFor(p); s != "" {
+		if s := serviceFor(p); s != "" && !failedStop[s] {
 			svc[s] = true
 		}
 	}
@@ -383,6 +408,29 @@ func restore(snap string) ([]string, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return rank(out[i]) < rank(out[j]) })
 	return out, nil
+}
+
+func removedWANService(path string) string {
+	base := filepath.Base(path)
+	if filepath.Dir(path) == initDir && (strings.HasPrefix(base, "mr-pppoe.") || strings.HasPrefix(base, "mr-udhcpc.")) {
+		return base
+	}
+	if filepath.Dir(path) == pppPeersDir && base != "" && !strings.Contains(base, "/") {
+		return "mr-pppoe." + base
+	}
+	return ""
+}
+
+func stopAndDisableService(service string) bool {
+	stopped := true
+	if out, err := runCommand("rc-service", service, "stop"); err != nil {
+		logf("rollback: stopping removed service %s failed: %v %s", service, err, strings.TrimSpace(out))
+		stopped = false
+	}
+	if out, err := runCommand("rc-update", "del", service, "default"); err != nil {
+		logf("rollback: removing %s from default runlevel failed: %v %s", service, err, strings.TrimSpace(out))
+	}
+	return stopped
 }
 
 // keepPassword: secrets.yaml data with the web UI password as it is now. A password set while a change
@@ -519,6 +567,7 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 		paths = append(paths, f.Path)
 	}
 	paths = append(paths, cfgFile, secFile, GenDir+"/nftables.nft")
+	paths = append(paths, p.Remove...)
 	defer shieldSignals()()
 	var src map[string]string
 	if install == nil {
@@ -562,6 +611,7 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 		run("rc-service", s, "stop")
 		run("rc-update", "del", s, "default")
 	}
+	cleanupOrphanWANFiles(c)
 	restart := dedup(append(append([]string{}, p.Services...), p.Enable...))
 	if failed := restartAll(restart); len(failed) > 0 {
 		return rollback(snap, fmt.Errorf("service restart failed:\n  %s", strings.Join(failed, "\n  ")))
@@ -586,8 +636,85 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 		clearPending(snap)
 		acceptStaged()
 		setResult(snap, "applied")
+		if err := netCommit(c); err != nil {
+			logf("net: post-apply cleanup: %v", err)
+		}
 	}
 	return nil
+}
+
+// cleanupOrphanWANFiles removes generated per-WAN credentials and init wrappers left by a
+// WAN deletion or a protocol change. The service is stopped before its wrapper is removed.
+func cleanupOrphanWANFiles(c *Config) {
+	stopped := map[string]bool{}
+	for _, path := range orphanWANPaths(c, true) {
+		if s := removedWANService(path); s != "" && !stopped[s] {
+			if !stopAndDisableService(s) {
+				continue
+			}
+			stopped[s] = true
+		}
+		os.Remove(path)
+		if filepath.Dir(path) == initDir {
+			os.Remove(filepath.Join(runlevelDir, filepath.Base(path)))
+		}
+	}
+}
+
+func orphanWANPaths(c *Config, logUnmanaged ...bool) []string {
+	wantPPP, wantDHCP := map[string]bool{}, map[string]bool{}
+	for _, w := range c.WAN {
+		switch w.Proto {
+		case "pppoe":
+			wantPPP[w.Name] = true
+		case "dhcp":
+			wantDHCP[w.Name] = true
+		}
+	}
+	var paths []string
+	if ents, err := os.ReadDir(pppPeersDir); err == nil {
+		for _, e := range ents {
+			if e.IsDir() || wantPPP[e.Name()] {
+				continue
+			}
+			path := filepath.Join(pppPeersDir, e.Name())
+			if generatedByMR(path) {
+				paths = append(paths, path)
+			} else if len(logUnmanaged) > 0 && logUnmanaged[0] {
+				logf("keeping unmanaged PPP peer %s", path)
+			}
+		}
+	}
+	if ents, err := os.ReadDir(initDir); err == nil {
+		for _, e := range ents {
+			name := e.Name()
+			var keep bool
+			switch {
+			case strings.HasPrefix(name, "mr-pppoe."):
+				keep = wantPPP[strings.TrimPrefix(name, "mr-pppoe.")]
+			case strings.HasPrefix(name, "mr-udhcpc."):
+				keep = wantDHCP[strings.TrimPrefix(name, "mr-udhcpc.")]
+			default:
+				continue
+			}
+			if keep {
+				continue
+			}
+			paths = append(paths, filepath.Join(initDir, name))
+		}
+	}
+	return paths
+}
+
+func generatedByMR(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	b := make([]byte, len("# generated by mr"))
+	_, err = io.ReadFull(f, b)
+	return err == nil && string(b) == "# generated by mr"
 }
 
 // rollback restores snap after a failed or unconfirmed apply. The pending marker goes only when the
@@ -642,6 +769,41 @@ func reconcileRunlevel(c *Config) {
 			run("rc-service", s, "start")
 		}
 	}
+	// A restored snapshot can remove an init script while its old runlevel symlink remains.
+	// Remove those links even when the service is no longer discoverable by managedServices.
+	ents, _ := os.ReadDir(runlevelDir)
+	for _, e := range ents {
+		if !managedRunlevelService(c, e.Name()) {
+			continue
+		}
+		l := filepath.Join(runlevelDir, e.Name())
+		if e.Type()&fs.ModeSymlink != 0 {
+			if _, err := os.Stat(l); errors.Is(err, fs.ErrNotExist) {
+				os.Remove(l)
+			}
+		}
+	}
+}
+
+func managedRunlevelService(c *Config, name string) bool {
+	for _, s := range managedServices(c) {
+		if s == name {
+			return true
+		}
+	}
+	for _, s := range enabledServices(c) {
+		if s == name {
+			return true
+		}
+	}
+	for _, m := range modules {
+		for _, prefix := range m.RestartOrder {
+			if strings.HasSuffix(prefix, ".") && strings.HasPrefix(name, prefix) {
+				return true
+			}
+		}
+	}
+	return strings.HasPrefix(name, "mr-pppoe.") || strings.HasPrefix(name, "mr-udhcpc.")
 }
 
 func summary(p *Plan) string {
@@ -657,6 +819,9 @@ func summary(p *Plan) string {
 	}
 	for _, s := range p.Disable {
 		parts = append(parts, "-"+s)
+	}
+	for _, f := range p.Remove {
+		parts = append(parts, "remove "+filepath.Base(f))
 	}
 	if len(parts) == 0 {
 		return "router.yaml (no generated file changed)"
@@ -880,9 +1045,23 @@ func confirm() (bool, error) {
 	if err == nil && p.State == stateReverting {
 		return false, errors.New("the change is being rolled back")
 	}
+	var commitCfg *Config
+	if err == nil {
+		cfgPath, secPath := acceptedConfig(), acceptedSecrets()
+		if _, statErr := os.Stat(cfgPath + ".staged"); statErr == nil {
+			cfgPath += ".staged"
+			secPath += ".staged"
+		}
+		commitCfg, _ = loadConfig(cfgPath, secPath)
+	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
 	acceptStaged()
 	unlock()
+	if commitCfg != nil {
+		if commitErr := netCommit(commitCfg); commitErr != nil {
+			logf("net: post-confirm cleanup: %v", commitErr)
+		}
+	}
 	if err == nil {
 		setResult(p.Snapshot, "confirmed")
 	}
@@ -979,7 +1158,7 @@ func rollbackAtBoot(cfgPath, secPath string) error {
 		what = "interrupted apply"
 	}
 	keepRejected(snap)
-	if _, err := restore(snap); err != nil {
+	if _, err := restore(snap, false); err != nil {
 		os.Rename(ConfirmFile, ConfirmFile+".failed") // do not retry at every boot
 		appendChangeLogAt(at, fmt.Sprintf("boot: rolling back the %s (%s) to %s FAILED: %v", what, p.Via, filepath.Base(snap), err))
 		return fmt.Errorf("rolling back the %s to %s: %w", what, filepath.Base(snap), err)

@@ -44,7 +44,7 @@ func netRender(c *Config, out *Out) error {
 			if err != nil {
 				return err
 			}
-			out.Add("/etc/ppp/peers/"+w.Name, 0600, renderPeer(w, wanNic(c, w), pw, len(dialEarlier(c.MultiWAN, w.Name)) == 0))
+			out.Add(pppPeersDir+"/"+w.Name, 0600, renderPeer(w, wanNic(c, w), pw, len(dialEarlier(c.MultiWAN, w.Name)) == 0))
 			out.Add("/etc/init.d/mr-pppoe."+w.Name, 0755, renderInstance("mr-pppoe", w, ""))
 		case "dhcp":
 			out.Add("/etc/init.d/mr-udhcpc."+w.Name, 0755, renderInstance("mr-udhcpc", w, w.Ifname()))
@@ -266,6 +266,10 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 				fmt.Fprintf(b, "for a in $(ip -4 -o addr show dev %s | awk '{print $4}'); do [ \"$a\" = %s ] || ip addr del \"$a\" dev %s; done\n", w.LinkDev(), w.IPv4, w.LinkDev())
 			}
 		}
+		wanVLANCleanupSh(c, b)
+		wanMACRestoreSh(c, b)
+		wanVLANCleanupSh(c, b)
+		wanMACRestoreSh(c, b)
 		wanIPv6OffSh(c, b)
 		macvlanSh(c, b, need)
 		snoop := 0
@@ -400,6 +404,85 @@ func modemSh(c *Config, b *strings.Builder) {
 	}
 }
 
+// wanVLANCleanupSh removes VLAN links left by a previous WAN configuration.  The
+// generated config only knows links it currently needs; scanning each configured
+// parent catches a changed/cancelled VID while keeping unrelated parent links out
+// of the cleanup.
+func wanVLANCleanupSh(c *Config, b *strings.Builder) {
+	parents := map[string]bool{}
+	keep := map[string]bool{}
+	keepName := func(name string) {
+		if name != "" {
+			keep[name] = true
+		}
+	}
+	for _, w := range c.WAN {
+		parents[w.Device] = true
+		keepName(w.Device)
+		keepName(w.LinkDev())
+		if w.VLAN > 0 {
+			keep[w.LinkDev()] = true
+		}
+	}
+	for _, p := range c.LAN.Ports {
+		parents[p] = true
+		keepName(p)
+	}
+	for _, n := range c.Networks {
+		for _, p := range n.Ports {
+			parents[p] = true
+			keepName(p)
+		}
+		for _, p := range n.Trunk {
+			parents[p] = true
+			keepName(p)
+			if n.VLAN > 0 {
+				keepName(fmt.Sprintf("%s.%d", p, n.VLAN))
+			}
+		}
+	}
+	var kept []string
+	for k := range keep {
+		kept = append(kept, k)
+	}
+	sort.Strings(kept)
+	caseList := strings.Join(kept, " ")
+	var ps []string
+	for p := range parents {
+		ps = append(ps, p)
+	}
+	sort.Strings(ps)
+	for _, p := range ps {
+		fmt.Fprintf(b, "for d in /sys/class/net/%s.*; do [ -e \"$d\" ] || continue; n=${d##*/}; case \" %s \" in *\" $n \"*) continue;; esac; case \"$(ip -o link show dev \"$n\" 2>/dev/null)\" in *\" alias mini-router\"*) ip link del \"$n\" 2>/dev/null;; esac; done\n", p, caseList)
+	}
+}
+
+// wanMACRestoreSh restores the permanent hardware address after a cloned WAN
+// MAC is cleared.  ethtool reads the address burned into the NIC, so this also
+// works when the previous value is not present in the current configuration.
+func wanMACRestoreSh(c *Config, b *strings.Builder) {
+	devs := map[string]bool{}
+	protected := map[string]bool{}
+	for _, w := range c.WAN {
+		if w.MAC != "" && wanMacvlan(c, w) == "" {
+			protected[w.Device] = true
+		}
+	}
+	for _, w := range c.WAN {
+		if w.MAC == "" && wanMacvlan(c, w) == "" && !protected[w.Device] {
+			devs[w.Device] = true
+		}
+	}
+	var xs []string
+	for d := range devs {
+		xs = append(xs, d)
+	}
+	sort.Strings(xs)
+	for _, d := range xs {
+		fmt.Fprintf(b, "was_up=0; case \"$(ip -o link show dev %s 2>/dev/null)\" in *\"<\"*UP*) was_up=1;; esac; perm=$(ethtool -P %s 2>/dev/null | awk '$1==\"Permanent\" && $2==\"address:\" && $3 ~ /^[[:xdigit:]][02468aceACE](:[[:xdigit:]][[:xdigit:]]){5}$/ {m=tolower($3); if (m !~ /^00:00:00:00:00:00$/) print m}'); if [ -n \"$perm\" ] && [ \"$(cat /sys/class/net/%s/address 2>/dev/null)\" != \"$perm\" ]; then ip link set %s down; ip link set dev %s address \"$perm\" 2>/dev/null || :; [ \"$was_up\" = 1 ] && ip link set %s up; fi\n", d, d, d, d, d, d)
+	}
+}
+
 // wanIPv6OffSh: a WAN link device that no IPv6-enabled DHCP / static WAN uses as its interface takes no
 // router advertisements and keeps no global IPv6 state. The WAN-up hook sets accept_ra=2 while ipv6 is on,
 // and dhcpcd (persistent) leaves its SLAAC address behind when it stops managing the device, so turning
@@ -423,7 +506,8 @@ func wanIPv6OffSh(c *Config, b *strings.Builder) {
 }
 
 func vlanLink(b *strings.Builder, dev string, vid int) {
-	fmt.Fprintf(b, "ip link show %s.%d >/dev/null 2>&1 || ip link add link %s name %s.%d type vlan id %d\n", dev, vid, dev, dev, vid, vid)
+	sub := fmt.Sprintf("%s.%d", dev, vid)
+	fmt.Fprintf(b, "if ! ip link show %s >/dev/null 2>&1; then ip link add link %s name %s type vlan id %d && ip link set dev %s alias mini-router; fi\n", sub, dev, sub, vid, sub)
 }
 
 // nftIfnames renders one interface name or an anonymous set of them.

@@ -224,11 +224,10 @@ func dispatch(args []string, cfgPath, secPath string) error {
 		if errs := c.Validate(); len(errs) > 0 {
 			return fmt.Errorf("invalid:\n  %s", strings.Join(errs, "\n  "))
 		}
-		files, err := Render(c)
+		files, err := renderOutputFiles(c)
 		if err != nil {
 			return err
 		}
-		files = append(files, File{GenDir + "/nftables.nft", 0644, renderNft(c, func(string) bool { return true })})
 		for _, f := range files {
 			if err := writeAtomic(filepath.Join(args[1], f.Path), []byte(f.Data), os.FileMode(f.Mode)); err != nil {
 				return err
@@ -268,6 +267,18 @@ func dispatch(args []string, cfgPath, secPath string) error {
 		return fmt.Errorf("unknown command %q", cmd)
 	}
 	return nil
+}
+
+// renderOutputFiles is the complete on-disk output of `mr render`, including the bookkeeping
+// baseline used by the first apply after an image or firstboot.
+func renderOutputFiles(c *Config) ([]File, error) {
+	files, err := Render(c)
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, appliedFiles(c)...)
+	files = append(files, File{GenDir + "/nftables.nft", 0644, renderNft(c, func(string) bool { return true })})
+	return files, nil
 }
 
 // ---- helpers ----

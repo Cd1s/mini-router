@@ -27,9 +27,12 @@ const downMetric = 10000
 
 // runtime state paths (variables so tests can use a temp dir)
 var (
-	wanRunDir    = RunDir + "/wan"
-	wanStateFile = RunDir + "/wan-state.json"
-	resolvConf   = RunDir + "/resolv.conf"
+	wanRunDir          = RunDir + "/wan"
+	wanStateFile       = RunDir + "/wan-state.json"
+	resolvConf         = RunDir + "/resolv.conf"
+	fwLoadForHook      = fwLoad
+	fwLoadForCommit    = fwLoad
+	refreshLan6ForHook = refreshLan6
 )
 
 // wanLease is what a WAN got when it came up.
@@ -118,6 +121,13 @@ func hookPPP(c *Config, up bool, args []string) error {
 	if w == nil {
 		return fmt.Errorf("ppp hook: unknown wan %q", ipparam)
 	}
+	// pppd can report a delayed ip-up/ip-down after an apply changed this WAN to
+	// another protocol (or moved it to another link).  Its lease and routes now
+	// belong to the current protocol, so a stale PPP event must not tear them down.
+	if w.Proto != "pppoe" || w.Ifname() != ifname {
+		logf("wan %s: ignoring stale PPP event on %s (current %s on %s)", w.Name, ifname, w.Proto, w.Ifname())
+		return nil
+	}
 	if up {
 		logf("wan %s up on %s (%s)", w.Name, ifname, args[3])
 		l := wanLease{IP: args[3], Since: time.Now().Unix(), Dev: ifname}
@@ -135,7 +145,7 @@ func hookPPP(c *Config, up bool, args []string) error {
 		wanDown(c, w)
 	}
 	updateLEDs(c)
-	err := fwLoad(c)
+	err := fwLoadForHook(c)
 	if up {
 		runOnWAN(c, w.Name, "up")
 		dialOnUp(c, w.Name)
@@ -507,6 +517,23 @@ func dropStaleWANs(c *Config) {
 	}
 }
 
+// removeStalePD6 is committed only after an apply is accepted. Keeping deleted
+// WAN PD records through verify lets a failed apply/rollback restore the old
+// IPv6 policy state unchanged.
+func removeStalePD6(c *Config) {
+	ents, _ := os.ReadDir(wanRunDir)
+	live := map[string]bool{}
+	for _, w := range c.WAN {
+		live[w.Name] = true
+	}
+	for _, e := range ents {
+		name, ok := strings.CutSuffix(e.Name(), ".pd6")
+		if ok && !live[name] {
+			os.Remove(filepath.Join(wanRunDir, e.Name()))
+		}
+	}
+}
+
 // refreshRoutes re-applies wanUp for every WAN that currently has an IPv4 address.
 // Used after apply/rollback, when mr-network starts and on health changes, so routing never
 // depends on having seen the ppp / dhcp event.
@@ -548,8 +575,21 @@ func refreshRoutes(c *Config) {
 		}
 		wanUp(c, w, ifn, local, gw)
 	}
+	// DHCPv6 hooks record renumber state.  Configuration changes retire old
+	// prefixes only from netCommit, after apply verification/confirmation, so a
+	// rollback never loses the previous prefix record.
 	srcDefaults6(c) // health changes move it with the WAN metrics
 	writeResolv(c)
+}
+
+// netCommit performs the irreversible runtime cleanup only after apply has
+// passed verification (and, for a confirm window, after the owner confirms).
+func netCommit(c *Config) error {
+	removeStalePD6(c)
+	lan6Renumber(c, true)
+	srcDefaults6(c)
+	writeResolv(c)
+	return fwLoadForCommit(c)
 }
 
 // writeResolv rewrites resolvConf from the WANs that are up (healthy first, then by metric).
@@ -611,9 +651,9 @@ func hookDhcpcd(c *Config) error {
 	case "BOUND6", "REBIND6", "RENEW6", "REBOOT6", "INFORM6", "DELEGATED6", "ROUTERADVERT":
 	case "EXPIRE6", "RELEASE6", "STOP6", "NOCARRIER", "STOPPED":
 		os.Remove(pd6File(w.Name)) // the prefix is gone: policy routes stop sending its sources here
-		return refreshLan6()
+		return refreshLan6ForHook()
 	default:
-		return refreshLan6()
+		return refreshLan6ForHook()
 	}
 	if pds := delegatedPrefixes(os.Environ()); len(pds) > 0 {
 		// written only when it changes: its mtime is when this session got the prefix (dial order,
@@ -630,7 +670,7 @@ func hookDhcpcd(c *Config) error {
 	if w.Proto != "pppoe" {
 		gw6 := mainDefault6(iface)
 		if gw6 == "" {
-			return refreshLan6() // no RA yet; the ROUTERADVERT event comes back here
+			return refreshLan6ForHook() // no RA yet; the ROUTERADVERT event comes back here
 		}
 		via = []string{"via", gw6}
 		t, _ := c.WANTable(w.Name)
@@ -651,7 +691,7 @@ func hookDhcpcd(c *Config) error {
 		run("ip", args...)
 	}
 	runOnWAN(c, w.Name, "ipv6")
-	return refreshLan6()
+	return refreshLan6ForHook()
 }
 
 func updateDHCP6DNS(w *WAN, reason string, values ...string) bool {

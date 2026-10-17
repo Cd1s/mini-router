@@ -273,7 +273,7 @@ func init() {
 		Managed: append([]string{"igmpproxy", "mr-wanmon", "dhcpcd"}, initInstances("mr-udhcpc.")...), // dhcpcd: Alpine's service, replaced by mr-dhcpcd
 		Restart: func(path string) string {
 			switch {
-			case strings.HasPrefix(path, "/etc/ppp/peers/"):
+			case strings.HasPrefix(path, pppPeersDir+"/"):
 				return "mr-pppoe." + filepath.Base(path)
 			case strings.HasPrefix(path, "/etc/init.d/mr-pppoe."):
 				return "-" // wrapper only depends on the name; the peers file carries the settings
