@@ -230,7 +230,7 @@ func TestDoctorFindings(t *testing.T) {
 	c.Firewall.Offload, c.Services.SSH.PasswordLogin = "hardware", false
 	// unknown NTP state (an image without the marker directory), early after boot
 	r = run(func(e *docEnv) { e.ntp = func() (bool, bool, time.Duration) { return false, false, 0 } })
-	if f := docFind(r, "clock"); f.Sev != "skip" {
+	if f := docFind(r, "clock"); f.Sev != "skip" || !strings.Contains(f.Detail, "mr-clock of an older image") {
 		t.Errorf("clock unknown: %+v", f)
 	}
 	r = run(func(e *docEnv) { e.uptime = 100; e.ntp = func() (bool, bool, time.Duration) { return false, true, 0 } })

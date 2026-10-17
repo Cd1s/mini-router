@@ -489,6 +489,9 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 func restartAll(svcs []string) []string {
 	var failed []string
 	for _, s := range svcs {
+		if strings.HasPrefix(s, "mr-pppoe.") {
+			markDialStart(strings.TrimPrefix(s, "mr-pppoe."), time.Now().Unix())
+		}
 		if s == "mr-network" {
 			// re-run in place: restarting the service would restart everything that needs net (PPPoE redial)
 			if out, err := run("sh", GenDir+"/network.sh"); err != nil {
@@ -589,7 +592,7 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 	// on disk before the first new file: if the router goes down from here until the change is
 	// accepted, the next boot rolls it back. Claimed atomically: of two applies started at once, one
 	// is refused here.
-	if err := claimPending(pendingApply{Snapshot: snap, State: stateApplying, Via: o.Via, Pid: os.Getpid()}); err != nil {
+	if err := claimPending(pendingApply{Snapshot: snap, ListSnapshot: o.ListSnapshot, State: stateApplying, Via: o.Via, Pid: os.Getpid()}); err != nil {
 		os.Remove(snap)
 		return err
 	}
@@ -729,6 +732,10 @@ func generatedByMR(path string) bool {
 // old files are back, so a crash in the middle of it rolls back again at boot.
 func rollback(snap string, cause error) error {
 	logf("apply failed, rolling back to %s: %v", filepath.Base(snap), cause)
+	listSnap := ""
+	if p, err := readPending(); err == nil && p.Snapshot == snap {
+		listSnap = p.ListSnapshot
+	}
 	keepRejected(snap)
 	svcs, err := restore(snap)
 	if err != nil {
@@ -741,6 +748,7 @@ func rollback(snap string, cause error) error {
 		refreshRoutes(c)
 		fwLoad(c)
 	}
+	undoLists(listSnap)
 	clearPending(snap)
 	setResult(snap, "rolled back: "+firstLine(cause.Error()))
 	appendChangeLog("mr apply: failed and rolled back — " + firstLine(cause.Error()))
@@ -854,12 +862,13 @@ func appendChangeLogAt(t time.Time, line string) {
 
 // pendingApply is the content of ConfirmFile.
 type pendingApply struct {
-	Snapshot    string `json:"snapshot"`               // history snapshot taken before the change
-	State       string `json:"state"`                  // stateApplying | statePending | stateReverting
-	Deadline    int64  `json:"deadline,omitempty"`     // unix time the confirm timer rolls back at (statePending)
-	Via         string `json:"via"`                    // origin: mr apply | web UI | restore
-	Pid         int    `json:"pid,omitempty"`          // the applying process (stateApplying)
-	ConfirmHash string `json:"confirm_hash,omitempty"` // sha256 of the one-time LAN handoff token
+	Snapshot     string `json:"snapshot"`                // history snapshot taken before the change
+	ListSnapshot string `json:"list_snapshot,omitempty"` // restore backup's list files, if any
+	State        string `json:"state"`                   // stateApplying | statePending | stateReverting
+	Deadline     int64  `json:"deadline,omitempty"`      // unix time the confirm timer rolls back at (statePending)
+	Via          string `json:"via"`                     // origin: mr apply | web UI | restore
+	Pid          int    `json:"pid,omitempty"`           // the applying process (stateApplying)
+	ConfirmHash  string `json:"confirm_hash,omitempty"`  // sha256 of the one-time LAN handoff token
 }
 
 // interrupted: an apply whose process is gone (killed, out of memory). Nothing finishes or undoes it
@@ -1159,6 +1168,9 @@ func rollbackCommand(args []string, cfgPath, secPath string) error {
 		}
 		return err
 	}
+	if reverting {
+		undoLists(p.ListSnapshot)
+	}
 	restartAll(svcs)
 	if c, err := loadConfig(cfgPath, secPath); err == nil {
 		reconcileRunlevel(c)
@@ -1201,6 +1213,7 @@ func rollbackAtBoot(cfgPath, secPath string) error {
 		return fmt.Errorf("rolling back the %s to %s: %w", what, filepath.Base(snap), err)
 	}
 	dropStaged()
+	undoLists(p.ListSnapshot)
 	if c, err := loadConfig(cfgPath, secPath); err == nil {
 		linkRunlevel(c)
 	}
@@ -1295,7 +1308,13 @@ func verify(c *Config, restarted []string) []string {
 }
 
 // verifyDeadline is shared by module Verify funcs that wait for something to come up.
-func verifyDeadline() time.Time { return time.Now().Add(90 * time.Second) }
+var verifyDeadline = func(cs ...*Config) time.Time {
+	wait := 90 * time.Second
+	if len(cs) > 0 && len(cs[0].MultiWAN.DialOrder) > 1 {
+		wait += time.Duration(len(cs[0].MultiWAN.DialOrder)) * cs[0].MultiWAN.dialWait()
+	}
+	return time.Now().Add(wait)
+}
 
 func waitFor(deadline time.Time, ok func() bool) bool {
 	for {

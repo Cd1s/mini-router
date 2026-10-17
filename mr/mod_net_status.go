@@ -18,6 +18,8 @@ import (
 // sysNet is /sys/class/net (a variable so tests can point it at a fake tree).
 var sysNet = "/sys/class/net"
 
+var ipv4AddrsForVerify = ipv4Addrs
+
 func sysRead(dev, attr string) string {
 	return strings.TrimSpace(readFile(filepath.Join(sysNet, dev, attr)))
 }
@@ -82,7 +84,7 @@ func netStatus(c *Config, st map[string]any) {
 
 func netVerify(c *Config, restarted []string) []string {
 	var errs []string
-	deadline := verifyDeadline()
+	deadline := verifyDeadline(c)
 	for _, s := range restarted {
 		if s == "mr-network" { // network.sh ran again: did every link take its MTU?
 			errs = append(errs, linkMTUErrors(c)...)
@@ -92,6 +94,9 @@ func netVerify(c *Config, restarted []string) []string {
 		switch {
 		case strings.HasPrefix(s, "mr-pppoe."):
 			w, what = c.WANByName(strings.TrimPrefix(s, "mr-pppoe.")), "PPPoE did not come up"
+			if w != nil && (!carrier(w.LinkDev()) || otherWANUp(c, w.Name)) {
+				continue
+			}
 		case strings.HasPrefix(s, "mr-udhcpc."):
 			w, what = c.WANByName(strings.TrimPrefix(s, "mr-udhcpc.")), "no DHCP lease"
 			// Only roll back when this leaves the router without internet: no cable means nothing to wait
@@ -102,7 +107,7 @@ func netVerify(c *Config, restarted []string) []string {
 			}
 		}
 		if w != nil && !waitFor(deadline, func() bool { return hasIPv4(w.Ifname()) }) {
-			errs = append(errs, w.Name+": "+what+" within 90s")
+			errs = append(errs, w.Name+": "+what+" before verification deadline")
 		}
 	}
 	return errs
@@ -131,7 +136,7 @@ func linkMTUErrors(c *Config) []string {
 // otherWANUp reports whether a WAN other than name has an IPv4 address right now.
 func otherWANUp(c *Config, name string) bool {
 	for _, w := range c.WAN {
-		if w.Name != name && len(ipv4Addrs(w.Ifname())) > 0 {
+		if w.Name != name && len(ipv4AddrsForVerify(w.Ifname())) > 0 {
 			return true
 		}
 	}

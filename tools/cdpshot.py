@@ -4,9 +4,23 @@
 Starts headless Chrome with the DevTools protocol, loads URL at WIDTH x HEIGHT (device scale 2) with the given
 prefers-color-scheme, waits WAIT_SECONDS of wall-clock time (pages that poll an API need it), captures a PNG.
 Standard library only (a minimal WebSocket client). CDP_PORT=N picks the DevTools port (default 9333)."""
-import base64, json, os, socket, struct, subprocess, sys, tempfile, time, urllib.request
+import base64, json, os, shutil, socket, struct, subprocess, sys, tempfile, time, urllib.request
 
-CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+MAC_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+
+def find_chrome():
+    """Find a Chrome-compatible browser on macOS or Linux."""
+    configured = os.environ.get("CDP_CHROME")
+    if configured:
+        return configured
+    if os.path.exists(MAC_CHROME):
+        return MAC_CHROME
+    for name in ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome"):
+        path = shutil.which(name)
+        if path:
+            return path
+    raise RuntimeError("Chrome/Chromium not found; set CDP_CHROME or install chromium")
 
 
 def recv_exact(s, n):
@@ -71,7 +85,7 @@ def main():
     url, out, w, h, scheme, wait = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), sys.argv[5], float(sys.argv[6])
     port = int(os.environ.get("CDP_PORT", "9333"))  # concurrent runs: give each its own port
     prof = tempfile.mkdtemp(prefix="cdpshot-")
-    p = subprocess.Popen([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", f"--remote-debugging-port={port}",
+    p = subprocess.Popen([find_chrome(), "--headless=new", "--disable-gpu", "--hide-scrollbars", f"--remote-debugging-port={port}",
                           f"--user-data-dir={prof}", f"--window-size={w},{h}", "about:blank"],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:

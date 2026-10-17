@@ -141,6 +141,40 @@ func TestBootRollsBackInterruptedApply(t *testing.T) {
 	}
 }
 
+func TestBootRollbackRestoresRestoreListSnapshot(t *testing.T) {
+	d, cfg, sec := confirmEnv(t)
+	oldSysHistory := sysHistoryDir
+	sysHistoryDir = HistoryDir
+	t.Cleanup(func() { sysHistoryDir = oldSysHistory })
+	list := filepath.Join(d, "etc", "mini-router", "dns", "block.list")
+	if err := os.MkdirAll(filepath.Dir(list), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(list, []byte("old\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	configSnap := filepath.Join(HistoryDir, "apply.tar.gz")
+	if err := writeSnapshot(configSnap, []string{cfg}); err != nil {
+		t.Fatal(err)
+	}
+	listSnap := filepath.Join(HistoryDir, "restore-lists.tar.gz")
+	if err := writeSnapshot(listSnap, []string{list}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(list, []byte("unconfirmed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := setPending(pendingApply{Snapshot: configSnap, ListSnapshot: listSnap, State: statePending, Via: "restore"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rollbackAtBoot(cfg, sec); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, list); got != "old\n" {
+		t.Fatalf("restore list survived power loss: %q", got)
+	}
+}
+
 func TestBootRollbackBadMarker(t *testing.T) {
 	d, cfg, sec := confirmEnv(t)
 	f := filepath.Join(d, "gen.conf")

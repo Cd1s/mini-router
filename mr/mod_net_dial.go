@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -36,6 +37,7 @@ const (
 var (
 	dialStateFile = RunDir + "/dial-restore.json" // WAN -> unix time of its last restore redial
 	dialLockFile  = RunDir + "/dial-restore.lock"
+	dialStartDir  = RunDir + "/dial-start"
 	dialSleep     = time.Sleep
 	dialRestart   = func(svc string) error {
 		out, err := run("rc-service", svc, "restart")
@@ -54,6 +56,20 @@ var (
 		return cmd.Process.Release()
 	}
 )
+
+func markDialStart(name string, at int64) {
+	if name == "" {
+		return
+	}
+	if err := os.MkdirAll(dialStartDir, 0700); err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dialStartDir, name), []byte(fmt.Sprint(at)), 0600)
+}
+
+func dialStartedAt(name string) int64 {
+	return int64(atoi(strings.TrimSpace(readFile(filepath.Join(dialStartDir, name)))))
+}
 
 func netValidateDial(c *Config, v *Validator) {
 	m := c.MultiWAN
@@ -129,7 +145,7 @@ func dialWaitUp(c *Config, names []string, since int64, deadline time.Time) bool
 	for {
 		ok := true
 		for _, n := range names {
-			if !dialReady(c, n, since) {
+			if !dialReady(c, n, max(since, dialStartedAt(n))) {
 				ok = false
 			}
 		}

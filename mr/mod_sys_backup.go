@@ -406,7 +406,7 @@ func startRestore(rs *restoreSet, confirmSecs int) (map[string]any, []string, er
 		undoLists(snap)
 		return nil, nil, err
 	}
-	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: "restore"})
+	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: "restore", ListSnapshot: snap})
 	lists := 0
 	if snap != "" {
 		lists = len(rs.lists)

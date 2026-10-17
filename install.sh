@@ -230,7 +230,7 @@ if [ -f "$CONF/router.yaml" ]; then
 fi
 host=${MR_LAN_IP%/*}
 ssh_enabled=false
-[ -e /etc/runlevels/default/dropbear ] && ssh_enabled=true # keep a dropbear the machine already uses
+[ -e /etc/runlevels/default/dropbear ] || [ -e /etc/runlevels/default/sshd ] && ssh_enabled=true # keep the SSH daemon the machine already uses
 wd=true
 [ -e /dev/watchdog ] || wd=false
 lan_list=$(printf '%s\n' $MR_LAN_PORTS | sed 's/.*/"&"/' | paste -sd, -)

@@ -50,6 +50,8 @@ type applyOpts struct {
 	// ConfirmToken is a one-time web handoff for a LAN renumber. It is never written
 	// to the job log or history; applyWith stores only its hash in the pending marker.
 	ConfirmToken string
+	// ListSnapshot is the durable snapshot of files restored by `mr sys restore`.
+	ListSnapshot string
 }
 
 // bookkeeping reports files that record state for mr itself (not shown in plans).
