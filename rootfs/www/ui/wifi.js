@@ -122,7 +122,7 @@ function radioTab(r, live){
       ...field("Beacon 间隔 (TU)", inNum(r,"beacon_int",{min:10,max:10000,placeholder:"100"}), "默认 100（约 102 ms）"),
       ...field("DTIM 周期", inNum(r,"dtim_period",{min:1,max:255,placeholder:"2"}), "默认 2；越大终端越省电，组播/广播延迟越高"),
       ...(r.band==="2g" ? field("允许 802.11b 速率", inBool(r,"legacy_rates"), "只有很老的设备需要；开启会拖慢整个 2.4G 频段") : [])),
-      w ? h("span",{class:"row"}, stateTag(w.state, w.cac_left), w.channel ? h("span",{class:"tag"}, "信道 "+w.channel+" · "+w.htmode) : null) : null, h("span",{class:"row"}, remove));
+      h("span",{class:"row"}, w ? h("span",{class:"row"}, stateTag(w.state, w.cac_left), w.channel ? h("span",{class:"tag"}, "信道 "+w.channel+" · "+w.htmode) : null) : null, remove));
     const full = r.ssids.length >= MAX_SSIDS, g = guestNet();
     const add = guest=>{
       r.ssids.push(guest

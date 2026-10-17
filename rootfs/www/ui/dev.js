@@ -57,17 +57,17 @@ function editDevice(orig, save){
   const dom = (S.cfg.dhcp||{}).domain||"lan";
   const leaseDraft = clone((S.cfg.dhcp&&S.cfg.dhcp.host_leases)||{});
   const leaseOf = macs=>{ const want=new Set((macs||[]).map(lc)); const k=Object.keys(leaseDraft).find(x=>want.has(lc(x))); return k?leaseDraft[k]:""; };
+  let leaseValue = leaseOf(o.macs) || leaseOf(orig.macs||[]);
   const clearDraft = macs=>{ const want=new Set((macs||[]).map(lc)); for(const k of Object.keys(leaseDraft)) if(want.has(lc(k))) delete leaseDraft[k]; };
   const commitLease = ()=>{
     const oldMacs = orig.macs||[], all=[...oldMacs,...o.macs];
-    const value = leaseOf(o.macs) || leaseOf(oldMacs);
     clearDraft(all);
-    if (o.ip && value && o.macs[0]) leaseDraft[lc(o.macs[0])] = value;
+    if (o.ip && leaseValue && o.macs[0]) leaseDraft[lc(o.macs[0])] = leaseValue;
     if (Object.keys(leaseDraft).length) { S.cfg.dhcp.host_leases=leaseDraft; }
     else if (S.cfg.dhcp.host_leases) delete S.cfg.dhcp.host_leases;
   };
   const leaseBox = h("div");
-  const drawLease = ()=>{ leaseBox.replaceChildren(...(o.ip ? [h("input",{type:"text",value:leaseOf(o.macs),placeholder:"默认（"+(S.cfg.dhcp.lease||"12h")+"）",oninput:e=>{ clearDraft(o.macs); if(e.target.value.trim()&&o.macs[0]) leaseDraft[lc(o.macs[0])]=e.target.value.trim(); }}),h("div",{class:"hint"},"固定 IPv4 设备可使用独立租期，例如 30m、12h、1d、infinite")]:[h("span",{class:"mut"},"填入固定 IPv4 后可设置")])) };
+  const drawLease = ()=>{ leaseBox.replaceChildren(...(o.ip ? [h("input",{type:"text",value:leaseValue,placeholder:"默认（"+(S.cfg.dhcp.lease||"12h")+"）",oninput:e=>{ leaseValue=e.target.value.trim(); clearDraft(o.macs); if(leaseValue&&o.macs[0]) leaseDraft[lc(o.macs[0])]=leaseValue; }}),h("div",{class:"hint"},"固定 IPv4 设备可使用独立租期，例如 30m、12h、1d、infinite")]:[h("span",{class:"mut"},"填入固定 IPv4 后可设置")])) };
   drawLease();
   const ipInput = inText(o,"ip",{placeholder:"留空 = 动态分配"}); ipInput.addEventListener("input",drawLease);
   const macInput = inList(o,"macs",{placeholder:"aa:bb:cc:dd:ee:ff, …"}); macInput.addEventListener("input",drawLease);

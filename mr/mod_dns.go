@@ -481,7 +481,8 @@ var dnsListDir = "/etc/mini-router/dns"
 
 const dnsListMax = 1 << 20
 
-var dnsListReload = restartDnsmasq
+var dnsListRun = func(name string, args ...string) (string, error) { return run(name, args...) }
+var dnsListIsReferenced = dnsListReferenced
 
 var reDNSListFile = lazyRegexp(`^[A-Za-z0-9_-]{1,64}\.(domains|hosts|servers|ips)$`)
 var reDNSHostName = lazyRegexp(`^[A-Za-z0-9_*.-]{1,253}$`)
@@ -491,6 +492,51 @@ func dnsListPath(name string) (string, bool) {
 		return "", false
 	}
 	return filepath.Join(dnsListDir, name), true
+}
+
+func dnsListReferenced(path string) bool {
+	c, err := loadConfig(ConfigPath, SecretsPath)
+	if err != nil {
+		return false
+	}
+	path = filepath.Clean(path)
+	if filepath.Clean(c.DNS.ServersFile) == path {
+		return true
+	}
+	for _, p := range c.DNS.AddnHosts {
+		if filepath.Clean(p) == path {
+			return true
+		}
+	}
+	return false
+}
+
+func restoreDNSList(path string, old []byte, existed bool) error {
+	if existed {
+		return writeAtomic(path, old, 0644)
+	}
+	return os.Remove(path)
+}
+
+func validateAndReloadDNSList(path string, old []byte, existed bool) error {
+	if !dnsListIsReferenced(path) {
+		return nil
+	}
+	if out, err := dnsListRun("dnsmasq", "--test", "--conf-file=/etc/dnsmasq.conf"); err != nil {
+		_ = restoreDNSList(path, old, existed)
+		return fmt.Errorf("dnsmasq config check failed: %v %s", err, strings.TrimSpace(out))
+	}
+	if out, err := dnsListRun("rc-service", "dnsmasq", "restart"); err != nil {
+		_ = restoreDNSList(path, old, existed)
+		_, _ = dnsListRun("rc-service", "dnsmasq", "restart")
+		return fmt.Errorf("dnsmasq restart failed: %v %s", err, strings.TrimSpace(out))
+	}
+	if out, err := dnsListRun("rc-service", "dnsmasq", "status"); err != nil {
+		_ = restoreDNSList(path, old, existed)
+		_, _ = dnsListRun("rc-service", "dnsmasq", "restart")
+		return fmt.Errorf("dnsmasq is not running: %v %s", err, strings.TrimSpace(out))
+	}
+	return nil
 }
 
 func dnsListContentErrors(name, content string) []string {
@@ -609,6 +655,13 @@ func apiDNSFiles(r apiReq) apiResp {
 	if exists && !fi.Mode().IsRegular() {
 		return errResp(400, "%s is not a regular file", path)
 	}
+	var old []byte
+	if exists {
+		old, err = os.ReadFile(path)
+		if err != nil {
+			return errResp(500, "%v", err)
+		}
+	}
 	if !in.Save {
 		content := ""
 		if exists {
@@ -636,12 +689,12 @@ func apiDNSFiles(r apiReq) apiResp {
 	if err := writeAtomic(path, []byte(data), 0644); err != nil {
 		return errResp(500, "%v", err)
 	}
-	appendChangeLog("webui: dns list " + in.File + " saved")
 	if strings.HasSuffix(in.File, ".hosts") || strings.HasSuffix(in.File, ".servers") {
-		if err := dnsListReload(); err != nil {
+		if err := validateAndReloadDNSList(path, old, exists); err != nil {
 			return errResp(500, "%v", err)
 		}
 	}
+	appendChangeLog("webui: dns list " + in.File + " saved")
 	return apiResp{body: map[string]any{"ok": true, "path": path}}
 }
 

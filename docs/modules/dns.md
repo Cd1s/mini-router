@@ -305,8 +305,9 @@ Web UI actions (logged-in sessions only): `dns.stats` (GET), `dns.leases` (GET),
 `dns.querylog` (GET = state + last 300 lines; POST `{on, minutes}`), `dnslist` (split list editor; a
 basename matching `^[A-Za-z0-9_-]{1,64}\.domains$` may create a new file under `/etc/mini-router/dns/`),
 `dns.files` (logged-in session only: list/read/create/edit `.domains`, `.hosts`, `.servers` and `.ips`
-files under `/etc/mini-router/dns/`; maximum 1 MiB, with per-type line validation; saving `.hosts` or
-`.servers` reloads dnsmasq), `dns.adblock`
+files under `/etc/mini-router/dns/`; maximum 1 MiB, with per-type line validation; saving a referenced
+`.hosts` or `.servers` runs `dnsmasq --test`, reloads dnsmasq, and restores the previous file if the
+check or service status fails), `dns.adblock`
 (GET = status; POST `{update: true}` starts an update in the background; API tokens: scope operate).
 No handler builds a shell command; `rc-service dnsmasq restart` is the only exec, with fixed argv.
 
