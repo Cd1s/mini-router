@@ -405,7 +405,7 @@ func refreshRoutes(c *Config) {
 	// Retire removed/disabled delegated prefixes before rebuilding source routes.
 	// lan6Renumber keeps the runtime record for a transient dhcpcd release, but
 	// removes it when the accepted configuration no longer owns that prefix.
-	lan6Renumber(c)
+	lan6Renumber(c, true)
 	srcDefaults6(c) // health changes move it with the WAN metrics
 	writeResolv(c)
 }

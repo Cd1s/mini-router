@@ -189,7 +189,8 @@ func raLeaseSecs(lease string) int { return leaseSecs(raLease(lease)) }
 
 // lan6Renumber records the prefixes of the RA bridges per WAN and, once a WAN has delegated again,
 // announces the ones that did not come back as stale (see the top of this file).
-func lan6Renumber(c *Config) {
+func lan6Renumber(c *Config, retireDisabled ...bool) {
+	retireConfig := len(retireDisabled) > 0 && retireDisabled[0]
 	lease := map[string]int{}
 	for _, n := range dhcpNets(c) {
 		if n.ra {
@@ -217,7 +218,7 @@ func lan6Renumber(c *Config) {
 		// its keys so lan6Plan emits them as stale instead of preserving the
 		// transient empty state used during a normal dhcpcd release.
 		retire := false
-		if !w.IPv6 || !w.IPv6PD {
+		if retireConfig && (!w.IPv6 || !w.IPv6PD) {
 			for k := range prev.Addrs {
 				if strings.HasPrefix(k, w.Name+" ") {
 					retire = true
@@ -237,7 +238,7 @@ func lan6Renumber(c *Config) {
 	}
 	curByWAN := lan6ByWAN(cur, wans, pds)
 	for _, w := range c.WAN {
-		if !w.IPv6 || !w.IPv6PD {
+		if retireConfig && (!w.IPv6 || !w.IPv6PD) {
 			retire := false
 			for k := range prev.Addrs {
 				if strings.HasPrefix(k, w.Name+" ") {
