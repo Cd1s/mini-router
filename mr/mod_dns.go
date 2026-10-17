@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -475,6 +477,102 @@ func splitFile(name string) (string, bool) {
 
 var domainRe = lazyRegexp(`^[A-Za-z0-9_*.-]+$`)
 
+const dnsListDir = "/etc/mini-router/dns"
+const dnsListMax = 1 << 20
+
+var reDNSListFile = lazyRegexp(`^[A-Za-z0-9_-]{1,64}\.(domains|hosts|servers|ips)$`)
+
+func dnsListPath(name string) (string, bool) {
+	if !reDNSListFile.MatchString(name) {
+		return "", false
+	}
+	return filepath.Join(dnsListDir, name), true
+}
+
+func apiDNSFiles(r apiReq) apiResp {
+	var in struct {
+		File, Content string
+		Save          bool
+	}
+	if err := json.Unmarshal(r.body, &in); err != nil {
+		return errResp(400, "invalid JSON")
+	}
+	if in.File == "" {
+		files := []map[string]any{}
+		ents, _ := os.ReadDir(dnsListDir)
+		for _, e := range ents {
+			if !e.Type().IsRegular() || !reDNSListFile.MatchString(e.Name()) {
+				continue
+			}
+			fi, err := e.Info()
+			if err != nil {
+				continue
+			}
+			files = append(files, map[string]any{"name": e.Name(), "path": filepath.Join(dnsListDir, e.Name()), "size": fi.Size()})
+		}
+		return apiResp{body: map[string]any{"dir": dnsListDir, "files": files}}
+	}
+	path, ok := dnsListPath(filepath.Base(in.File))
+	if !ok || filepath.Base(in.File) != in.File {
+		return errResp(400, "file name: letters, digits, _ - with .domains, .hosts, .servers or .ips")
+	}
+	fi, err := os.Lstat(path)
+	exists := err == nil
+	if exists && !fi.Mode().IsRegular() {
+		return errResp(400, "%s is not a regular file", path)
+	}
+	if !in.Save {
+		content := ""
+		if exists {
+			b, er := os.ReadFile(path)
+			if er != nil {
+				return errResp(500, "%v", er)
+			}
+			content = string(b)
+		}
+		return apiResp{body: map[string]any{"file": in.File, "path": path, "exists": exists, "content": content}}
+	}
+	if r.method != "POST" {
+		return errResp(405, "POST required")
+	}
+	if len(in.Content) > dnsListMax {
+		return errResp(413, "file is too large (maximum 1 MiB)")
+	}
+	for i, line := range strings.Split(strings.ReplaceAll(in.Content, "\r", ""), "\n") {
+		if len(line) > 4096 || strings.IndexByte(line, 0) >= 0 {
+			return errResp(400, "line %d is too long or contains NUL", i+1)
+		}
+		for _, ch := range line {
+			if ch < 0x20 && ch != '\t' {
+				return errResp(400, "line %d contains control characters", i+1)
+			}
+		}
+		trim := strings.TrimSpace(line)
+		if trim == "" || strings.HasPrefix(trim, "#") {
+			continue
+		}
+		if strings.HasSuffix(in.File, ".domains") && !domainRe.MatchString(trim) {
+			return errResp(400, "bad domain line %q", trim)
+		}
+		if strings.HasSuffix(in.File, ".ips") {
+			if _, err := netip.ParsePrefix(trim); err != nil {
+				if _, err = netip.ParseAddr(trim); err != nil {
+					return errResp(400, "bad IP/CIDR on line %d", i+1)
+				}
+			}
+		}
+	}
+	if err := os.MkdirAll(dnsListDir, 0755); err != nil {
+		return errResp(500, "%v", err)
+	}
+	data := strings.TrimRight(strings.ReplaceAll(in.Content, "\r", ""), "\n") + "\n"
+	if err := writeAtomic(path, []byte(data), 0644); err != nil {
+		return errResp(500, "%v", err)
+	}
+	appendChangeLog("webui: dns list " + in.File + " saved")
+	return apiResp{body: map[string]any{"ok": true, "path": path}}
+}
+
 func apiDNSList(r apiReq) apiResp {
 	var in struct {
 		Name    string `json:"name"`
@@ -484,6 +582,13 @@ func apiDNSList(r apiReq) apiResp {
 	json.Unmarshal(r.body, &in)
 	path, ok := splitFile(in.Name)
 	if !ok {
+		// Keep the historical dnslist action useful for a newly-created split
+		// list: the basename is still constrained to the managed DNS directory.
+		if reDNSListFile.MatchString(in.Name) {
+			b, _ := json.Marshal(map[string]any{"file": in.Name, "content": in.Content, "save": in.Save})
+			r.body = b
+			return apiDNSFiles(r)
+		}
 		return errResp(404, "no split list %q", in.Name)
 	}
 	if !in.Save {
@@ -582,6 +687,7 @@ func init() {
 		TokenScope: map[string]string{"dns.stats": "read", "dns.leases": "read", "dns.release": "operate", "dns.adblock": "operate"},
 		API: map[string]func(r apiReq) apiResp{
 			"dnslist":      apiDNSList,
+			"dns.files":    apiDNSFiles,
 			"dns.stats":    apiDNSStats,
 			"dns.leases":   apiDNSLeases,
 			"dns.release":  apiDNSRelease,
