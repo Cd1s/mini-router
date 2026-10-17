@@ -30,6 +30,12 @@ ensure_base(){
 
 kill_pid(){ p=$1; [ -s "$p" ] || return 0; kill "$(cat "$p")" 2>/dev/null || true; sleep 1; kill -9 "$(cat "$p")" 2>/dev/null || true; rm -f "$p"; }
 ns_del(){ ip netns pids "$1" 2>/dev/null | xargs -r kill -9 2>/dev/null || true; ip netns del "$1" 2>/dev/null || true; }
+cleanup_host_links(){
+  id=$1
+  for x in mrlab${id}s1 mrlab${id}s1p mrlab${id}s2 mrlab${id}s2p mrlab${id}sl mrlab${id}slp; do
+    ip link del "$x" 2>/dev/null || true
+  done
+}
 
 up(){
   id=$1; valid_id "$id"; ensure_base; d=$(state "$id"); mkdir -p "$d"
@@ -37,10 +43,11 @@ up(){
   for n in "$(sw "$id")" "$(isp "$id" 1)" "$(isp "$id" 2)" "$(lan "$id")"; do ip netns list | awk '{print $1}' | grep -qx "$n" || ip netns add "$n"; done
   run_ns "$(sw "$id")" ip link show br0 >/dev/null 2>&1 || run_ns "$(sw "$id")" ip link add br0 type bridge
   run_ns "$(sw "$id")" ip link set br0 up
-  connect(){ a=$1; b=$2; [ -e "/sys/class/net/$a" ] || ip link add "$a" type veth peer name "$b"; ip link set "$a" netns "$(sw "$id")" 2>/dev/null || true; }
-  connect "mrlab${id}s1" "mrlab${id}s1p"; ip link set "mrlab${id}s1p" netns "$(isp "$id" 1)" 2>/dev/null || true
-  connect "mrlab${id}s2" "mrlab${id}s2p"; ip link set "mrlab${id}s2p" netns "$(isp "$id" 2)" 2>/dev/null || true
-  connect "mrlab${id}sl" "mrlab${id}slp"; ip link set "mrlab${id}slp" netns "$(lan "$id")" 2>/dev/null || true
+  cleanup_host_links "$id"
+  connect(){ a=$1; b=$2; target=$3; ip link add "$a" type veth peer name "$b"; ip link set "$a" netns "$(sw "$id")"; ip link set "$b" netns "$target"; }
+  connect "mrlab${id}s1" "mrlab${id}s1p" "$(isp "$id" 1)"
+  connect "mrlab${id}s2" "mrlab${id}s2p" "$(isp "$id" 2)"
+  connect "mrlab${id}sl" "mrlab${id}slp" "$(lan "$id")"
   for x in mrlab${id}s1 mrlab${id}s2 mrlab${id}sl; do run_ns "$(sw "$id")" ip link set "$x" master br0 2>/dev/null || true; run_ns "$(sw "$id")" ip link set "$x" up 2>/dev/null || true; done
   run_ns "$(isp "$id" 1)" ip link set lo up; run_ns "$(isp "$id" 1)" ip link set mrlab${id}s1p up
   run_ns "$(isp "$id" 2)" ip link set lo up; run_ns "$(isp "$id" 2)" ip link set mrlab${id}s2p up
@@ -63,7 +70,7 @@ up(){
   echo "{\"id\":$id,\"state\":\"up\",\"switch\":\"$(sw "$id")\"}"
 }
 
-down(){ id=$1; valid_id "$id"; kill_pid "$(pidfile "$id")"; for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; done; rm -rf "$(state "$id")"; echo "down $id"; }
+down(){ id=$1; valid_id "$id"; kill_pid "$(pidfile "$id")"; for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; done; cleanup_host_links "$id"; rm -rf "$(state "$id")"; echo "down $id"; }
 status(){ id=$1; valid_id "$id"; p=$(pidfile "$id"); alive=false; [ -s "$p" ] && kill -0 "$(cat "$p")" 2>/dev/null && alive=true; printf '{"id":%s,"qemu":%s,"namespaces":["%s","%s","%s","%s"]}\n' "$id" "$alive" "$(sw "$id")" "$(isp "$id" 1)" "$(isp "$id" 2)" "$(lan "$id")"; }
 reset(){ id=$1; valid_id "$id"; kill_pid "$(pidfile "$id")"; rm -rf "$(state "$id")"; up "$id"; }
 
