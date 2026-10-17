@@ -669,7 +669,25 @@ change_cmd(){
   need jq
   rev=$(api_cmd "$id" GET config | jq -r .rev) || die "change: cannot read config"
   body=$(jq -cn --arg rev "$rev" --argjson patch "$patch" --argjson sec "$secrets" '{base_rev: $rev, patch: $patch, secrets: $sec, confirm: 120, comment: "lab change"}')
-  api_cmd "$id" POST apply "$body" >/dev/null || die "change: apply refused"
+  resp=$(api_cmd "$id" POST apply "$body") || die "change: apply refused: $resp"
+  cip=$(printf '%s' "$resp" | jq -r '.confirm_ip // empty'); ctok=$(printf '%s' "$resp" | jq -r '.confirm_token // empty')
+  if [ -n "$cip" ]; then
+    # the change moves the router's LAN address (#153): like the web UI, follow it — the client
+    # renews (a wired PC's port flaps), then the one-time token confirms on the new address
+    d=$(state "$id"); printf '%s\n' "$cip" > "$d/lan.ip"; rm -f "$d/api.cookies"
+    echo "{\"lan_moved_to\":\"$cip\"}"
+    [ "$confirm" = 1 ] || return 0
+    i=0
+    while [ "$i" -lt 100 ]; do
+      sleep 4; i=$((i + 4))
+      lan_cmd "$id" dhcp >/dev/null 2>&1 || continue
+      out=$(run_ns "$(lan "$id")" curl -sS --max-time 8 -H X-MR:1 -H 'Content-Type: application/json' \
+        -d "{\"token\":\"$ctok\"}" "http://$cip/cgi-bin/api?a=confirm" 2>/dev/null) || continue
+      case $out in *'"error"'*) continue;; esac
+      echo '{"confirmed":true,"via":"lan-token"}'; return 0
+    done
+    die "change: no confirmation on $cip within 100 s (the router rolls back by itself)"
+  fi
   i=0; st=running
   while [ "$st" = running ] && [ "$i" -lt 180 ]; do
     sleep 2; i=$((i + 2))
