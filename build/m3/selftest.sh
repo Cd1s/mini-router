@@ -330,6 +330,7 @@ PROBE
 	rm -f /data/mr/upper/etc/mini-router/state/first-run
 	umount /data
 	boot P3b
+	has P3b '^no$' firstboot
 	has P3b '^no$' first-run
 	# P3b starts with a fresh overlay to model an upgrade fixture. Re-arm the
 	# factory-reset marker so P4 exercises the reset boot after that fixture.

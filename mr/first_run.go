@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-// firstRunMarker is created by install.sh for a newly flashed image.  It is
-// intentionally outside router.yaml so importing an old configuration never
-// triggers the wizard for an existing owner.
+// firstRunMarker is created by install.sh or preinit when rootfs_data is new
+// or factory-reset. It is intentionally outside router.yaml so importing an
+// old configuration never triggers the wizard for an existing owner.
 var firstRunMarker = "/etc/mini-router/state/first-run"
 
 func firstRunPending() bool {
