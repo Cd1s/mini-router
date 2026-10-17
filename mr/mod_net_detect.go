@@ -130,21 +130,34 @@ func probeWAN(ctx context.Context, port string) (detectObservation, error) {
 	detectMu.Lock()
 	defer detectMu.Unlock()
 	var out detectObservation
-	var wg sync.WaitGroup
-	var pppErr, dhcpErr, raErr error
+	type result struct {
+		kind string
+		ppp  detectPPPoE
+		dhcp detectDHCP
+		err  error
+	}
+	results := make(chan result, 2)
 	pppCtx, pppCancel := context.WithTimeout(ctx, 3*time.Second)
 	dhcpCtx, dhcpCancel := context.WithTimeout(ctx, 4*time.Second)
-	raCtx, raCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer pppCancel()
 	defer dhcpCancel()
-	defer raCancel()
-	wg.Add(3)
-	go func() { defer wg.Done(); out.PPPoE, pppErr = probePPPoE(pppCtx, port) }()
-	go func() { defer wg.Done(); out.DHCP, dhcpErr = probeDHCP(dhcpCtx, port) }()
-	go func() { defer wg.Done(); out.RA, raErr = probeRA(raCtx, port) }()
-	wg.Wait()
-	if pppErr != nil && dhcpErr != nil && raErr != nil {
-		return out, fmt.Errorf("wan probes: pppoe=%v dhcp=%v ra=%v", pppErr, dhcpErr, raErr)
+	go func() { p, err := probePPPoE(pppCtx, port); results <- result{kind: "pppoe", ppp: p, err: err} }()
+	go func() { d, err := probeDHCP(dhcpCtx, port); results <- result{kind: "dhcp", dhcp: d, err: err} }()
+	var pppErr, dhcpErr error
+	for n := 0; n < 2; n++ {
+		select {
+		case r := <-results:
+			if r.kind == "pppoe" {
+				out.PPPoE, pppErr = r.ppp, r.err
+			} else {
+				out.DHCP, dhcpErr = r.dhcp, r.err
+			}
+		case <-ctx.Done():
+			return out, ctx.Err()
+		}
+	}
+	if pppErr != nil && dhcpErr != nil {
+		return out, fmt.Errorf("wan probes: pppoe=%v dhcp=%v", pppErr, dhcpErr)
 	}
 	return out, nil
 }

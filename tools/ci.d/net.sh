@@ -614,6 +614,13 @@ printf '%s\n' "$ppout" | grep -q 'Service-Name: testSvc' || fail "real PPPoE out
 kill "$pp" 2>/dev/null || :
 ip link add dpc netns "$PDDC" type veth peer name dps netns "$PDDS"
 ip -n "$PDDC" link set dpc up; ip -n "$PDDS" link set dps up
+ip -n "$PDDC" addr add 10.78.0.2/24 dev dpc
 ip -n "$PDDS" addr add 10.78.0.1/24 dev dps
 ip netns exec "$PDDS" dnsmasq --no-resolv --no-hosts --port=0 --interface=dps --bind-interfaces --dhcp-range=10.78.0.10,10.78.0.20,255.255.255.0,1m --pid-file="$T/detect-dnsmasq.pid" --log-facility="$T/detect-dnsmasq.log"
-echo "net: real PPPoE PADO and DHCP server responses available for detect parser tests"
+detectcfg="$T/detect.yaml"; printf 'lan: {ipv4: 192.168.1.1/24}\nwan: []\n' > "$detectcfg"; : > "$T/detect-secrets.yaml"
+ppjson=$(timeout 12 ip netns exec "$PDPC" "$MRH" -c "$detectcfg" -s "$T/detect-secrets.yaml" wan detect pps --timeout 3)
+printf '%s\n' "$ppjson" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["recommendation"]=="pppoe" and x["pppoe"]["ac_name"]=="testAC", x'
+dhjson=$(timeout 12 ip netns exec "$PDDC" "$MRH" -c "$detectcfg" -s "$T/detect-secrets.yaml" wan detect dpc --timeout 3)
+printf '%s\n' "$dhjson" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["recommendation"] in ("dhcp","unknown"), x'
+grep -q 'DHCPOFFER(dps)' "$T/detect-dnsmasq.log" || fail "real dnsmasq did not emit an OFFER"
+echo "net: real PPPoE PADO and DHCP OFFER server integration passed"
