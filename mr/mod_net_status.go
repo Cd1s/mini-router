@@ -480,3 +480,61 @@ func apiNetRedial(r apiReq) apiResp {
 	startDetached("rc-service", svc, "restart")
 	return apiResp{body: map[string]any{"ok": true, "service": svc}}
 }
+
+// apiNetDialRestore starts the same ordered restore used by the ppp-up hook and crond.
+// It is an operate action: it changes runtime sessions but does not edit router.yaml.
+func apiNetDialRestore(r apiReq) apiResp {
+	if r.method != "POST" {
+		return errResp(405, "POST required")
+	}
+	c, err := loadConfig(ConfigPath, SecretsPath)
+	if err != nil {
+		return errResp(500, "%v", err)
+	}
+	if len(c.MultiWAN.DialOrder) < 2 {
+		return errResp(400, "multiwan.dial_order is not configured")
+	}
+	appendChangeLog("webui: restore WAN dial order")
+	startDetached(mrBin, "wan", "dial-restore")
+	return apiResp{body: map[string]any{"ok": true}}
+}
+
+// apiNetWANMac returns the stable locally administered MAC used by `mr wan mac`.
+// The device/vlan fields allow the UI to generate one for a newly added, not-yet-applied WAN.
+func apiNetWANMac(r apiReq) apiResp {
+	if r.method != "POST" {
+		return errResp(405, "POST required")
+	}
+	var in struct {
+		WAN    string `json:"wan"`
+		Device string `json:"device"`
+		VLAN   int    `json:"vlan"`
+	}
+	if err := json.Unmarshal(r.body, &in); err != nil {
+		return errResp(400, "bad request")
+	}
+	if !reName.MatchString(in.WAN) {
+		return errResp(400, "bad wan name")
+	}
+	c, err := loadConfig(ConfigPath, SecretsPath)
+	if err != nil {
+		return errResp(500, "%v", err)
+	}
+	var w WAN
+	if configured := c.WANByName(in.WAN); configured != nil {
+		w = *configured
+	} else {
+		if !validDev(in.Device) || strings.Contains(in.Device, "..") {
+			return errResp(400, "bad device")
+		}
+		if in.VLAN < 0 || in.VLAN > 4094 {
+			return errResp(400, "bad vlan")
+		}
+		w = WAN{Name: in.WAN, Device: in.Device, VLAN: in.VLAN, Proto: "pppoe"}
+	}
+	portMAC := wanPortMAC(c, w, readFile)
+	if !reMAC.MatchString(portMAC) || !unicastMAC(portMAC) {
+		return errResp(400, "cannot read the MAC address of %s", w.LinkDev())
+	}
+	return apiResp{body: map[string]any{"mac": wanMACSuggest(portMAC, w.Name)}}
+}
