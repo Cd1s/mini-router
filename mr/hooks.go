@@ -33,8 +33,128 @@ var (
 	fwLoadForHook       = fwLoad
 	fwLoadForCommit     = fwLoad
 	refreshLan6ForHook  = refreshLan6
-	gatewayConflictSeen = map[string]bool{}
+	gatewayConflictFile = RunDir + "/gateway-conflicts.json"
+	requirePublicFile   = RunDir + "/require-public-ip.json"
+	requirePublicNow    = time.Now
+	requirePublicRedial = func(w *WAN) { startDetached("rc-service", netService(*w), "restart") }
 )
+
+const (
+	requirePublicMax = 5
+	requirePublicGap = 180
+)
+
+type requirePublicRecord struct {
+	Attempts   int   `json:"attempts"`
+	LastRedial int64 `json:"last_redial"`
+	Risk       bool  `json:"risk,omitempty"`
+}
+
+func readRequirePublic() map[string]requirePublicRecord {
+	m := map[string]requirePublicRecord{}
+	b, err := os.ReadFile(requirePublicFile)
+	if err == nil {
+		_ = json.Unmarshal(b, &m)
+	}
+	return m
+}
+
+func writeRequirePublic(m map[string]requirePublicRecord) {
+	if len(m) == 0 {
+		_ = os.Remove(requirePublicFile)
+		return
+	}
+	b, _ := json.Marshal(m)
+	if err := writeAtomic(requirePublicFile, b, 0600); err != nil {
+		logf("require_public_ip: %v", err)
+	}
+}
+
+// requirePublicIP enforces the PPPoE public-address guard from the ppp-up hook. The state is in
+// /run, so a reboot starts a fresh sequence; a public address clears it immediately.
+func requirePublicIP(c *Config, w *WAN, ip string) {
+	if w == nil || w.Proto != "pppoe" || !w.RequirePublicIP {
+		return
+	}
+	lk := flock(requirePublicFile+".lock", true)
+	if lk == nil {
+		return
+	}
+	defer lk.Close()
+	m := readRequirePublic()
+	cls := addrClass(ip)
+	if cls == "" {
+		delete(m, w.Name)
+		writeRequirePublic(m)
+		return
+	}
+	r := m[w.Name]
+	now := requirePublicNow().Unix()
+	gap := w.RequirePublicIPGap
+	if gap == 0 {
+		gap = requirePublicGap
+	}
+	if r.Risk {
+		return
+	}
+	if r.LastRedial != 0 && now-r.LastRedial < int64(gap) {
+		return
+	}
+	r.Attempts++
+	if r.Attempts >= requirePublicMax {
+		r.Risk = true
+		m[w.Name] = r
+		writeRequirePublic(m)
+		eventAdd(c, "doctor", "risk", "wan."+w.Name, fmt.Sprintf("%s has a %s IPv4 address after %d PPPoE attempts; automatic redial stopped", w.Name, cls, r.Attempts), false)
+		return
+	}
+	r.LastRedial = now
+	m[w.Name] = r
+	writeRequirePublic(m)
+	logf("wan %s: %s IPv4 address; redial %d/%d", w.Name, cls, r.Attempts, requirePublicMax-1)
+	requirePublicRedial(w)
+}
+
+func gatewayConflictReported(key string) bool {
+	lk := flock(gatewayConflictFile+".lock", true)
+	if lk == nil {
+		return false
+	}
+	defer lk.Close()
+	m := map[string]bool{}
+	if b, err := os.ReadFile(gatewayConflictFile); err == nil {
+		_ = json.Unmarshal(b, &m)
+	}
+	if m[key] {
+		return true
+	}
+	m[key] = true
+	b, _ := json.Marshal(m)
+	_ = writeAtomic(gatewayConflictFile, b, 0600)
+	return false
+}
+
+func clearGatewayConflict(key string) {
+	lk := flock(gatewayConflictFile+".lock", true)
+	if lk == nil {
+		return
+	}
+	defer lk.Close()
+	m := map[string]bool{}
+	if b, err := os.ReadFile(gatewayConflictFile); err == nil {
+		_ = json.Unmarshal(b, &m)
+	}
+	if !m[key] {
+		return
+	}
+	delete(m, key)
+	if len(m) == 0 {
+		_ = os.Remove(gatewayConflictFile)
+		return
+	}
+	b, _ := json.Marshal(m)
+	_ = writeAtomic(gatewayConflictFile, b, 0600)
+}
 
 // wanLease is what a WAN got when it came up.
 type wanLease struct {
@@ -139,6 +259,7 @@ func hookPPP(c *Config, up bool, args []string) error {
 			l.DNS, l.DNS6 = splitDNS(3, os.Getenv("DNS1"), os.Getenv("DNS2"))
 		}
 		writeLease(w.Name, l)
+		requirePublicIP(c, w, args[3])
 		wanUp(c, w, ifname, args[3], "")
 		writeResolv(c)
 	} else {
@@ -228,12 +349,11 @@ func wanUp(c *Config, w *WAN, ifname, local, gw string) {
 		if ln := lanForIP(c, gw); ln != nil && !sameIP(gw, lanAddress(ln.IPv4)) {
 			if lanHostUsesIP(c, gw) {
 				key := w.Name + ":" + gw
-				if !gatewayConflictSeen[key] {
-					gatewayConflictSeen[key] = true
+				if !gatewayConflictReported(key) {
 					eventAdd(c, "doctor", "risk", "wan."+w.Name, fmt.Sprintf("LAN host already uses upstream gateway %s; proxy ARP was not installed", gw), false)
 				}
 			} else {
-				delete(gatewayConflictSeen, w.Name+":"+gw)
+				clearGatewayConflict(w.Name + ":" + gw)
 				newProxy := !proxyNeighborExists(gw, ln.Bridge)
 				must("ip", "neigh", "replace", "proxy", gw, "dev", ln.Bridge)
 				if newProxy {
@@ -245,10 +365,21 @@ func wanUp(c *Config, w *WAN, ifname, local, gw string) {
 		}
 	}
 	if w.Proto == "pppoe" {
-		must("ip", "-6", "route", "replace", "default", "dev", ifname, "table", ts)
+		args := ipv6WANTableRouteArgs(w, healthy, "", t)
+		if healthy {
+			must("ip", args...)
+		} else {
+			run("ip", args...)
+		}
 	} else if gw6 := mainDefault6(ifname); gw6 != "" {
-		must("ip", "-6", "route", "replace", "default", "via", gw6, "dev", ifname, "table", ts)
+		args := ipv6WANTableRouteArgs(w, healthy, gw6, t)
+		if healthy {
+			must("ip", args...)
+		} else {
+			run("ip", args...)
+		}
 	}
+	setMainDefault6(w, healthy)
 	// LAN route in the WAN table: strict rp_filter (src_valid_mark=1) checks marked LAN packets against it
 	if _, lanNet, err := net.ParseCIDR(c.LAN.IPv4); err == nil {
 		must("ip", "route", "replace", lanNet.String(), "dev", c.LAN.Bridge, "table", ts)
@@ -324,6 +455,72 @@ func mainDefault6(ifname string) string {
 		}
 	}
 	return ""
+}
+
+// setMainDefault6 mirrors the IPv4 health metric for RA-installed main-table routes. dhcpcd owns
+// those routes, so the hook changes only their metric and leaves source-specific routes (proto 97)
+// to srcDefaults6. A down WAN therefore remains probeable while the next healthy WAN wins IPv6 too.
+func setMainDefault6(w *WAN, healthy bool) {
+	if w == nil || !w.IPv6 {
+		return
+	}
+	rs, _ := ipJSON("-6", "route", "show", "default", "dev", w.Ifname()).([]any)
+	metric := 1024 + w.Metric
+	if !healthy {
+		metric += downMetric
+	}
+	for _, x := range rs {
+		r, _ := x.(map[string]any)
+		if ipv6SourceRoute(r) {
+			continue
+		}
+		args := ipv6DefaultRouteArgs(r, w.Ifname(), metric)
+		if len(args) == 0 {
+			continue
+		}
+		run("ip", args...)
+		if old, ok := r["metric"].(float64); ok && int(old) != metric {
+			run("ip", "-6", "route", "del", "default", "dev", w.Ifname(), "metric", fmt.Sprint(int(old)))
+		}
+	}
+}
+
+func ipv6SourceRoute(r map[string]any) bool {
+	if proto, ok := r["protocol"].(string); ok && (proto == protoSrc6 || proto == "97") {
+		return true
+	}
+	if proto, ok := r["protocol"].(float64); ok && int(proto) == atoi(protoSrc6) {
+		return true
+	}
+	// iproute2 calls the `src` argument `prefsrc` in JSON. This also covers builds that
+	// render protocol 97 as the generic "static" name.
+	_, hasSrc := r["prefsrc"].(string)
+	return hasSrc
+}
+
+func ipv6DefaultRouteArgs(r map[string]any, dev string, metric int) []string {
+	if dev == "" {
+		return nil
+	}
+	args := []string{"-6", "route", "replace", "default"}
+	if gw, ok := r["gateway"].(string); ok && net.ParseIP(gw) != nil {
+		args = append(args, "via", gw)
+	}
+	return append(args, "dev", dev, "metric", fmt.Sprint(metric))
+}
+
+func ipv6WANTableRouteArgs(w *WAN, healthy bool, gateway string, table int) []string {
+	if w == nil {
+		return nil
+	}
+	if !healthy {
+		return []string{"-6", "route", "del", "default", "table", fmt.Sprint(table)}
+	}
+	args := []string{"-6", "route", "replace", "default"}
+	if gateway != "" {
+		args = append(args, "via", gateway)
+	}
+	return append(args, "dev", w.Ifname(), "table", fmt.Sprint(table))
 }
 
 // onLink reports whether gw is inside one of ifname's IPv4 subnets.
@@ -692,8 +889,9 @@ func hookDhcpcd(c *Config) error {
 		}
 		via = []string{"via", gw6}
 		t, _ := c.WANTable(w.Name)
-		run("ip", "-6", "route", "replace", "default", "via", gw6, "dev", iface, "table", fmt.Sprint(t))
+		run("ip", ipv6WANTableRouteArgs(w, wanHealthy(c, w.Name), gw6, t)...)
 	}
+	setMainDefault6(w, wanHealthy(c, w.Name))
 	for _, pfx := range append(delegatedPrefixes(os.Environ()), strings.Fields(os.Getenv("new_delegated_dhcp6_prefix"))...) {
 		// "2405:...::/64" possibly with lifetime suffixes; keep the CIDR part
 		pfx = strings.SplitN(pfx, ",", 2)[0]

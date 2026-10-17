@@ -47,8 +47,12 @@ func TestProxyOffLeavesEverythingElseAlone(t *testing.T) {
 	if strings.Contains(stripNetNeighborLines(got[GenDir+"/network.sh"]), "proxy") || strings.Contains(got[GenDir+"/services"], "mr-proxy") {
 		t.Error("proxy service leaked while proxy is off")
 	}
-	if !strings.Contains(stripNetNeighborLines("ip rule add table 300 # proxy"), "proxy") {
-		t.Error("proxy-off check does not detect a proxy rule leak")
+	on := renderMap(t, proxyTestConfig(t))[GenDir+"/network.sh"]
+	if !strings.Contains(on, "lookup 300 pref 5200") {
+		t.Error("proxy-on reverse check did not use the rendered proxy route rule")
+	}
+	if strings.Contains(stripNetNeighborLines(got[GenDir+"/network.sh"]), "lookup 300 pref 5200") {
+		t.Error("proxy-off check detected a proxy route in the rendered off config")
 	}
 	if strings.Contains(renderNft(c, func(string) bool { return true }), "proxy") {
 		t.Error("proxy chains rendered while proxy is absent")
