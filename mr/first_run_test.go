@@ -36,8 +36,21 @@ func TestFactoryPasswordSetupKeepsWizardPending(t *testing.T) {
 	if err := os.WriteFile(firstRunMarker, []byte("factory-done\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(d, "gen"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(d, "history"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d, "secrets.yaml"), []byte("webui_password: pbkdf2-sha256$1$abc\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d, "gen", "applied.yaml"), []byte("lan:\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	// render can create applied.yaml in the read-only factory layer and setup
-	// writes the password before the wizard continues; the marker is decisive.
+	// writes the password before the wizard continues; with no history entry,
+	// the marker remains decisive.
 	if !firstRunPending() {
 		t.Fatal("factory password setup incorrectly hid the wizard")
 	}
