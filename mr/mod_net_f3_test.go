@@ -108,6 +108,20 @@ func TestF3ModemOnlyTrustedLAN(t *testing.T) {
 	}
 }
 
+func TestF3NeighborStateOccupies(t *testing.T) {
+	for _, tc := range []struct {
+		state string
+		want  bool
+	}{
+		{"INCOMPLETE", false}, {"FAILED", false}, {"REACHABLE", true}, {"STALE", true},
+		{"DELAY", true}, {"PROBE", true}, {"PERMANENT", true},
+	} {
+		if got := neighborOccupies([]string{"192.168.1.1", "dev", "br-lan", tc.state}); got != tc.want {
+			t.Errorf("state %s: got %v want %v", tc.state, got, tc.want)
+		}
+	}
+}
+
 func TestF3GatewayRouteCommands(t *testing.T) {
 	got := gatewayRouteCommands("192.168.1.1", "wan", "192.168.1.2", 200)
 	joined := make([]string, len(got))

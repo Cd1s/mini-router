@@ -44,8 +44,11 @@ func TestProxyOffLeavesEverythingElseAlone(t *testing.T) {
 			t.Errorf("%s rendered while proxy is absent", p)
 		}
 	}
-	if strings.Contains(got[GenDir+"/services"], "mr-proxy") {
+	if strings.Contains(stripNetNeighborLines(got[GenDir+"/network.sh"]), "proxy") || strings.Contains(got[GenDir+"/services"], "mr-proxy") {
 		t.Error("proxy service leaked while proxy is off")
+	}
+	if !strings.Contains(stripNetNeighborLines("ip rule add table 300 # proxy"), "proxy") {
+		t.Error("proxy-off check does not detect a proxy rule leak")
 	}
 	if strings.Contains(renderNft(c, func(string) bool { return true }), "proxy") {
 		t.Error("proxy chains rendered while proxy is absent")
@@ -59,6 +62,16 @@ func TestProxyOffLeavesEverythingElseAlone(t *testing.T) {
 	if strings.Contains(renderNft(c, func(string) bool { return true }), "proxy") || renderMap(t, c)[proxyGenJSON] != "" {
 		t.Error("disabled proxy rendered something")
 	}
+}
+
+func stripNetNeighborLines(s string) string {
+	var keep []string
+	for _, line := range strings.Split(s, "\n") {
+		if !strings.Contains(line, "ip neigh") {
+			keep = append(keep, line)
+		}
+	}
+	return strings.Join(keep, "\n")
 }
 
 func TestProxyRender(t *testing.T) {

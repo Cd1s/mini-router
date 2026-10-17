@@ -27,12 +27,13 @@ const downMetric = 10000
 
 // runtime state paths (variables so tests can use a temp dir)
 var (
-	wanRunDir          = RunDir + "/wan"
-	wanStateFile       = RunDir + "/wan-state.json"
-	resolvConf         = RunDir + "/resolv.conf"
-	fwLoadForHook      = fwLoad
-	fwLoadForCommit    = fwLoad
-	refreshLan6ForHook = refreshLan6
+	wanRunDir           = RunDir + "/wan"
+	wanStateFile        = RunDir + "/wan-state.json"
+	resolvConf          = RunDir + "/resolv.conf"
+	fwLoadForHook       = fwLoad
+	fwLoadForCommit     = fwLoad
+	refreshLan6ForHook  = refreshLan6
+	gatewayConflictSeen = map[string]bool{}
 )
 
 // wanLease is what a WAN got when it came up.
@@ -226,8 +227,13 @@ func wanUp(c *Config, w *WAN, ifname, local, gw string) {
 		}
 		if ln := lanForIP(c, gw); ln != nil && !sameIP(gw, lanAddress(ln.IPv4)) {
 			if lanHostUsesIP(c, gw) {
-				eventAdd(c, "doctor", "risk", "wan."+w.Name, fmt.Sprintf("LAN host already uses upstream gateway %s; proxy ARP was not installed", gw), false)
+				key := w.Name + ":" + gw
+				if !gatewayConflictSeen[key] {
+					gatewayConflictSeen[key] = true
+					eventAdd(c, "doctor", "risk", "wan."+w.Name, fmt.Sprintf("LAN host already uses upstream gateway %s; proxy ARP was not installed", gw), false)
+				}
 			} else {
+				delete(gatewayConflictSeen, w.Name+":"+gw)
 				newProxy := !proxyNeighborExists(gw, ln.Bridge)
 				must("ip", "neigh", "replace", "proxy", gw, "dev", ln.Bridge)
 				if newProxy {
@@ -460,9 +466,21 @@ func lanHostUsesIP(c *Config, ip string) bool {
 		}
 		out, _ := run("ip", "-4", "neigh", "show", "dev", ln.Bridge)
 		for _, line := range strings.Split(out, "\n") {
-			if f := strings.Fields(line); len(f) > 0 && sameIP(f[0], ip) {
+			if f := strings.Fields(line); len(f) > 0 && sameIP(f[0], ip) && neighborOccupies(f) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func neighborOccupies(fields []string) bool {
+	for _, f := range fields {
+		switch f {
+		case "REACHABLE", "STALE", "DELAY", "PROBE", "PERMANENT":
+			return true
+		case "INCOMPLETE", "FAILED":
+			return false
 		}
 	}
 	return false

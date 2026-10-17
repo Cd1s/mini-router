@@ -106,6 +106,21 @@ func TestNetHomeConfig(t *testing.T) {
 	}
 }
 
+func TestNetGeneratedLinkCleanupOnce(t *testing.T) {
+	c := testConfig(t)
+	for i := range c.WAN {
+		c.WAN[i].MAC = ""
+	}
+	f := renderMap(t, c)
+	sh := f[GenDir+"/network.sh"]
+	if n := strings.Count(sh, "ethtool -P wan"); n != 1 {
+		t.Fatalf("WAN MAC restore rendered %d times, want once", n)
+	}
+	if n := strings.Count(sh, "alias mini-router"); n != 4 {
+		t.Fatalf("VLAN cleanup rendered %d parent scans, want 4", n)
+	}
+}
+
 func TestNetWANProtos(t *testing.T) {
 	c := testConfig(t)
 	c.LAN.Ports = []string{"lan2", "lan3"}

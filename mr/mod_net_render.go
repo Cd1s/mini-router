@@ -268,8 +268,6 @@ func netSh(c *Config, phase string, b *strings.Builder) {
 		}
 		wanVLANCleanupSh(c, b)
 		wanMACRestoreSh(c, b)
-		wanVLANCleanupSh(c, b)
-		wanMACRestoreSh(c, b)
 		wanIPv6OffSh(c, b)
 		macvlanSh(c, b, need)
 		snoop := 0
