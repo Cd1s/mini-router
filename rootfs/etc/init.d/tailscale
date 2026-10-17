@@ -41,6 +41,7 @@ start_post() {
 			fi
 			[ "$ok" = 1 ] && break
 		done
+		[ "$ok" = 1 ] || logger -t tailscale "mr: failed to apply exit node or advertised routes after retries"
 	) > /dev/null 2>&1 &
 	return 0
 }

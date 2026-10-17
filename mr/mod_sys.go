@@ -436,14 +436,16 @@ func sysValidate(c *Config, v *Validator) {
 	}
 	for _, route := range sv.Tailscale.AdvertiseRoutes {
 		pfx, err := netip.ParsePrefix(route)
-		if err != nil || !pfx.IsValid() || pfx.Bits() == 0 || pfx != pfx.Masked() {
+		if err != nil || !pfx.IsValid() || pfx.Bits() == 0 || pfx != pfx.Masked() || (pfx.Addr().Is6() && (pfx.Addr().Is4In6() || pfx.Bits() < 48)) {
 			v.Add("services.tailscale.advertise_routes: invalid CIDR %q", route)
 		} else if pfx.Addr().Is4() {
 			inside := false
 			for _, n := range c.LANNets() {
-				if lan, e := netip.ParsePrefix(n.IPv4); e == nil && pfx.Bits() >= lan.Bits() && lan.Contains(pfx.Addr()) {
-					inside = true
-					break
+				if n.Zone == "lan" {
+					if lan, e := netip.ParsePrefix(n.IPv4); e == nil && pfx.Bits() >= lan.Bits() && lan.Contains(pfx.Addr()) {
+						inside = true
+						break
+					}
 				}
 			}
 			if !inside {

@@ -37,7 +37,7 @@ func TestTailscaleExitNode(t *testing.T) {
 	if got := renderMap(t, c)["/etc/conf.d/tailscale"]; !strings.Contains(got, "TS_ADVERTISE_ROUTES='192.168.1.0/24,2001:db8:6::/64'\n") {
 		t.Errorf("advertise routes conf.d: %q", got)
 	}
-	for _, route := range []string{"192.168.1.5/24", "0.0.0.0/0", "10.0.0.0/8"} {
+	for _, route := range []string{"192.168.1.5/24", "0.0.0.0/0", "10.0.0.0/8", "2000::/3", "::ffff:192.0.2.0/120"} {
 		c.Services.Tailscale.AdvertiseRoutes = []string{route}
 		if errs := strings.Join(c.Validate(), "\n"); !strings.Contains(errs, "advertise_routes") {
 			t.Errorf("advertise route %q was accepted: %s", route, errs)

@@ -285,7 +285,7 @@ registerPage("firewall", "fwrules", "通信规则", 40, async ()=>{
       {l:"目标", f:x=>side(x.dest, x.dest_ip)},
       {l:"协议 / 端口", f:x=>(x.proto||[]).length ? joinL(x.proto).toUpperCase()+(x.dest_port?" "+x.dest_port:"") : "任意"},
       {l:"时间", f:x=>schedText(x.schedule)||"始终"},
-      {l:"在场条件", f:x=>x.when ? (x.when.present||[]).map(y=>"在场:"+y).concat((x.when.absent||[]).map(y=>"离场:"+y)).join("、") : "始终"},
+      {l:"在场条件", f:x=>x.when ? (x.when.present||[]).map(y=>"在场: "+y).concat((x.when.absent||[]).map(y=>"离场: "+y)).join("、") : "始终"},
       {l:"命中", f:x=>x.counter ? hits(st.counters,"rule:"+x.name) : h("span",{class:"mut"},"未计数")}],
     {order:true,
      blank:()=>({name:"", enabled:true, action:"drop", src:"lan", dest:"wan", counter:true}),
