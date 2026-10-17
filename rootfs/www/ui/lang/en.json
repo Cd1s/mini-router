@@ -915,6 +915,7 @@
 "未发现 DHCP / PPPoE，建议静态地址": "No DHCP / PPPoE found; static address suggested",
 "与当前 LAN 冲突，建议 ": "Conflicts with the current LAN; suggested: ",
 "套用建议": "Use suggestion",
+"检测失败：": "Detection failed: ",
 "PPPoE 接口为 pppoe-<名称>，最多 9 个字符": "PPPoE interface is pppoe-<name>, max. 9 characters",
 "小写字母开头": "Starts with a lowercase letter",
 "物理接口": "Physical interface",
