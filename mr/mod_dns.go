@@ -477,10 +477,14 @@ func splitFile(name string) (string, bool) {
 
 var domainRe = lazyRegexp(`^[A-Za-z0-9_*.-]+$`)
 
-const dnsListDir = "/etc/mini-router/dns"
+var dnsListDir = "/etc/mini-router/dns"
+
 const dnsListMax = 1 << 20
 
+var dnsListReload = restartDnsmasq
+
 var reDNSListFile = lazyRegexp(`^[A-Za-z0-9_-]{1,64}\.(domains|hosts|servers|ips)$`)
+var reDNSHostName = lazyRegexp(`^[A-Za-z0-9_*.-]{1,253}$`)
 
 func dnsListPath(name string) (string, bool) {
 	if !reDNSListFile.MatchString(name) {
@@ -489,13 +493,97 @@ func dnsListPath(name string) (string, bool) {
 	return filepath.Join(dnsListDir, name), true
 }
 
+func dnsListContentErrors(name, content string) []string {
+	var errs []string
+	for i, line := range strings.Split(strings.ReplaceAll(content, "\r", ""), "\n") {
+		if len(line) > 4096 || strings.IndexByte(line, 0) >= 0 {
+			errs = append(errs, fmt.Sprintf("line %d is too long or contains NUL", i+1))
+			continue
+		}
+		for _, ch := range line {
+			if ch < 0x20 && ch != '\t' {
+				errs = append(errs, fmt.Sprintf("line %d contains control characters", i+1))
+				break
+			}
+		}
+		trim := strings.TrimSpace(line)
+		if trim == "" || strings.HasPrefix(trim, "#") {
+			continue
+		}
+		fields := strings.Fields(trim)
+		switch {
+		case strings.HasSuffix(name, ".domains"):
+			if !domainRe.MatchString(trim) {
+				errs = append(errs, fmt.Sprintf("bad domain line %q", trim))
+			}
+		case strings.HasSuffix(name, ".ips"):
+			if _, err := netip.ParsePrefix(trim); err != nil {
+				if _, err = netip.ParseAddr(trim); err != nil {
+					errs = append(errs, fmt.Sprintf("bad IP/CIDR on line %d", i+1))
+				}
+			}
+		case strings.HasSuffix(name, ".hosts"):
+			if len(fields) < 2 {
+				errs = append(errs, fmt.Sprintf("line %d must be IP followed by hostname", i+1))
+				continue
+			}
+			if _, err := netip.ParseAddr(fields[0]); err != nil {
+				errs = append(errs, fmt.Sprintf("line %d has an invalid IP", i+1))
+				continue
+			}
+			for _, host := range fields[1:] {
+				if !reDNSHostName.MatchString(host) {
+					errs = append(errs, fmt.Sprintf("line %d has an invalid hostname", i+1))
+					break
+				}
+			}
+		case strings.HasSuffix(name, ".servers"):
+			if !(strings.HasPrefix(trim, "server=/") || strings.HasPrefix(trim, "rev-server=")) {
+				errs = append(errs, fmt.Sprintf("line %d must start with server=/ or rev-server=", i+1))
+				continue
+			}
+			if strings.HasPrefix(trim, "server=/") {
+				parts := strings.Split(trim, "/")
+				if len(parts) < 3 || parts[0] != "server=" || !validServer(parts[len(parts)-1]) {
+					errs = append(errs, fmt.Sprintf("line %d must be server=/domain/upstream", i+1))
+					continue
+				}
+				for _, domain := range parts[1 : len(parts)-1] {
+					if domain == "" && len(parts) == 3 {
+						continue
+					}
+					if !domainRe.MatchString(domain) {
+						errs = append(errs, fmt.Sprintf("line %d has an invalid domain", i+1))
+						break
+					}
+				}
+			} else {
+				parts := strings.Split(strings.TrimPrefix(trim, "rev-server="), ",")
+				if len(parts) != 2 {
+					errs = append(errs, fmt.Sprintf("line %d must be rev-server=CIDR,upstream", i+1))
+					continue
+				}
+				if _, err := netip.ParsePrefix(parts[0]); err != nil || !validServer(parts[1]) {
+					errs = append(errs, fmt.Sprintf("line %d must be rev-server=CIDR,upstream", i+1))
+				}
+			}
+		}
+		if len(errs) >= 10 {
+			return errs[:10]
+		}
+	}
+	return errs
+}
+
 func apiDNSFiles(r apiReq) apiResp {
 	var in struct {
 		File, Content string
 		Save          bool
 	}
-	if err := json.Unmarshal(r.body, &in); err != nil {
-		return errResp(400, "invalid JSON")
+	if strings.TrimSpace(string(r.body)) != "" {
+		if err := json.Unmarshal(r.body, &in); err != nil {
+			return errResp(400, "invalid JSON")
+		}
 	}
 	if in.File == "" {
 		files := []map[string]any{}
@@ -538,29 +626,8 @@ func apiDNSFiles(r apiReq) apiResp {
 	if len(in.Content) > dnsListMax {
 		return errResp(413, "file is too large (maximum 1 MiB)")
 	}
-	for i, line := range strings.Split(strings.ReplaceAll(in.Content, "\r", ""), "\n") {
-		if len(line) > 4096 || strings.IndexByte(line, 0) >= 0 {
-			return errResp(400, "line %d is too long or contains NUL", i+1)
-		}
-		for _, ch := range line {
-			if ch < 0x20 && ch != '\t' {
-				return errResp(400, "line %d contains control characters", i+1)
-			}
-		}
-		trim := strings.TrimSpace(line)
-		if trim == "" || strings.HasPrefix(trim, "#") {
-			continue
-		}
-		if strings.HasSuffix(in.File, ".domains") && !domainRe.MatchString(trim) {
-			return errResp(400, "bad domain line %q", trim)
-		}
-		if strings.HasSuffix(in.File, ".ips") {
-			if _, err := netip.ParsePrefix(trim); err != nil {
-				if _, err = netip.ParseAddr(trim); err != nil {
-					return errResp(400, "bad IP/CIDR on line %d", i+1)
-				}
-			}
-		}
+	if errs := dnsListContentErrors(in.File, in.Content); len(errs) > 0 {
+		return errResp(400, "%s", errs[0])
 	}
 	if err := os.MkdirAll(dnsListDir, 0755); err != nil {
 		return errResp(500, "%v", err)
@@ -570,6 +637,11 @@ func apiDNSFiles(r apiReq) apiResp {
 		return errResp(500, "%v", err)
 	}
 	appendChangeLog("webui: dns list " + in.File + " saved")
+	if strings.HasSuffix(in.File, ".hosts") || strings.HasSuffix(in.File, ".servers") {
+		if err := dnsListReload(); err != nil {
+			return errResp(500, "%v", err)
+		}
+	}
 	return apiResp{body: map[string]any{"ok": true, "path": path}}
 }
 
