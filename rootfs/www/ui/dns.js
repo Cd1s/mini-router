@@ -14,6 +14,29 @@ addCSS(`
 const RTYPES = ["A","AAAA","CNAME","PTR","SRV","TXT"];
 const RA_MODES = [["","SLAAC（默认，ra-only）"],["slaac","SLAAC（ra-only）"],["stateless","SLAAC + 无状态 DHCPv6（ra-stateless）"],["stateful","有状态 DHCPv6 + SLAAC"]];
 const UPSTREAMS = [["isp","运营商 DNS（PPPoE 下发）"],["manual","手动指定上游"],["dot","全部走 DoT 加密（stubby）"]];
+const dnsFiles = async()=>{ try { return (await api("dns.files",{})).files||[]; } catch(e){ return []; } };
+const dnsFileSelect = (obj,key,ext,files,onchange)=>{
+  const current = obj[key]||"";
+  const opts = [["","（不使用文件）"], ...files.filter(f=>f.name.endsWith(ext)).map(f=>[f.path,f.name])];
+  if (current && !opts.some(x=>x[0]===current)) opts.splice(1,0,[current,current.split("/").pop()+"（当前）"]);
+  return inSel(obj,key,opts,onchange);
+};
+const managedDNSFile = p=>{ const s=String(p||""), prefix="/etc/mini-router/dns/", name=s.startsWith(prefix)?s.slice(prefix.length):""; return name && !name.includes("/") && /^[A-Za-z0-9_-]{1,64}\.(domains|hosts|servers|ips)$/.test(name) ? name : ""; };
+const dnsFileControl = (obj,key,ext,files,ed,hint,onchange,after,required)=>{ const sel=dnsFileSelect(obj,key,ext,files,onchange||(()=>{})); if(required) sel.remove(0); return h("div",{class:"row"},sel,h("button",{class:"btn sm",onclick:()=>{
+  const name=managedDNSFile(obj[key]); if(!name) return toast("只有 /etc/mini-router/dns/ 下的受控文件可编辑",4000);
+  listFileEditor(ed,name,hint,after);
+} ,disabled:!managedDNSFile(obj[key]),title:!managedDNSFile(obj[key])?"只有受控目录中的文件可编辑":""},"编辑")); };
+// Shared controlled editor for every /etc/mini-router/dns list file.
+function listFileEditor(ed,file,hint,after){
+  return api("dns.files",{file}).then(j=>{
+    const ta=h("textarea",{rows:16,spellcheck:false},j.content||"");
+    ed.replaceChildren(card("列表文件 · "+file,[h("div",{class:"mut",style:"margin-bottom:8px"},(j.path||file)+" — "+hint),ta,
+      h("div",{class:"row",style:"margin-top:10px"},h("button",{class:"btn p",onclick:async()=>{
+        try { await api("dns.files",{file,content:ta.value,save:true}); toast(file.endsWith(".hosts")||file.endsWith(".servers") ? "已保存并重载 DNS" : "已保存，点击底部“保存并应用”生效"); S.orig=""; touch(); after&&await after(); }
+        catch(e){ toast("保存失败："+e.message,5000); }
+      }},"保存列表"),h("button",{class:"btn",onclick:()=>ed.replaceChildren()},"关闭"))]));
+  }).catch(e=>toast(e.message,4000));
+}
 
 // the LAN-side networks as the dns module sees them: main LAN first, then networks[]
 const nets = ()=>{ const c=S.cfg; return [{name:"lan", bridge:c.lan.bridge||"br-lan", ipv4:c.lan.ipv4||"", raObj:c.lan, pool:()=>c.dhcp, main:true},
@@ -184,17 +207,22 @@ registerPage("network", "dhcp", "DHCP / IPv6 RA", 40, ()=>tabs([
 
 // ---------------- 网络 › DNS ----------------
 // 防绕过（dns.sovereignty, #45）：让设备留在路由器的 DNS 上
-const sovCard = d=>{
+const sovCard = (d, files, ed, after)=>{
   const sv = lazy(d, "sovereignty", ()=>({}));
   const canary = h("label",{class:"sw"}, h("input",{type:"checkbox", checked: sv.o.firefox_canary!==false, onchange:e=>{ sv.o.firefox_canary=e.target.checked; }}), h("span"));
   return card("防绕过（DNS 主导权）", onEdit(form(
     ...field("Firefox 金丝雀", canary, "use-application-dns.net 返回“不存在”：Firefox 不会自己开启 DoH（默认开）"),
     ...field("iCloud 专用代理", inSel(sv.o,"private_relay",[["","允许（默认）"],["block","在本网络关闭"]]), "关闭后苹果设备会提示本网络不支持专用代理"),
     ...field("拦截 DoT / DoQ", inBool(sv.o,"block_dot"), "局域网连任何 853 端口都被立即拒绝，设备改用路由器 DNS；手动填了“私人 DNS 主机名”的安卓设备会解析失败，需改回“自动”"),
-    ...field("DoH 服务器 IP 列表", inText(sv.o,"doh_blocklist_file",{placeholder:"/etc/mini-router/dns/doh.ips"}), "文件里每行一个 IP 或网段；局域网连这些地址的 443 端口被拒绝")), ()=>sv.attach()));
+    ...field("DoH 服务器 IP 列表", dnsFileControl(sv.o,"doh_blocklist_file",".ips",files||[],ed,"文件里每行一个 IP 或网段；局域网连这些地址的 443 端口被拒绝",undefined,after), "文件里每行一个 IP 或网段；局域网连这些地址的 443 端口被拒绝")), ()=>sv.attach()));
 };
-const basicTab = ()=>{
+const basicTab = async ()=>{
   const c = S.cfg, d = c.dns; const box = h("div");
+  let files = await dnsFiles();
+  const fileEd = h("div");
+  const refreshFiles = async()=>{ files.splice(0,files.length,...await dnsFiles()); draw(); };
+  const newFile = {name:"", ext:".domains"};
+  d.addn_hosts ||= [];
   const stub = lazy(c.services, "stubby", ()=>({enabled:false}));
   const draw = ()=>{
     const dotPort = d.dot && d.dot.port || 5453;
@@ -219,9 +247,9 @@ const basicTab = ()=>{
         ...field("重绑定保护", inBool(d,"rebind_protection"), "上游返回私有地址时丢弃（本地记录不受影响）"),
         ...field("仅服务本地网络", inBool(d,"local_service")),
         ...field("劫持 LAN DNS", inBool(d,"redirect"), "LAN 设备发往任何 53 端口的请求都交给路由器"),
-        ...field("额外 hosts 文件", inList(d,"addn_hosts")),
-        ...field("上游服务器文件", inText(d,"servers_file",{placeholder:"留空"})))),
-      sovCard(d));
+        ...field("额外 hosts 文件", h("div",{}, d.addn_hosts.map((_,i)=>{ const x={v:d.addn_hosts[i]}; return h("div",{class:"row"}, dnsFileControl(x,"v",".hosts",files,fileEd,"每行一个 IP 和主机名，# 开头为注释",v=>{ d.addn_hosts[i]=v; touch(); },refreshFiles,true), h("button",{class:"btn sm d",onclick:()=>{ d.addn_hosts.splice(i,1); touch(); draw(); }},"删除")); }), h("button",{class:"btn sm",onclick:()=>{ d.addn_hosts.push("/etc/mini-router/dns/extra.hosts"); touch(); draw(); }},"+ 添加文件"))),
+        ...field("上游服务器文件", dnsFileControl(d,"servers_file",".servers",files,fileEd,"每行 server=/域名/上游 或 rev-server=CIDR,上游，# 开头为注释",undefined,refreshFiles)))),
+      sovCard(d, files, fileEd, refreshFiles), card("编辑列表", h("div",{class:"row"}, h("span",{class:"mut"},"新建列表："), inText(newFile,"name",{placeholder:"文件名"}), inSel(newFile,"ext",[[".domains","域名"],[".hosts","hosts"],[".servers","服务器"],[".ips","IP / CIDR"]]), h("button",{class:"btn sm",onclick:()=>{ if(!/^[A-Za-z0-9_-]{1,64}$/.test(newFile.name)) return toast("文件名只能用字母、数字、_ -"); const hints={".domains":"每行一个域名，# 开头为注释",".hosts":"每行一个 IP 和主机名，# 开头为注释",".servers":"每行 server=/域名/上游 或 rev-server=CIDR,上游，# 开头为注释",".ips":"每行一个 IP 或网段，# 开头为注释"}; listFileEditor(fileEd,newFile.name+newFile.ext,hints[newFile.ext],refreshFiles); }},"新建并编辑")),null,true), fileEd);
   };
   draw();
   return box;
@@ -241,22 +269,26 @@ const recordsTab = ()=>{
     card("格式", help, null, true));
 };
 
-const splitTab = ()=>{
-  const c = S.cfg;
-  const splitEd = h("div");
-  const openList = async name=>{
-    const j = await api("dnslist",{name});
-    const ta = h("textarea",{rows:16}, j.content);
-    splitEd.replaceChildren(card("域名列表 · "+name, [h("div",{class:"mut",style:"margin-bottom:8px"}, j.path+" — 每行一个域名，# 开头为注释"), ta,
-      h("div",{class:"row",style:"margin-top:10px"}, h("button",{class:"btn p",onclick:async()=>{
-        try { await api("dnslist",{name, content:ta.value, save:true}); toast("已保存，点击底部“保存并应用”生效"); S.orig=""; touch(); } catch(e){ toast("保存失败："+e.message,4000); }
-      }},"保存列表"), h("button",{class:"btn",onclick:()=>splitEd.replaceChildren()},"关闭"))]));
+const splitTab = async ()=>{
+  const c = S.cfg; let files = await dnsFiles(); const splitEd = h("div"), box = h("div");
+  const refreshFiles = async()=>{ files=await dnsFiles(); draw(); };
+  const openList = file=>{ const p=String(file||""), name=managedDNSFile(p) || (/^[A-Za-z0-9_-]{1,64}\.domains$/.test(p)?p:"");
+    if(!name) return toast("只有 /etc/mini-router/dns/ 下的受控文件可编辑",4000);
+    return listFileEditor(splitEd,name,"每行一个域名，# 开头为注释",refreshFiles); };
+  const draw = ()=>{
+    const rows = c.dns.split.map((r,i)=>h("tr",{},
+      h("td",{},inText(r,"name",{placeholder:"cloudflare-dot"})),
+      h("td",{},dnsFileSelect(r,"domains_file",".domains",files,()=>{})),
+      h("td",{},inText(r,"server",{placeholder:"127.0.0.1#5453"})),
+      h("td",{},h("span",{class:"row"},h("button",{class:"btn sm",disabled:!managedDNSFile(r.domains_file),title:!managedDNSFile(r.domains_file)?"只有受控目录中的文件可编辑":"",onclick:()=>openList(r.domains_file)},"编辑列表"),h("button",{class:"btn sm d",onclick:()=>{ c.dns.split.splice(i,1); touch(); draw(); }},"删除")))));
+    box.replaceChildren(h("div",{class:"tw"},h("table",{},h("thead",{},h("tr",{},["名称","域名列表文件","上游服务器","操作"].map(x=>h("th",{},x)))),h("tbody",{},rows.length?rows:h("tr",{},h("td",{colspan:4,class:"mut"},"（空）"))))));
   };
-  const split = etable(c.dns.split, [{k:"name",l:"名称"},{k:"domains_file",l:"域名列表文件",ph:"/etc/mini-router/dns/xxx.domains"},{k:"server",l:"上游服务器",ph:"127.0.0.1#5453"}],
-    {name:"",domains_file:"/etc/mini-router/dns/new.domains",server:""});
-  return h("div",{}, card("DNS 分流", [h("div",{class:"dns-note"},"列表中的域名（含子域）交给指定上游解析，例如 stubby DoT：127.0.0.1#"+((c.dns.dot||{}).port||5453)+"。优先级：本地记录 > 更长（更具体）的域名 > 较短的域名 > 默认上游。同一个域名不要同时出现在分流列表和代理列表里（dnsmasq 会把两个上游当成一组轮流使用）。"), split.el,
-      h("div",{class:"row",style:"padding:10px 16px"}, h("span",{class:"mut"},"编辑已保存的列表："), c.dns.split.filter(x=>x.name).map(x=>h("button",{class:"btn sm",onclick:()=>openList(x.name).catch(e=>toast(e.message,4000))},x.name)))], split.add, true),
-    splitEd);
+  draw();
+  const nextFile = ()=>{ const used=new Set(c.dns.split.map(x=>x.domains_file)); let n="new", i=1; while(used.has("/etc/mini-router/dns/"+n+".domains")) n="new"+(i++); return "/etc/mini-router/dns/"+n+".domains"; };
+  const add = h("button",{class:"btn sm p",onclick:()=>{ c.dns.split.push({name:"",domains_file:nextFile(),server:""}); touch(); draw(); }},"+ 添加");
+  const newFile = {name:"new",ext:".domains"};
+  return h("div",{},card("DNS 分流",[h("div",{class:"dns-note"},"列表中的域名（含子域）交给指定上游解析，例如 stubby DoT：127.0.0.1#"+((c.dns.dot||{}).port||5453)+"。优先级：本地记录 > 更长（更具体）的域名 > 较短的域名 > 默认上游。同一个域名不要同时出现在分流列表和代理列表里。"),box,
+    h("div",{class:"row",style:"padding:10px 16px"},h("span",{class:"mut"},"新建列表："),inText(newFile,"name",{placeholder:"文件名"}),h("button",{class:"btn sm",onclick:()=>{if(!/^[A-Za-z0-9_-]{1,64}$/.test(newFile.name))return toast("文件名只能用字母、数字、_ -"); const path="/etc/mini-router/dns/"+newFile.name+newFile.ext; if(!c.dns.split.some(x=>x.domains_file===path)) { c.dns.split.push({name:"",domains_file:path,server:""}); touch(); draw(); } openList(path);}},"新建并编辑"))],add,true),splitEd);
 };
 
 const statsTab = ()=>{

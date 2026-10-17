@@ -1260,9 +1260,11 @@ func hookHealth(c *Config) error {
 // wanCommand: DHCP/health hooks, the periodic public-IP review, and WAN status/control commands.
 func wanCommand(c *Config, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: mr wan dhcp EVENT | health | public-check --cron | status | dial-wait WAN | dial-restore | mac WAN")
+		return fmt.Errorf("usage: mr wan detect PORT [--timeout SECONDS] | dhcp EVENT | health | public-check --cron | status | dial-wait WAN | dial-restore | mac WAN")
 	}
 	switch args[0] {
+	case "detect":
+		return wanDetectCommand(c, args)
 	case "dial-wait":
 		if len(args) == 2 {
 			dialWait(c, args[1])

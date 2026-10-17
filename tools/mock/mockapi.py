@@ -95,7 +95,8 @@ def base_config():
     return cfg
 
 
-STATE = {"cfg": base_config(), "job": None, "pending": False, "deadline": 0}
+STATE = {"cfg": base_config(), "job": None, "pending": False, "deadline": 0, "wizard": True}
+STATE["dns_files"] = copy.deepcopy(load("dns.files.json", {"dir": "/etc/mini-router/dns", "files": []}))
 
 
 def pending_view():
@@ -140,13 +141,30 @@ class H(http.server.SimpleHTTPRequestHandler):
             except ValueError:
                 return self.send_json({"error": "bad json"}, 400)
         if a == "session":
-            return self.send_json({"authenticated": True, "password_set": True})
+            return self.send_json({"authenticated": True, "password_set": True, "wizard": STATE["wizard"]})
+        if a == "setup.complete":
+            STATE["wizard"] = False
+            return self.send_json({"ok": True})
         if a == "config":
             return self.send_json(STATE["cfg"])
         if a == "mon.now":
             return self.send_json(live_mon_now())
         if a in ("wifi.stations", "wifi.health"):
             return self.send_json(live_wifi(a))
+        if a == "dns.files":
+            files = STATE["dns_files"].setdefault("files", [])
+            if body.get("file"):
+                name = body["file"]
+                item = next((x for x in files if x.get("name") == name), None)
+                if body.get("save"):
+                    if item is None:
+                        item = {"name": name, "path": STATE["dns_files"].get("dir", "/etc/mini-router/dns") + "/" + name, "content": ""}
+                        files.append(item)
+                    item["content"] = body.get("content", "")
+                    item["size"] = len(item["content"].encode())
+                    return self.send_json({"ok": True, "path": item["path"]})
+                return self.send_json({"file": name, "path": item.get("path", name) if item else name, "exists": item is not None, "content": item.get("content", "") if item else ""})
+            return self.send_json({"dir": STATE["dns_files"].get("dir", "/etc/mini-router/dns"), "files": files})
         if a == "validate":
             p, empty = plan_for(body.get("config", {}))
             changes = ["~ %s: (changed)" % k for k in sorted(set(STATE["cfg"]["config"]) | set(body.get("config", {})))

@@ -60,15 +60,15 @@ rm -rf "$T" && mkdir -p "$T/bin"
 mkdir -p /run/mini-router && mount -t tmpfs tmpfs /run/mini-router
 S=mrnet$$s C=mrnet$$c
 DS=mrdom$$s DC=mrdom$$c DL=mrdom$$l # policy route by domain (3.)
-RR=mrra$$r RC=mrra$$c MVN=mrmv$$ MN=mrmodem$$ # PPPoE MTU / RFC 9096 / modem / macvlan (4.)
+RR=mrra$$r RC=mrra$$c MVN=mrmv$$ MN=mrmodem$$ PDPS=mrpp$$s PDPC=mrpp$$c PDDS=mrdh$$s PDDC=mrdh$$c # PPPoE / DHCP detect + RFC 9096 / modem / macvlan
 cleanup() {
 	[ -f "$T/dnsmasq.pid" ] && kill "$(cat "$T/dnsmasq.pid")" 2> /dev/null
 	[ -f "$T/ra-dnsmasq.pid" ] && kill "$(cat "$T/ra-dnsmasq.pid")" 2> /dev/null
-	for n in "$S" "$C" "$DS" "$DC" "$DL" "$RR" "$RC" "$MVN" "$MN"; do
+	for n in "$S" "$C" "$DS" "$DC" "$DL" "$RR" "$RC" "$MVN" "$MN" "$PDPS" "$PDPC" "$PDDS" "$PDDC"; do
 		for p in $(ip netns pids "$n" 2> /dev/null); do kill "$p" 2> /dev/null; done
-		ip netns del "$n" 2> /dev/null
+		ip netns del "$n" 2> /dev/null || :
 	done
-	umount /run/mini-router 2> /dev/null
+	umount /run/mini-router 2> /dev/null || :
 	return 0
 }
 trap cleanup EXIT
@@ -621,3 +621,63 @@ sys.exit(1)
 PY
 ip netns exec "$RC" python3 "$T/ra.py" || fail "the client never saw the stale prefix deprecated (dnsmasq log: $(tail -5 "$T/ra-dnsmasq.log"))"
 echo "net: renumbering test ok"
+
+step "WAN detect: real pppoe-server and dnsmasq responses"
+detect_pp=
+detect_dns_pidfile="$T/detect-dnsmasq.pid"
+cleanup_detect() {
+	if [ -n "${detect_pp:-}" ]; then
+		kill "$detect_pp" 2> /dev/null || :
+		wait "$detect_pp" 2> /dev/null || :
+	fi
+	if [ -s "$detect_dns_pidfile" ]; then
+		kill "$(cat "$detect_dns_pidfile")" 2> /dev/null || :
+	fi
+	for n in "$PDPS" "$PDPC" "$PDDS" "$PDDC"; do
+		for p in $(ip netns pids "$n" 2> /dev/null); do kill "$p" 2> /dev/null || :; done
+		ip netns del "$n" 2> /dev/null || :
+	done
+}
+cleanup_detect_all() {
+	cleanup_detect
+	cleanup
+}
+trap cleanup_detect_all EXIT HUP INT TERM
+for n in "$PDPS" "$PDPC" "$PDDS" "$PDDC"; do ip netns add "$n"; done
+ip link add pps netns "$PDPC" type veth peer name pps netns "$PDPS"
+ip -n "$PDPC" link set lo up; ip -n "$PDPS" link set lo up
+ip -n "$PDPC" link set pps up; ip -n "$PDPS" link set pps up
+cat > "$T/pppoe-options" <<'EOF'
+noauth
+nodetach
+noipdefault
+10.77.0.1:10.77.0.10
+EOF
+ip netns exec "$PDPS" pppoe-server -k -I pps -C testAC -S testSvc -O "$T/pppoe-options" -L 10.77.0.1 -R 10.77.0.10 -N 1 >"$T/pppoe-server.log" 2>&1 &
+detect_pp=$!
+sleep 1
+ppout=$(ip netns exec "$PDPC" pppoe-discovery -I pps -U -a 1 -t 1 2>&1) || fail "pppoe-discovery failed: $ppout"
+printf '%s\n' "$ppout" | grep -q 'Access-Concentrator: testAC' || fail "real PPPoE output lacked AC: $ppout"
+printf '%s\n' "$ppout" | grep -q 'Service-Name: testSvc' || fail "real PPPoE output lacked service: $ppout"
+kill "$detect_pp" 2>/dev/null || :
+wait "$detect_pp" 2>/dev/null || :
+detect_pp=
+ip link add dpc netns "$PDDC" type veth peer name dps netns "$PDDS"
+ip -n "$PDDC" link set dpc up; ip -n "$PDDS" link set dps up
+ip -n "$PDDC" addr add 10.78.0.2/24 dev dpc
+ip -n "$PDDS" addr add 10.78.0.1/24 dev dps
+ip netns exec "$PDDS" dnsmasq --no-resolv --no-hosts --no-ping --port=0 --interface=dps --bind-interfaces --dhcp-range=10.78.0.10,10.78.0.20,255.255.255.0,1m --pid-file="$detect_dns_pidfile" --log-facility="$T/detect-dnsmasq.log"
+for i in 1 2 3 4 5; do
+	[ -s "$T/detect-dnsmasq.pid" ] && break
+	sleep .2
+done
+[ -s "$T/detect-dnsmasq.pid" ] || fail "real dnsmasq did not start"
+detectcfg="$T/detect.yaml"; printf 'lan: {ipv4: 192.168.1.1/24}\nwan: []\n' > "$detectcfg"; : > "$T/detect-secrets.yaml"
+ppjson=$(timeout 12 ip netns exec "$PDPC" "$MRH" -c "$detectcfg" -s "$T/detect-secrets.yaml" wan detect pps --timeout 4)
+printf '%s\n' "$ppjson" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["recommendation"]=="pppoe" and x["pppoe"]["ac_name"]=="testAC", x'
+dhjson=$(timeout 12 ip netns exec "$PDDC" "$MRH" -c "$detectcfg" -s "$T/detect-secrets.yaml" wan detect dpc --timeout 4)
+printf '%s\n' "$dhjson" | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["recommendation"]=="dhcp" and x["dhcp"]["offer"], x'
+grep -q 'DHCPOFFER(dps)' "$T/detect-dnsmasq.log" || fail "real dnsmasq did not emit an OFFER"
+echo "net: real PPPoE PADO and DHCP OFFER server integration passed"
+cleanup_detect
+trap cleanup EXIT HUP INT TERM

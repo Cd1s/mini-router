@@ -55,10 +55,27 @@ const okBtn = t=>h("button",{class:"btn p",onclick:e=>e.target.closest(".modal")
 function editDevice(orig, save){
   const o = clone(orig); o.macs ||= []; o.limit ||= {};
   const dom = (S.cfg.dhcp||{}).domain||"lan";
+  const leaseDraft = clone((S.cfg.dhcp&&S.cfg.dhcp.host_leases)||{});
+  const leaseOf = macs=>{ const want=new Set((macs||[]).map(lc)); const k=Object.keys(leaseDraft).find(x=>want.has(lc(x))); return k?leaseDraft[k]:""; };
+  let leaseValue = leaseOf(o.macs) || leaseOf(orig.macs||[]);
+  const clearDraft = macs=>{ const want=new Set((macs||[]).map(lc)); for(const k of Object.keys(leaseDraft)) if(want.has(lc(k))) delete leaseDraft[k]; };
+  const commitLease = ()=>{
+    const oldMacs = orig.macs||[], all=[...oldMacs,...o.macs];
+    clearDraft(all);
+    if (o.ip && leaseValue && o.macs[0]) leaseDraft[lc(o.macs[0])] = leaseValue;
+    if (Object.keys(leaseDraft).length) { S.cfg.dhcp.host_leases=leaseDraft; }
+    else if (S.cfg.dhcp.host_leases) delete S.cfg.dhcp.host_leases;
+  };
+  const leaseBox = h("div");
+  const drawLease = ()=>{ leaseBox.replaceChildren(...(o.ip ? [h("input",{type:"text",value:leaseValue,placeholder:"默认（"+(S.cfg.dhcp.lease||"12h")+"）",oninput:e=>{ leaseValue=e.target.value.trim(); }}),h("div",{class:"hint"},"固定 IPv4 设备可使用独立租期，例如 30m、12h、1d、infinite")]:[h("span",{class:"mut"},"填入固定 IPv4 后可设置")])) };
+  drawLease();
+  const ipInput = inText(o,"ip",{placeholder:"留空 = 动态分配"}); ipInput.addEventListener("input",drawLease);
+  const macInput = inList(o,"macs",{placeholder:"aa:bb:cc:dd:ee:ff, …"}); macInput.addEventListener("input",drawLease);
   const m = modal(orig.name ? "编辑设备 · "+orig.name : "添加设备", form(
       ...field("名称", inText(o,"name",{placeholder:"kid-tablet"}), "小写字母、数字和 -，以字母开头；也是它的 DNS 名 <名称>."+dom+"。端口转发、设备管控、策略路由、代理例外里直接写这个名字"),
-      ...field("MAC 地址", inList(o,"macs",{placeholder:"aa:bb:cc:dd:ee:ff, …"}), "可填多个（有线 + 无线、手机在本网络的私有 Wi-Fi 地址）"),
-      ...field("固定 IPv4", inText(o,"ip",{placeholder:"留空 = 动态分配"}), "填了就是静态 DHCP 分配，端口转发可以写设备名；多个 MAC 共用它时同一时间只能一个在线"),
+      ...field("MAC 地址", macInput, "可填多个（有线 + 无线、手机在本网络的私有 Wi-Fi 地址）"),
+      ...field("固定 IPv4", ipInput, "填了就是静态 DHCP 分配，端口转发可以写设备名；多个 MAC 共用它时同一时间只能一个在线"),
+      ...field("DHCP 租期", leaseBox),
       ...field("类型", inSel(o,"type",TYPES)),
       ...field("归属", inText(o,"owner",{placeholder:"例如 小明"})),
       ...field("说明", inText(o,"desc")),
@@ -72,6 +89,7 @@ function editDevice(orig, save){
        if (o.name!==orig.name && devs().some(d=>d.name===o.name)) return toast("已有设备 "+o.name);
        for (const k of ["down","up"]) if (!(o.limit[k]>0)) delete o.limit[k];
        for (const k of ["ip","type","owner","desc","watch"]) if (!o[k]) delete o[k];
+       commitLease();
        if (!Object.keys(o.limit).length) delete o.limit;
        save(o); m.remove(); touch(); }},"确定")]);
 }
@@ -107,6 +125,11 @@ registerPage("network", "devices", "设备", 30, async ()=>{
     if (refs.length) return modal("设备 "+d.name+" 还在使用", [h("div",{},"先修改这些地方，再删除它："), h("ul",{}, refs.map(r=>h("li",{},r)))], [okBtn()]);
     const inG = Object.keys(groups()).filter(g=>groups()[g].includes(d.name));
     if (!confirm("删除设备 "+d.name+"？"+(inG.length ? "\n同时从分组 "+inG.join("、")+" 中移除。" : ""))) return;
+    if (S.cfg.dhcp && S.cfg.dhcp.host_leases) {
+      const macs = new Set((d.macs||[]).map(lc));
+      for (const k of Object.keys(S.cfg.dhcp.host_leases)) if (macs.has(lc(k))) delete S.cfg.dhcp.host_leases[k];
+      if (!Object.keys(S.cfg.dhcp.host_leases).length) delete S.cfg.dhcp.host_leases;
+    }
     attach(); S.cfg.devices.splice(i,1);
     for (const g of inG){ const a = S.cfg.groups[g].filter(x=>x!==d.name); if (a.length || refsOf("group:"+g).length) S.cfg.groups[g] = a; else delete S.cfg.groups[g]; }
     touch(); render();

@@ -24,7 +24,12 @@ EN = os.path.join(ROOT, "rootfs", "www", "ui", "lang", "en.json")
 # keep in sync with CJK in rootfs/www/ui/core.js
 CJK = re.compile(r"[\u3000-\u303f\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
 # the keys alone (the Chinese originals, 3 bytes a character) are about half of it; fetched only in English
-BUDGET = 128 * 1024
+# Keep one cacheable dictionary: core.js fetches it once and the mock/firmware
+# serve static assets without a module manifest.  The panel already has 1,900+
+# source strings; the complete translations are ~130 KiB, so the old 128 KiB
+# limit rejected valid UI additions.  160 KiB leaves room for the wizard and
+# a few releases while still bounding the downloaded asset.
+BUDGET = 160 * 1024
 
 ESC = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
 
