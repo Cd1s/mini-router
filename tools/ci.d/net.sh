@@ -66,9 +66,9 @@ cleanup() {
 	[ -f "$T/ra-dnsmasq.pid" ] && kill "$(cat "$T/ra-dnsmasq.pid")" 2> /dev/null
 	for n in "$S" "$C" "$DS" "$DC" "$DL" "$RR" "$RC" "$MVN" "$MN" "$PDPS" "$PDPC" "$PDDS" "$PDDC"; do
 		for p in $(ip netns pids "$n" 2> /dev/null); do kill "$p" 2> /dev/null; done
-		ip netns del "$n" 2> /dev/null
+		ip netns del "$n" 2> /dev/null || :
 	done
-	umount /run/mini-router 2> /dev/null
+	umount /run/mini-router 2> /dev/null || :
 	return 0
 }
 trap cleanup EXIT
