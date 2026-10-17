@@ -77,13 +77,13 @@ func requirePublicIP(c *Config, w *WAN, ip string) bool {
 	if w == nil || w.Proto != "pppoe" || !w.RequirePublicIP {
 		return false
 	}
+	cls := addrClass(ip)
 	lk := flock(requirePublicFile+".lock", true)
 	if lk == nil {
-		return true
+		return cls != ""
 	}
 	defer lk.Close()
 	m := readRequirePublic()
-	cls := addrClass(ip)
 	if cls == "" {
 		delete(m, w.Name)
 		writeRequirePublic(m)
@@ -98,7 +98,7 @@ func requirePublicIP(c *Config, w *WAN, ip string) bool {
 	if r.Risk {
 		return true
 	}
-	if r.LastRedial != 0 && now-r.LastRedial < int64(gap) {
+	if r.LastRedial != 0 && now >= r.LastRedial && now-r.LastRedial < int64(gap) {
 		return true
 	}
 	r.Attempts++
@@ -532,7 +532,10 @@ func setMainDefault6(w *WAN, healthy bool) {
 		if len(args) == 0 {
 			continue
 		}
-		run("ip", args...)
+		if out, err := run("ip", args...); err != nil {
+			logf("IPv6 default route update on %s failed: %v %s", w.Ifname(), err, strings.TrimSpace(out))
+			continue
+		}
 		if hasOld {
 			del := []string{"-6", "route", "del"}
 			for i := 3; i < len(args); i++ {
@@ -598,7 +601,11 @@ func ipv6DefaultRouteReplaceArgs(r map[string]any, dev string, metric int) []str
 			if expires, ok := r["expires"].(float64); ok && expires > 0 {
 				dst = append(dst, "expires", fmt.Sprint(int(expires)))
 			}
-			return append(dst, "metric", fmt.Sprint(metric))
+			dst = append(dst, "metric", fmt.Sprint(metric))
+			if pref, ok := r["pref"].(string); ok && (pref == "low" || pref == "medium" || pref == "high") {
+				dst = append(dst, "pref", pref)
+			}
+			return dst
 		}
 		args = appendIPv6RouteAttrs(args)
 		for _, x := range nhs {
@@ -626,6 +633,9 @@ func ipv6DefaultRouteReplaceArgs(r map[string]any, dev string, metric int) []str
 			args = append(args, "expires", fmt.Sprint(int(expires)))
 		}
 		args = append(args, "metric", fmt.Sprint(metric))
+		if pref, ok := r["pref"].(string); ok && (pref == "low" || pref == "medium" || pref == "high") {
+			args = append(args, "pref", pref)
+		}
 	}
 	return args
 }

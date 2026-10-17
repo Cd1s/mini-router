@@ -55,7 +55,7 @@ ip rule
   它的 WAN 表删掉默认路由（策略路由 / 均衡 / 恢复标记的流量落到 main = 最好的健康线路），并从均衡表里拿掉。恢复后全部还原。
   IPv6 的 RA 默认路由和源前缀默认路由同步升高同样的 metric，避免 IPv4 已切换而 IPv6 仍从故障线路出站；这项 IPv6 健康联动只在 `multiwan.mode: failover|balance` 开启时生效，未开多 WAN 健康检测的旧配置不会改写 RA 路由。
 
-`require_public_ip` 的复查由生成的 `* * * * * /usr/sbin/mr wan public-check --cron` 执行，不增加常驻进程。守卫触发的单条 PPPoE 重拨不会触发 `multiwan.dial_order` / `dial_restore` 去重拨其它线路。
+`require_public_ip` 的复查由生成的 `* * * * * /usr/sbin/mr wan public-check --cron` 执行，不增加常驻进程。私网会话（包括冷却中和已停止重拨的状态）不会触发 `multiwan.dial_order` / `dial_restore`；最终拿到公网地址的会话按 `dial_restore` 的正常规则处理。
 - 状态文件（tmpfs）：`/run/mini-router/wan/<wan>.json`（这条线拿到的地址、网关、DNS、上线时间），
   `/run/mini-router/wan-state.json`（健康检测每轮写），`/run/mini-router/resolv.conf`。
 

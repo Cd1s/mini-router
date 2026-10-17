@@ -111,13 +111,31 @@ func TestPublicIPCheckHonoursCooldownAndEventuallyStops(t *testing.T) {
 	}
 }
 
+func TestRequirePublicIPClockRollbackEndsCooldown(t *testing.T) {
+	tempState(t)
+	c := testConfig(t)
+	c.WAN[0].RequirePublicIP, c.WAN[0].RequirePublicIPGap = true, 180
+	oldNow, oldRedial := requirePublicNow, requirePublicRedial
+	now := time.Unix(1000, 0)
+	redials := 0
+	requirePublicNow = func() time.Time { return now }
+	requirePublicRedial = func(*WAN) { redials++ }
+	t.Cleanup(func() { requirePublicNow, requirePublicRedial = oldNow, oldRedial })
+	requirePublicIP(c, &c.WAN[0], "100.64.1.2")
+	now = time.Unix(900, 0)
+	requirePublicIP(c, &c.WAN[0], "100.64.1.2")
+	if redials != 2 {
+		t.Fatalf("clock rollback kept the cooldown: %d redials", redials)
+	}
+}
+
 func TestRequirePublicIPHookSkipsDialRestore(t *testing.T) {
 	tempState(t)
 	eventEnv(t)
 	fakeHookCommands(t)
 	c := testConfig(t)
 	c.WAN[0].RequirePublicIP = true
-	c.MultiWAN.DialOrder = []string{"wan2", "wan"}
+	c.MultiWAN.DialOrder = []string{"wan", "wan2"}
 	c.MultiWAN.DialRestore = "now"
 	oldFW, oldRedial, oldSpawn := fwLoadForHook, requirePublicRedial, dialSpawn
 	var redials, spawned []string
@@ -125,6 +143,7 @@ func TestRequirePublicIPHookSkipsDialRestore(t *testing.T) {
 	requirePublicRedial = func(w *WAN) { redials = append(redials, w.Name) }
 	dialSpawn = func(args ...string) error { spawned = append(spawned, strings.Join(args, " ")); return nil }
 	t.Cleanup(func() { fwLoadForHook, requirePublicRedial, dialSpawn = oldFW, oldRedial, oldSpawn })
+	writeLease("wan2", wanLease{IP: "198.51.100.2", Since: time.Now().Unix() - 100, Dev: "pppoe-wan2"})
 	if err := hookPPP(c, true, []string{"pppoe-wan", "", "", "100.64.1.2", "", "wan"}); err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +152,17 @@ func TestRequirePublicIPHookSkipsDialRestore(t *testing.T) {
 	}
 	if len(spawned) != 0 {
 		t.Fatalf("private guard triggered dial-order restore: %v", spawned)
+	}
+	// Once the guarded session is public, normal dial_restore semantics apply. The later WAN
+	// lease makes the distinction observable: removing the guarded branch would fail above, while
+	// this public session must spawn the restore.
+	removeLease("wan")
+	spawned = nil
+	if err := hookPPP(c, true, []string{"pppoe-wan", "", "", "203.0.113.2", "", "wan"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(spawned, ";") != "wan dial-restore" {
+		t.Fatalf("public session did not follow dial_restore: %v", spawned)
 	}
 }
 
@@ -158,7 +188,7 @@ func TestIPv6RAHealthChangePreservesRouteType(t *testing.T) {
 		t.Fatal(err)
 	}
 	log := filepath.Join(d, "ip.log")
-	script := "#!/bin/sh\ncase \"$*\" in *'-j -6 route show default dev pppoe-wan'*) echo '[{\"protocol\":\"ra\",\"metric\":1024,\"gateway\":\"fe80::1\",\"expires\":123,\"nexthops\":[{\"gateway\":\"fe80::1\",\"dev\":\"pppoe-wan\"}]}]' ;; *) echo \"$*\" >> '" + log + "' ;; esac\n"
+	script := "#!/bin/sh\ncase \"$*\" in *'-j -6 route show default dev pppoe-wan'*) echo '[{\"protocol\":\"ra\",\"metric\":1024,\"gateway\":\"fe80::1\",\"expires\":123,\"pref\":\"medium\",\"nexthops\":[{\"gateway\":\"fe80::1\",\"dev\":\"pppoe-wan\"}]}]' ;; *) echo \"$*\" >> '" + log + "' ;; esac\n"
 	if err := os.WriteFile(filepath.Join(bin, "ip"), []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -167,8 +197,29 @@ func TestIPv6RAHealthChangePreservesRouteType(t *testing.T) {
 	t.Cleanup(func() { os.Setenv("PATH", oldPath) })
 	setMainDefault6(&WAN{Name: "wan", Proto: "pppoe", IPv6: true, Metric: 0}, false)
 	got, _ := os.ReadFile(log)
-	if strings.TrimSpace(string(got)) != "-6 route replace default proto ra expires 123 metric 11024 nexthop via fe80::1 dev pppoe-wan\n-6 route del default proto ra metric 1024 nexthop via fe80::1 dev pppoe-wan" {
+	if strings.TrimSpace(string(got)) != "-6 route replace default proto ra expires 123 metric 11024 pref medium nexthop via fe80::1 dev pppoe-wan\n-6 route del default proto ra metric 1024 pref medium nexthop via fe80::1 dev pppoe-wan" {
 		t.Fatalf("RA route was replaced/destructively rebuilt: %q", got)
+	}
+}
+
+func TestIPv6RAReplaceFailureKeepsOldRoute(t *testing.T) {
+	d := t.TempDir()
+	bin := filepath.Join(d, "bin")
+	if err := os.Mkdir(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	log := filepath.Join(d, "ip.log")
+	script := "#!/bin/sh\ncase \"$*\" in *'-j -6 route show default dev pppoe-wan'*) echo '[{\"protocol\":\"ra\",\"metric\":1024,\"gateway\":\"fe80::1\",\"expires\":123}]' ;; *'route replace'*) echo replace >> '" + log + "'; exit 1 ;; *) echo \"$*\" >> '" + log + "' ;; esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "ip"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := os.Getenv("PATH")
+	os.Setenv("PATH", bin+string(os.PathListSeparator)+oldPath)
+	t.Cleanup(func() { os.Setenv("PATH", oldPath) })
+	setMainDefault6(&WAN{Name: "wan", Proto: "pppoe", IPv6: true}, false)
+	got, _ := os.ReadFile(log)
+	if strings.Contains(string(got), "route del") {
+		t.Fatalf("replace failure deleted the old RA route: %q", got)
 	}
 }
 
@@ -187,8 +238,8 @@ func TestGatewayConflictStatePersists(t *testing.T) {
 }
 
 func TestIPv6DefaultRouteHealthArgs(t *testing.T) {
-	r := map[string]any{"protocol": "ra", "gateway": "fe80::1", "metric": float64(1024), "expires": float64(123)}
-	if got := strings.Join(ipv6DefaultRouteReplaceArgs(r, "pppoe-wan", downMetric+1024), " "); got != "-6 route replace default via fe80::1 dev pppoe-wan proto ra expires 123 metric 11024" {
+	r := map[string]any{"protocol": "ra", "gateway": "fe80::1", "metric": float64(1024), "expires": float64(123), "pref": "medium"}
+	if got := strings.Join(ipv6DefaultRouteReplaceArgs(r, "pppoe-wan", downMetric+1024), " "); got != "-6 route replace default via fe80::1 dev pppoe-wan proto ra expires 123 metric 11024 pref medium" {
 		t.Fatalf("IPv6 route args: %s", got)
 	}
 	w := &WAN{Name: "wan", Proto: "pppoe", IPv6: true}
