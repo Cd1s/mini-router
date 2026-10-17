@@ -181,11 +181,14 @@ func TestLan6RenumberRetiresProtoSwitchAfterCommit(t *testing.T) {
 }
 
 func TestDeletedWANPrefixSurvivesHookUntilCommit(t *testing.T) {
-	oldState, oldRun, oldFW := lan6StateFile, wanRunDir, fwLoadForCommit
+	oldState, oldRun, oldFW, oldLan6 := lan6StateFile, wanRunDir, fwLoadForCommit, refreshLan6ForHook
 	d := t.TempDir()
 	lan6StateFile, wanRunDir = filepath.Join(d, "lan6.json"), filepath.Join(d, "wan")
 	fwLoadForCommit = func(*Config) error { return nil }
-	t.Cleanup(func() { lan6StateFile, wanRunDir, fwLoadForCommit = oldState, oldRun, oldFW })
+	refreshLan6ForHook = func() error { return nil }
+	t.Cleanup(func() {
+		lan6StateFile, wanRunDir, fwLoadForCommit, refreshLan6ForHook = oldState, oldRun, oldFW, oldLan6
+	})
 	os.MkdirAll(wanRunDir, 0755)
 	bin := filepath.Join(d, "bin")
 	os.Mkdir(bin, 0755)

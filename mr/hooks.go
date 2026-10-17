@@ -27,11 +27,12 @@ const downMetric = 10000
 
 // runtime state paths (variables so tests can use a temp dir)
 var (
-	wanRunDir       = RunDir + "/wan"
-	wanStateFile    = RunDir + "/wan-state.json"
-	resolvConf      = RunDir + "/resolv.conf"
-	fwLoadForHook   = fwLoad
-	fwLoadForCommit = fwLoad
+	wanRunDir          = RunDir + "/wan"
+	wanStateFile       = RunDir + "/wan-state.json"
+	resolvConf         = RunDir + "/resolv.conf"
+	fwLoadForHook      = fwLoad
+	fwLoadForCommit    = fwLoad
+	refreshLan6ForHook = refreshLan6
 )
 
 // wanLease is what a WAN got when it came up.
@@ -475,9 +476,9 @@ func hookDhcpcd(c *Config) error {
 	case "BOUND6", "REBIND6", "RENEW6", "REBOOT6", "INFORM6", "DELEGATED6", "ROUTERADVERT":
 	case "EXPIRE6", "RELEASE6", "STOP6", "NOCARRIER", "STOPPED":
 		os.Remove(pd6File(w.Name)) // the prefix is gone: policy routes stop sending its sources here
-		return refreshLan6()
+		return refreshLan6ForHook()
 	default:
-		return refreshLan6()
+		return refreshLan6ForHook()
 	}
 	if pds := delegatedPrefixes(os.Environ()); len(pds) > 0 {
 		// written only when it changes: its mtime is when this session got the prefix (dial order,
@@ -494,7 +495,7 @@ func hookDhcpcd(c *Config) error {
 	if w.Proto != "pppoe" {
 		gw6 := mainDefault6(iface)
 		if gw6 == "" {
-			return refreshLan6() // no RA yet; the ROUTERADVERT event comes back here
+			return refreshLan6ForHook() // no RA yet; the ROUTERADVERT event comes back here
 		}
 		via = []string{"via", gw6}
 		t, _ := c.WANTable(w.Name)
@@ -515,7 +516,7 @@ func hookDhcpcd(c *Config) error {
 		run("ip", args...)
 	}
 	runOnWAN(c, w.Name, "ipv6")
-	return refreshLan6()
+	return refreshLan6ForHook()
 }
 
 // protoSrc6 marks the main-table IPv6 default routes srcDefaults6 installs.
