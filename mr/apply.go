@@ -636,6 +636,9 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 		clearPending(snap)
 		acceptStaged()
 		setResult(snap, "applied")
+		if err := netCommit(c); err != nil {
+			logf("net: post-apply cleanup: %v", err)
+		}
 	}
 	return nil
 }
@@ -1042,9 +1045,23 @@ func confirm() (bool, error) {
 	if err == nil && p.State == stateReverting {
 		return false, errors.New("the change is being rolled back")
 	}
+	var commitCfg *Config
+	if err == nil {
+		cfgPath, secPath := acceptedConfig(), acceptedSecrets()
+		if _, statErr := os.Stat(cfgPath + ".staged"); statErr == nil {
+			cfgPath += ".staged"
+			secPath += ".staged"
+		}
+		commitCfg, _ = loadConfig(cfgPath, secPath)
+	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
 	acceptStaged()
 	unlock()
+	if commitCfg != nil {
+		if commitErr := netCommit(commitCfg); commitErr != nil {
+			logf("net: post-confirm cleanup: %v", commitErr)
+		}
+	}
 	if err == nil {
 		setResult(p.Snapshot, "confirmed")
 	}
