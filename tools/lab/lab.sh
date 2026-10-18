@@ -90,6 +90,86 @@ sw(){ echo "mrlab$1-sw"; }; isp(){ echo "mrlab$1-isp$2"; }; lan(){ echo "mrlab$1
 router_ip(){ cat "$(state "$1")/lan.ip" 2>/dev/null || echo 192.168.1.1; }
 run_ns(){ n=$1; shift; ip netns exec "$n" "$@"; }
 pidfile(){ echo "$(state "$1")/qemu.pid"; }
+# ---- host-wide lab id lock (#152)
+# A lab's namespaces, taps and QEMU are host-wide while its state is per checkout. `up` starts a holder
+# process that flocks /run/mrlab/<id>.lock until `down` and writes its PID and the checkout into it;
+# every command that touches lab <id> refuses an id another checkout holds.
+LOCKDIR=/run/mrlab
+lockfile(){ echo "$LOCKDIR/$1.lock"; }
+# lock_read ID: L_PID, L_CHECKOUT (empty: free) and L_HELD (1: a holder has the flock)
+# Only a process that has the flock writes or empties the file. A held lock whose record is empty or
+# names a dead PID is being taken over (the new holder has not written yet): readers wait for it.
+# lock_read ID: L_PID, L_CHECKOUT (empty: no record), L_HELD (1: someone has the flock)
+lock_read(){
+  _lf=$(lockfile "$1"); L_PID=; L_CHECKOUT=; L_HELD=0
+  [ -e "$_lf" ] || return 0
+  L_PID=$(sed -n 's/^pid=//p' "$_lf" | head -1); L_CHECKOUT=$(sed -n 's/^checkout=//p' "$_lf" | head -1)
+  flock -n "$_lf" true 2>/dev/null || L_HELD=1
+}
+# lock_settle ID: lock_read, waiting up to 3 s while the lock is held without a live owner record
+lock_settle(){
+  _s=0
+  while :; do
+    lock_read "$1"
+    [ "$L_HELD" = 1 ] && { [ -z "$L_CHECKOUT" ] || [ ! -d "/proc/${L_PID:-0}" ]; } || return 0
+    [ "$_s" -lt 30 ] || return 0
+    sleep 0.1; _s=$((_s + 1))
+  done
+}
+# a stale record is emptied under the flock, so a holder that just won the lock is never touched
+lock_clear_stale(){
+  _lf=$(lockfile "$1")
+  # shellcheck disable=SC2016
+  if [ -e "$_lf" ]; then flock -n "$_lf" sh -c ': > "$1"' sh "$_lf" 2>/dev/null || true; fi
+}
+id_guard(){
+  lock_settle "$1"
+  if [ "$L_HELD" = 1 ]; then
+    [ "$L_CHECKOUT" = "$LABDIR" ] && return 0
+    [ -n "$L_CHECKOUT" ] || die "lab $1: the lock is held but names no owner yet (another checkout is taking it): try again"
+    die "lab $1 is in use by $L_CHECKOUT (pid $L_PID): pick another id (lab.sh status <id> shows the owner)"
+  fi
+  if [ -z "$L_CHECKOUT" ] || [ "$L_CHECKOUT" = "$LABDIR" ]; then return 0; fi
+  if [ "${MRLAB_FORCE:-0}" = 1 ]; then
+    echo "lab: taking over lab $1 from $L_CHECKOUT (its lock holder, pid $L_PID, is gone)" >&2
+    lock_clear_stale "$1"; return 0
+  fi
+  die "lab $1 was left by $L_CHECKOUT, whose lock holder (pid $L_PID) is gone: MRLAB_FORCE=1 lab.sh reset $1 takes it over"
+}
+id_acquire(){
+  mkdir -p "$LOCKDIR"; _lf=$(lockfile "$1"); _spawned=0; _n=0
+  while [ "$_n" -lt 30 ]; do
+    lock_read "$1"
+    if [ "$L_HELD" = 1 ]; then
+      [ "$L_CHECKOUT" = "$LABDIR" ] && [ -d "/proc/${L_PID:-0}" ] && return 0
+      # a live owner from another checkout: refuse; no record / a dead PID: the winner is writing
+      [ -n "$L_CHECKOUT" ] && [ "$L_CHECKOUT" != "$LABDIR" ] && [ -d "/proc/${L_PID:-0}" ] && die "lab $1 is in use by $L_CHECKOUT (pid $L_PID): pick another id"
+    elif [ "$_spawned" = 0 ]; then
+      # append-open: a contender never truncates; the winner writes its record in one go
+      # shellcheck disable=SC2016
+      setsid sh -c 'exec 9>>"$1" && flock -n 9 || exit 3
+        ts=$(date "+%F %T"); printf "pid=%s\ncheckout=%s\nsince=%s\n" "$$" "$2" "$ts" > "$1"
+        exec sleep 2147483647' sh "$_lf" "$LABDIR" </dev/null >/dev/null 2>&1 &
+      _spawned=1
+    fi
+    sleep 0.1; _n=$((_n + 1))
+  done
+  die "lab $1: could not take the lock (held by ${L_CHECKOUT:-?}, pid ${L_PID:-?})"
+}
+id_release(){
+  lock_read "$1"; _lf=$(lockfile "$1")
+  if [ "$L_CHECKOUT" != "$LABDIR" ]; then
+    # MRLAB_FORCE down of another checkout's stale lab: its record goes as well
+    [ "$L_HELD" = 0 ] && [ "${MRLAB_FORCE:-0}" = 1 ] && lock_clear_stale "$1"
+    return 0
+  fi
+  if [ "$L_HELD" = 0 ]; then lock_clear_stale "$1"; return 0; fi
+  # our holder has the flock: empty the record first (nobody else writes), then stop the holder
+  : > "$_lf"
+  if [ "$(cat "/proc/$L_PID/comm" 2>/dev/null)" = sleep ] && [ "$(readlink "/proc/$L_PID/fd/9")" = "$_lf" ]; then
+    stop_pids "$L_PID"
+  fi
+}
 # `ip netns exec` bind-mounts /etc/netns/<ns>/* over /etc/*: every lab namespace gets its own
 # resolv.conf (and the ISP its own /etc/ppp) so no daemon can write the host's files.
 ns_etc_setup(){
@@ -315,6 +395,7 @@ up(){
       die "the host service $s runs; the lab only needs the binary: systemctl disable --now $s (or MRLAB_ALLOW_HOST_SERVICES=1)"
     fi
   done
+  id_acquire "$id"
   if [ -s "$d/flavor" ] && [ -e "$d/overlay.qcow2" ]; then use_flavor "$(cat "$d/flavor")"; else echo "$FLAVOR" > "$d/flavor"; fi
   lock_images; ensure_base; unlock_images
   [ -e "$d/overlay.qcow2" ] || { qemu-img create -f qcow2 -F qcow2 -b "$BASE" "$d/overlay.qcow2" >/dev/null; qemu-img resize "$d/overlay.qcow2" 1G >/dev/null; }
@@ -370,13 +451,17 @@ teardown(){
   for n in "$(lan "$id")" "$(isp "$id" 2)" "$(isp "$id" 1)" "$(sw "$id")"; do ns_del "$n"; ns_etc_remove "$n"; done
   rm -rf "$(state "$id")"
 }
-down(){ id=$1; valid_id "$id"; teardown "$id"; echo "down $id"; }
-reset(){ id=$1; valid_id "$id"; teardown "$id"; up "$id"; }
+down(){ id=$1; valid_id "$id"; teardown "$id"; id_release "$id"; echo "down $id"; }
+reset(){ id=$1; valid_id "$id"; id_acquire "$id"; teardown "$id"; up "$id"; }
 status(){
   id=$1; valid_id "$id"; p=$(pidfile "$id"); alive=false; [ -s "$p" ] && kill -0 "$(cat "$p")" 2>/dev/null && alive=true
   rc=$(sed -n 's/.*MRLAB-INSTALL-RC=\([0-9]*\).*/\1/p' "$(state "$id")/console.log" 2>/dev/null | tail -1)
   isp1=$(cat "$(state "$id")/isp1/mode" 2>/dev/null || echo none)
-  printf '{"id":%s,"qemu":%s,"install_rc":"%s","isp1":"%s","router_ip":"%s"}\n' "$id" "$alive" "$rc" "$isp1" "$(router_ip "$id")"
+  lock_settle "$id"; lk=free
+  [ -n "$L_CHECKOUT" ] && { if [ "$L_HELD" = 1 ]; then lk=held; else lk=stale; fi; }
+  [ "$lk" = held ] && [ "$L_CHECKOUT" = "$LABDIR" ] && lk=ours
+  printf '{"id":%s,"lock":"%s","owner":"%s","owner_pid":"%s","qemu":%s,"install_rc":"%s","isp1":"%s","router_ip":"%s"}\n' \
+    "$id" "$lk" "$L_CHECKOUT" "$L_PID" "$alive" "$rc" "$isp1" "$(router_ip "$id")"
 }
 
 # ---------------------------------------------------------------- ISP simulator
@@ -669,7 +754,32 @@ change_cmd(){
   need jq
   rev=$(api_cmd "$id" GET config | jq -r .rev) || die "change: cannot read config"
   body=$(jq -cn --arg rev "$rev" --argjson patch "$patch" --argjson sec "$secrets" '{base_rev: $rev, patch: $patch, secrets: $sec, confirm: 120, comment: "lab change"}')
-  api_cmd "$id" POST apply "$body" >/dev/null || die "change: apply refused"
+  resp=$(api_cmd "$id" POST apply "$body") || die "change: apply refused: $resp"
+  cip=$(printf '%s' "$resp" | jq -r '.confirm_ip // empty'); ctok=$(printf '%s' "$resp" | jq -r '.confirm_token // empty')
+  if [ -n "$cip" ]; then
+    # the change moves the router's LAN address (#153): like the web UI, follow it — the client
+    # renews (a wired PC's port flaps), then the one-time token confirms on the new address. The lab
+    # switches to the new address only once that worked (--no-confirm: once the router answers there).
+    d=$(state "$id"); old_ip=$(router_ip "$id"); moved=; end=$(($(date +%s) + 100))
+    while [ "$(date +%s)" -lt "$end" ]; do
+      sleep 4
+      lan_cmd "$id" dhcp >/dev/null 2>&1 || continue
+      if [ "$confirm" = 1 ]; then
+        out=$(run_ns "$(lan "$id")" curl -sS --max-time 8 -H X-MR:1 -H 'Content-Type: application/json' \
+          -d "{\"token\":\"$ctok\"}" "http://$cip/cgi-bin/api?a=confirm" 2>/dev/null) || continue
+        case $out in *'"confirmed":true'*) moved=1; break;; esac
+      else
+        run_ns "$(lan "$id")" curl -fsS -o /dev/null --max-time 5 "http://$cip/" 2>/dev/null && { moved=1; break; }
+      fi
+    done
+    if [ -z "$moved" ]; then
+      die "change: LAN move to $cip not $([ "$confirm" = 1 ] && echo confirmed || echo reachable) within 100 s; the router rolls back to $old_ip by itself, the lab stays on $old_ip"
+    fi
+    printf '%s\n' "$cip" > "$d/lan.ip"; rm -f "$d/api.cookies"
+    if [ "$confirm" = 1 ]; then echo "{\"lan_moved_to\":\"$cip\",\"confirmed\":true,\"via\":\"lan-token\"}"
+    else echo "{\"lan_moved_to\":\"$cip\",\"confirmed\":false,\"note\":\"pending: lab.sh api $id POST confirm '{}' keeps it\"}"; fi
+    return 0
+  fi
   i=0; st=running
   while [ "$st" = running ] && [ "$i" -lt 180 ]; do
     sleep 2; i=$((i + 2))
@@ -687,6 +797,9 @@ powercut_cmd(){ id=$1; valid_id "$id"; kill_qemu "$id" 9; up "$id" >/dev/null; w
 
 usage(){ die "usage: lab.sh up|down|reset|status <id> | isp <id> <wan> dhcp|pppoe|static|down [opts] | install <id> [opts] | lan <id> dhcp|static|check|exec | console|ssh <id> <cmd> | api <id> GET|POST <action> [json] | change <id> <patch-json> [--no-confirm] | reboot|powercut <id> | run <id> <scenario>"; }
 cmd=${1:-}; shift || true
+case $cmd in
+  up|down|reset|isp|install|lan|ssh|console|api|change|run|reboot|powercut) valid_id "${1:-}"; id_guard "$1";;
+esac
 case $cmd in
   up) up "$@";; down) down "$@";; status) status "$@";; reset) reset "$@";;
   isp) isp_cmd "$@";; install) install_cmd "$@";; lan) lan_cmd "$@";;
