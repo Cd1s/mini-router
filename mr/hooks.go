@@ -308,6 +308,9 @@ func hookPPP(c *Config, up bool, args []string) error {
 	}
 	updateLEDs(c)
 	err := fwLoadForHook(c)
+	if relayErr := ipv6RelaySync(c); relayErr != nil {
+		logf("IPv6 relay: %v", relayErr)
+	}
 	if up {
 		if !guarded {
 			runOnWAN(c, w.Name, "up")
@@ -935,7 +938,10 @@ func netCommit(c *Config) error {
 	lan6Renumber(c, true)
 	srcDefaults6(c)
 	writeResolv(c)
-	return fwLoadForCommit(c)
+	if err := fwLoadForCommit(c); err != nil {
+		return err
+	}
+	return ipv6RelaySync(c)
 }
 
 // writeResolv rewrites resolvConf from the WANs that are up (healthy first, then by metric).
@@ -985,6 +991,11 @@ func hookDhcpcd(c *Config) error {
 	// mod_net_renumber.go)
 	defer lan6Renumber(c)
 	defer srcDefaults6(c) // every event: the LAN bridge's (address added) as well as the WAN's
+	defer func() {
+		if err := ipv6RelaySync(c); err != nil {
+			logf("IPv6 relay: %v", err)
+		}
+	}()
 	iface, reason := os.Getenv("interface"), os.Getenv("reason")
 	w := c.wanByIfname(iface)
 	if w == nil {

@@ -57,6 +57,9 @@ type Module struct {
 	TokenScope map[string]string
 	// Commands adds `mr <name> ...` subcommands (e.g. hooks called by daemons).
 	Commands map[string]func(c *Config, args []string) error
+	// Cron adds managed crontab lines for periodic work owned by this module. The core owns
+	// the crond service and merges these lines with schedules from the sys module.
+	Cron func(c *Config) []string
 	// Secrets lists the secret NAMES this module's config references (the web UI shows which are
 	// set; values are never returned).
 	Secrets func(c *Config) []string

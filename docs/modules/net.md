@@ -155,6 +155,7 @@ wan:
       address: 192.168.1.1   # 物理口别名 + /32 路由，并只对该地址做 masquerade
     ipv6: true                # dhcpcd：RA / DHCPv6
     ipv6_pd: true             # 申请前缀放到 LAN
+    ipv6_relay: false         # 无 PD 时把 WAN SLAAC /64 通告到 LAN，并代理 LAN 邻居
     ipv6_srcroute: false      # 源地址是本线路前缀的 IPv6 从本线路走（多线必开）
     require_public_ip: true   # PPPoE 被 ISP 放入私网/CGNAT 时自动重拨这一条线
     require_public_ip_gap: 180 # 自动重拨冷却秒数（默认 180）
@@ -182,6 +183,39 @@ LAN bridge 设置 proxy ARP；LAN 到这个单一网关地址做 masquerade。`m
 同网段并建议把 LAN 改到其它网段。静态 WAN 与 LAN 网段重叠会被校验拒绝。桥接 PPPoE 可用 `modem.address`
 （仅支持 PPPoE，地址必须是私网 IPv4）；
 例如 `192.168.1.1` 会在物理口加 `192.168.1.2/32` 和主机路由，LAN 可访问光猫管理页（面板入口留待后续）。
+`ipv6_relay` 默认关闭，且需要 `ipv6: true` 与 `lan.ipv6_ra: true`。它适用于上游只有 SLAAC `/64`、没有 DHCPv6-PD 的线路：
+dhcpcd 事件和 crond 每分钟扫描 WAN 的全局 `/64`，给 `br-lan` 放一个基于桥 MAC 的稳定 EUI-64 地址，让现有 dnsmasq
+`constructor:br-lan` RA 渲染通告该前缀；同时按 LAN 邻居表逐地址维护 `ip -6 neigh ... proxy`。PD 文件出现时
+relay 立即让位，PD 消失后下一次事件恢复。WAN 变化、关闭开关或删除 WAN 会删除代理项和 LAN relay 地址。
+这不是 NAT66，LAN 主机仍使用运营商的全局地址；入站仍遵守默认拒绝和现有 `firewall.ipv6_allow` 显式规则。
+桥地址使用 `br-lan` 的 EUI-64 作为接口标识符，避免与上游常用的 `::1` 冲突。
+
+**哪些 LAN 地址会被代理**：只看 `br-lan` 邻居表里落在 relay `/64` 内的全局地址，排除路由器自己（`br-lan` 与 WAN 的本机地址、
+桥上的 relay 地址）和 WAN 邻居表里已有的地址，并且必须有一个未过期的“空闲”探测结论；最多 64 个 proxy 条目，已在代理的地址优先
+保留名额。通过的地址同时得到一条 `/128` bridge 主机路由（只给 relay `/64` 内的地址），代理项和主机路由都记在
+`/run/mini-router/ipv6-relay.json`，不再需要时删除。静默且从未以全局源地址发包的主机不会出现在邻居表里，需要先产生一次 IPv6
+流量；之后约一到两分钟（下一次 cron 探测并代理）可达。路由器能学到主机的全局地址，是因为主机访问 `br-lan` 上的 relay 地址
+（例如它通告的 DNS）时用全局源地址发 NS，所以该前缀按 on-link 通告。
+
+**已知限制**：relay 的 `/64` 在上游也是 on-link 网段，LAN 主机把整个 `/64` 当作本地链路，因此不能直接访问上游同一 `/64`
+里的其它主机（上游路由器的全局地址、上游网段里的其它设备）；互联网和其它网段不受影响。
+
+**探测与结论**：只有 crond 每分钟的 `mr net ipv6-relay --cron` 做主动探测（`ping6 -c 1 -W 3 -I <WAN> <地址>`，再读 WAN 邻居表
+里该地址的状态）。有 echo 应答、或邻居状态为 REACHABLE / STALE / DELAY / PROBE / PERMANENT（上游主机回应了 NS，即使它忽略 ping）
+记为“占用”；邻居状态为 FAILED（内核的 NS 重试无人应答）记为“空闲”；其余情况（`ping6` 无法运行、一直 INCOMPLETE、没有邻居条目）
+不记结论。结论按“WAN 接口 + 地址”写进 `/run/mini-router/ipv6-relay-probe.json`（tmpfs，不写闪存），带时间和 10 分钟有效期；
+已在代理的地址在过半有效期时优先重新探测。每轮在过滤之后最多取 64 个候选，最多 8 个探测并发，8 秒后不再开始新的探测，单轮探测
+耗时约 14 秒封顶，没探测到的留到下一分钟；上一轮还在探测时本轮跳过探测（非阻塞锁）。
+
+**谁按结论行事**：dhcpcd / pppd 钩子、apply 和 cron 都只读同一份结论文件，自己从不探测；没有结论、结论过期或为“占用”都不代理，
+保守地等 cron 判定。已代理的地址一旦失去“空闲”结论、被判为占用、出现在 WAN 邻居表或成为路由器本机地址，本次就删除代理项和主机
+路由；只有“邻居暂时从 `br-lan` 邻居表消失”（结论仍为空闲）才保留三个扫描周期，避免回包空窗。cron 的同步拿不到状态锁时跳过
+本轮，钩子和 apply 则等待（锁内不探测，持有时间很短）。关闭 relay、前缀变化或 PD 出现时清理全部代理项、主机路由和 relay 地址。
+撤销前缀会先以 preferred lifetime 0 的地址触发 dnsmasq 发弃用 RA，再等待 valid lifetime 到期。
+
+实现方案比较：Linux `proxy_ndp` 本身只提供逐地址的邻居代理，需要持续跟踪动态主机；按前缀响应的常驻代理会增加进程和运行时内存。这里采用现有 dhcpcd 钩子加 crond 的扫描，
+没有空闲常驻进程，默认也不启用 crond relay 行；这是小内存路由器的优先方案。扫描只在配置开启时生成 `mr net ipv6-relay --cron`。
+
 没有任何开了 `ipv6` 的 DHCP / 静态 WAN 落在其上的 WAN 接口（`ipv6: false`，或只跑 PPPoE）不收 RA：`network.sh` 把它的
 `accept_ra` 设为 0，并清掉留在上面的全局 IPv6 地址和 RA 默认路由（dhcpcd 停止管理接口时不删自己的地址）。
 网页上删除 WAN、关闭它的 `ipv6` / `ipv6_pd` 时，会列出引用它、否则无法保存的设置（策略路由、多线路权重与拨号顺序、

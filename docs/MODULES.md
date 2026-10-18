@@ -58,6 +58,8 @@ Register exactly one `Module` in `init()`:
   list a new action there deliberately, or not at all (logs, secrets, firmware stay session-only).
   `register` merges the declarations into `tokenActions` (`api_token.go`, which holds only the core actions).
 - `Commands` — `mr <name> ...` subcommands (for hooks/daemons).
+- `Cron` — optional managed crontab lines for periodic module work. The core merges these with the
+  sys module's schedules and enables the existing `crond` service only when at least one line exists.
 - `Secrets(c)` — names of every secret this module's config references (so the UI can show 已设置).
 - `OnWAN(c, wan, event)` — called by the net hooks (`hooks.go`) when a WAN's addresses may have changed: `up`
   (PPP up, DHCP bound / renew), `ipv6` (dhcpcd RA / delegated prefix), `down`, `health` (multi-WAN failover; wan
