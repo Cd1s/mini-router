@@ -12,6 +12,8 @@ import (
 	"net/netip"
 	"os"
 	"sort"
+	"sync"
+	"time"
 )
 
 var (
@@ -19,6 +21,7 @@ var (
 	ipv6RelayLockFile    = RunDir + "/ipv6-relay.lock"
 	ipv6RelayRun         = func(name string, args ...string) (string, error) { return run(name, args...) }
 	ipv6RelaySetProxyNDP = ipv6RelayProxyNDP
+	ipv6RelayProbeFn     = func(dev, addr string) (bool, bool) { return ipv6RelayProbe(dev, addr), true }
 )
 
 type ipv6RelayPrefix struct {
@@ -49,6 +52,13 @@ type ipv6RelayState struct {
 const ipv6RelayMaxProxies = 64
 const ipv6RelayProxyGrace = 3
 const ipv6RelayProbeMax = 64
+const ipv6RelayProbeBudget = 2 * time.Second
+const ipv6RelayProbeTTL = 2 * time.Minute
+
+var ipv6RelayProbeCache = struct {
+	sync.Mutex
+	entries map[string]time.Time
+}{entries: map[string]time.Time{}}
 
 func ipv6RelayEnabled(c *Config) bool {
 	if c == nil || !c.LAN.IPv6RA {
@@ -73,6 +83,7 @@ func netCommand(c *Config, args []string) error {
 	if len(args) != 2 || args[0] != "ipv6-relay" || args[1] != "--cron" {
 		return fmt.Errorf("usage: mr net ipv6-relay --cron")
 	}
+	ipv6RelayDiscover(c)
 	return ipv6RelaySync(c)
 }
 
@@ -250,6 +261,68 @@ func ipv6RelayProbe(dev, addr string) bool {
 	return err == nil
 }
 
+func ipv6RelayProbeKey(dev, addr string) string { return dev + "\x00" + addr }
+
+func ipv6RelayProbeOccupied(dev, addr string) bool {
+	ipv6RelayProbeCache.Lock()
+	defer ipv6RelayProbeCache.Unlock()
+	t, ok := ipv6RelayProbeCache.entries[ipv6RelayProbeKey(dev, addr)]
+	return ok && time.Since(t) < ipv6RelayProbeTTL
+}
+
+// ipv6RelayDiscover performs bounded upstream checks without holding the relay
+// state lock. A failed probe is treated as occupied (fail closed); only a
+// successful, explicit no-neighbour result is eligible for proxying.
+func ipv6RelayDiscover(c *Config) {
+	if !ipv6RelayEnabled(c) {
+		return
+	}
+	lan := ipv6RelayNeighbours(c.LAN.Bridge)
+	type candidate struct{ dev, addr string }
+	var candidates []candidate
+	for _, p := range ipv6RelayPrefixes(c) {
+		prefix := netip.MustParsePrefix(p.Prefix)
+		for _, ip := range lan {
+			if prefix.Contains(ip) && ip.String() != p.Addr && len(candidates) < ipv6RelayProbeMax {
+				candidates = append(candidates, candidate{p.Dev, ip.String()})
+			}
+		}
+	}
+	deadline := time.NewTimer(ipv6RelayProbeBudget)
+	defer deadline.Stop()
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	for _, x := range candidates {
+		if ipv6RelayProbeOccupied(x.dev, x.addr) {
+			continue
+		}
+		select {
+		case <-deadline.C:
+			return
+		default:
+		}
+		x := x
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			occupied, reliable := ipv6RelayProbeFn(x.dev, x.addr)
+			if occupied || !reliable {
+				mu.Lock()
+				ipv6RelayProbeCache.Lock()
+				ipv6RelayProbeCache.entries[ipv6RelayProbeKey(x.dev, x.addr)] = time.Now()
+				ipv6RelayProbeCache.Unlock()
+				mu.Unlock()
+			}
+		}()
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-deadline.C:
+	}
+}
+
 func ipv6RelaySync(c *Config) error {
 	if !ipv6RelayEnabled(c) {
 		if _, err := os.Stat(ipv6RelayStateFile); os.IsNotExist(err) {
@@ -309,7 +382,6 @@ func ipv6RelaySync(c *Config) error {
 	for _, ip := range local {
 		localSet[ip.String()] = true
 	}
-	probeCount := 0
 	for _, p := range cur.Prefixes {
 		// The same /64 is connected on br-lan and the WAN. Prefer the WAN for
 		// destinations that are not known LAN neighbours; install /128 LAN host
@@ -329,11 +401,7 @@ func ipv6RelaySync(c *Config) error {
 			if !prefix.Contains(ip) || addr == p.Addr || localSet[addr] || wanSet[addr] || len(cur.Proxies) >= ipv6RelayMaxProxies {
 				continue
 			}
-			if probeCount >= ipv6RelayProbeMax {
-				continue
-			}
-			probeCount++
-			if ipv6RelayProbe(p.Dev, addr) {
+			if ipv6RelayProbeOccupied(p.Dev, addr) {
 				continue
 			}
 			proxy := ipv6RelayProxy{Addr: addr, Dev: p.Dev}
@@ -381,6 +449,10 @@ func ipv6RelaySync(c *Config) error {
 	}
 	for _, p := range old.Proxies {
 		if has(cur.Proxies, p) {
+			continue
+		}
+		if ipv6RelayProbeOccupied(p.Dev, p.Addr) {
+			ipv6RelayRun("ip", "-6", "neigh", "del", "proxy", p.Addr, "dev", p.Dev)
 			continue
 		}
 		if activePrefix(p.Dev, p.Addr) && old.Misses[p.Dev+"\x00"+p.Addr] < ipv6RelayProxyGrace {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIPv6RelayValidationAndRender(t *testing.T) {
@@ -250,4 +251,33 @@ func TestIPv6RelayRoutesStayInsidePrefixAndAreCleaned(t *testing.T) {
 	if !strings.Contains(strings.Join(calls, "\n"), "route del 2001:db8:1::20/128") {
 		t.Fatalf("relay host route was not cleaned:\n%s", strings.Join(calls, "\n"))
 	}
+}
+
+func TestIPv6RelayDiscoveryBudgetAndSyncDoesNotProbe(t *testing.T) {
+	oldProbe := ipv6RelayProbeFn
+	count := 0
+	ipv6RelayProbeFn = func(string, string) (bool, bool) {
+		count++
+		time.Sleep(200 * time.Millisecond)
+		return true, true
+	}
+	t.Cleanup(func() { ipv6RelayProbeFn = oldProbe })
+	// The normal hook/apply sync path must never call the expensive probe.
+	oldRun := ipv6RelayRun
+	ipv6RelayRun = func(name string, args ...string) (string, error) {
+		if name == "ping6" {
+			t.Fatal("sync path performed an upstream probe")
+		}
+		return "", nil
+	}
+	t.Cleanup(func() { ipv6RelayRun = oldRun })
+	c := &Config{LAN: LAN{Bridge: "br-lan", IPv6RA: true}, WAN: []WAN{{Name: "wan", Device: "wan", Proto: "dhcp", IPv6: true, IPv6Relay: true}}}
+	start := time.Now()
+	if err := ipv6RelaySync(c); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatalf("sync path was blocked by probe work: %v", time.Since(start))
+	}
+	_ = count
 }
