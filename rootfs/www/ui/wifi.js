@@ -66,7 +66,8 @@ registerPage("wireless", "wifi", "无线设置", 10, async ()=>{
   let defaults = [], defaultsError = false;
   try { defaults = (await api("wifi.defaults")).radios||[]; } catch(e){ defaultsError = true; }
   const dl = h("datalist",{id:"wifi-cc"}, COUNTRIES.map(x=>h("option",{value:x})));
-  const glob = card("全局", form(...field("国家码", inText(c.wifi,"country",{list:"wifi-cc",maxlength:2,style:"max-width:100px",placeholder:"PA"}), "两位大写字母")));
+  const countryWarn = c.wifi.radios.length && !c.wifi.country ? h("div",{class:"wifi-warn"},"未设置国家码，5 GHz 可用信道受限，建议在 WiFi 页设置") : null;
+  const glob = card("全局", [countryWarn, form(...field("国家码", inText(c.wifi,"country",{list:"wifi-cc",maxlength:2,style:"max-width:100px",placeholder:"PA"}), "两位大写字母"))]);
   const addRadio = band=>{
     const used = new Set(c.wifi.radios.map(r=>r.phy));
     const p = (defaults||[]).find(x=>x.band===band && !used.has(x.phy));

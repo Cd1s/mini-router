@@ -660,11 +660,24 @@ function browserPOSIXTZ(){
   const map = {"Asia/Shanghai":"CST-8","Asia/Hong_Kong":"HKT-8","Asia/Singapore":"<+08>-8","Asia/Bangkok":"<+07>-7","Asia/Taipei":"CST-8","Asia/Tokyo":"JST-9","Asia/Seoul":"KST-9","Europe/Berlin":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/Paris":"CET-1CEST,M3.5.0,M10.5.0/3","Europe/London":"GMT0BST,M3.5.0,M10.5.0","America/Los_Angeles":"PST8PDT,M3.2.0,M11.1.0","America/New_York":"EST5EDT,M3.2.0,M11.1.0","Australia/Sydney":"AEST-10AEDT,M10.1.0,M4.1.0/3","UTC":"UTC0"};
   return {iana:z, posix:map[z]||""};
 }
+function browserCountryHint(){
+  const byLocale = {CN:"CN",SG:"SG",JP:"JP",US:"US",GB:"GB",DE:"DE",KR:"KR",AU:"AU",CA:"CA",FR:"FR",IN:"IN",MY:"MY",TW:"TW",HK:"HK",TH:"TH",VN:"VN",ID:"ID",PH:"PH",AE:"AE"};
+  const byTZ = {"Asia/Shanghai":"CN", "Asia/Hong_Kong":"HK", "Asia/Taipei":"TW", "Asia/Singapore":"SG", "Asia/Tokyo":"JP", "Asia/Seoul":"KR", "Europe/Berlin":"DE", "Europe/Paris":"FR", "Europe/London":"GB", "America/Los_Angeles":"US", "America/New_York":"US", "America/Toronto":"CA", "Australia/Sydney":"AU", "Asia/Kolkata":"IN", "Asia/Kuala_Lumpur":"MY", "Asia/Bangkok":"TH", "Asia/Ho_Chi_Minh":"VN", "Asia/Jakarta":"ID", "Asia/Manila":"PH", "Asia/Dubai":"AE"};
+  try {
+    const lang = String(navigator.language||"").replace("_","-").split("-");
+    const region = lang.length > 1 ? lang[lang.length-1].toUpperCase() : "";
+    if (byLocale[region]) return {code:byLocale[region], source:"浏览器语言"};
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone||"";
+    if (byTZ[zone]) return {code:byTZ[zone], source:"浏览器时区"};
+  } catch(e) {}
+  return null;
+}
 function renderWizard(factoryPassword, bootstrapPassword, factoryOrigin){
   clearInterval(S.timer); S.wizardApply = false;
   const c=S.cfg, steps=["管理密码","时区","WAN 上网方式","LAN 网段","WiFi 与预览"], root=h("div",{class:"wizard login"}), body=h("div"), foot=h("div",{class:"row"});
   let n=0, detected=null, port=(c.wan[0]&&c.wan[0].device)||"wan", ports=null, portsLoading=false, probing=false, pppoePasswordEntered=false;
-  let wifiDefaults=null, wifiDefaultsLoading=false, wifiSavedRadios=null, wifiSavedCountry="", sameSSID=true, showWifiPassword=false, wifiEnabled=true, admin1="", admin2="";
+  let wifiDefaults=null, wifiDefaultsLoading=false, wifiSavedRadios=null, wifiSavedCountry="", sameSSID=true, showWifiPassword=false, admin1="", admin2="";
+  const countryHint=browserCountryHint(); let wifiCountrySelection=c.wifi.country||countryHint?.code||"", wifiCountryConfirmed=!!c.wifi.country;
   const tz=browserPOSIXTZ(); if(tz.posix)c.system.timezone ||= tz.posix;
   const wan=()=>{ if(!c.wan.length)c.wan.push({name:"wan",device:port,proto:"dhcp",metric:0,peerdns:true,ipv6:true,ipv6_pd:true}); return c.wan[0]; };
   const loadPorts=()=>{ if(ports!==null||portsLoading)return; portsLoading=true; api("net.ports").then(j=>{ports=(j.ports||[]).filter(p=>p.kind==="port");portsLoading=false;draw();}).catch(()=>{ports=[];portsLoading=false;draw();}); };
@@ -704,14 +717,17 @@ function renderWizard(factoryPassword, bootstrapPassword, factoryOrigin){
       radios.slice(0,2).forEach((r,i)=>{r.ssids||=[];r.ssids[0]||=(r.ssids[0]={ssid:i?"MiniRouter-5G":"MiniRouter-2.4G",key_secret:"wifi_key",encryption:"psk2"});});
       if(sameSSID&&radios.length>1&&radios[0].ssids[0])radios[1].ssids[0].ssid=radios[0].ssids[0].ssid;
       const nameInput=(s)=>h("input",{type:"text",value:s.ssid,oninput:e=>{s.ssid=e.target.value;if(sameSSID)radios.forEach(x=>{if(x.ssids[0])x.ssids[0].ssid=e.target.value;});touch();}});
-      const country=h("select",{onchange:e=>{c.wifi.country=e.target.value;touch();}},[["","请选择国家/地区"],["CN","中国"],["SG","新加坡"],["JP","日本"],["US","美国"],["GB","英国"],["DE","德国"]].map(x=>h("option",{value:x[0],selected:(c.wifi.country||"")===x[0]},x[1])));
-      body.append(h("label",{},h("input",{type:"checkbox",checked:wifiEnabled,onchange:e=>{wifiEnabled=e.target.checked;if(wifiEnabled){if(wifiSavedRadios)c.wifi.radios=wifiSavedRadios;if(wifiSavedCountry)c.wifi.country=wifiSavedCountry;}else{wifiSavedRadios=JSON.parse(JSON.stringify(c.wifi.radios||[]));wifiSavedCountry=c.wifi.country||"";c.wifi.radios=[];c.wifi.country="";}touch();draw();}})," 启用 WiFi（稍后也可在无线设置中开启）"),h("div",{class:"hint"},"请选择无线所在国家/地区；不确定时留空，稍后可在无线设置中设置。"),form(...field("国家/地区",country)));
+      const countryOptions=[["","请选择国家/地区"],["CN","中国"],["SG","新加坡"],["JP","日本"],["US","美国"],["GB","英国"],["DE","德国"],["KR","韩国"],["AU","澳大利亚"],["CA","加拿大"],["FR","法国"],["IN","印度"],["MY","马来西亚"],["TW","中国台湾"],["HK","中国香港"],["TH","泰国"],["VN","越南"],["ID","印度尼西亚"],["PH","菲律宾"],["AE","阿联酋"]];
+      const country=h("select",{value:wifiCountrySelection,onchange:e=>{wifiCountrySelection=e.target.value;wifiCountryConfirmed=false;touch();draw();}},countryOptions.map(x=>h("option",{value:x[0],selected:wifiCountrySelection===x[0]},x[1])));
+      const countryHintText=countryHint?"根据"+countryHint.source+"推测为 "+countryHint.code+"，请确认；国家码决定 5 GHz 可用信道和发射规则。":"无法根据浏览器语言或时区推断国家/地区，请选择后确认。";
+      const countryConfirm=h("label",{},h("input",{type:"checkbox",checked:wifiCountryConfirmed&&!!wifiCountrySelection,onchange:e=>{wifiCountryConfirmed=e.target.checked;if(wifiCountryConfirmed)c.wifi.country=wifiCountrySelection;else c.wifi.country="";touch();draw();}})," 我确认国家/地区正确");
+      body.append(h("label",{},h("input",{type:"checkbox",checked:wifiEnabled,onchange:e=>{wifiEnabled=e.target.checked;if(wifiEnabled){if(wifiSavedRadios)c.wifi.radios=wifiSavedRadios;if(wifiSavedCountry)c.wifi.country=wifiSavedCountry;}else{wifiSavedRadios=JSON.parse(JSON.stringify(c.wifi.radios||[]));wifiSavedCountry=c.wifi.country||"";c.wifi.radios=[];c.wifi.country="";}touch();draw();}})," 启用 WiFi（稍后也可在无线设置中开启）"),h("div",{class:"hint"},countryHintText),form(...field("国家/地区",country),countryConfirm));
       if(wifiEnabled&&sameSSID&&radios.length)body.append(card("WiFi",form(...field("网络名称",nameInput(radios[0].ssids[0])))));
       else if(wifiEnabled)radios.slice(0,2).forEach(r=>body.append(card(r.band==="2g"?"2.4 GHz":"5 GHz",form(...field("网络名称",nameInput(r.ssids[0]))))));
       if(wifiEnabled&&radios.length){const r=radios[0],s=r.ssids[0],wifiKey=s.key_secret||"wifi_key";const pass=h("input",{type:showWifiPassword?"text":"password",minLength:8,autocomplete:"new-password",placeholder:"至少 8 位",value:S.secrets[wifiKey]||"",oninput:e=>{if(e.target.value)S.secrets[wifiKey]=e.target.value;else delete S.secrets[wifiKey];touch();}});body.append(form(...field("WiFi 密码",pass),h("label",{},h("input",{type:"checkbox",checked:showWifiPassword,onchange:e=>{showWifiPassword=e.target.checked;draw();}})," 显示密码"),h("label",{},h("input",{type:"checkbox",checked:sameSSID,onchange:e=>{sameSSID=e.target.checked;if(sameSSID&&radios[1]&&radios[1].ssids[0])radios[1].ssids[0].ssid=radios[0].ssids[0].ssid;touch();draw();}})," 两个频段用同一个名字")));}
       body.append(card("应用预览",h("p",{class:"mut"},"点击「预览并应用」后会列出将要改动的内容和风险，确认后生效。")));
     }
-    const next=async()=>{if(n===0&&factoryPassword){if(admin1.length<8)return toast("密码至少需要 8 位",4000);if(admin1!==admin2)return toast("两次输入不一致",4000);if(bootstrapPassword&&admin1!==bootstrapPassword){try{await api("password",{old:bootstrapPassword,new:admin1});}catch(e){return toast(e.message,5000);}}}if(n<steps.length-1){n++;draw();}else{const radios=c.wifi.radios||[], w=c.wan[0],wifiKey=radios[0]?.ssids?.[0]?.key_secret||"wifi_key";if(w&&w.proto==="pppoe"&&!pppoePasswordEntered)return toast("请输入 PPPoE 密码",4000);if(wifiEnabled&&radios.length&&(!S.secrets[wifiKey]||S.secrets[wifiKey].length<8))return toast("WiFi 密码至少需要 8 位",4000);S.wizardApply=true;startApply({config:S.cfg,secrets:S.secrets,base_rev:S.rev});}};
+    const next=async()=>{if(n===0&&factoryPassword){if(admin1.length<8)return toast("密码至少需要 8 位",4000);if(admin1!==admin2)return toast("两次输入不一致",4000);if(bootstrapPassword&&admin1!==bootstrapPassword){try{await api("password",{old:bootstrapPassword,new:admin1});}catch(e){return toast(e.message,5000);}}}if(n<steps.length-1){n++;draw();}else{const radios=c.wifi.radios||[], w=c.wan[0],wifiKey=radios[0]?.ssids?.[0]?.key_secret||"wifi_key";if(w&&w.proto==="pppoe"&&!pppoePasswordEntered)return toast("请输入 PPPoE 密码",4000);if(wifiEnabled&&radios.length&&(!wifiCountrySelection||!wifiCountryConfirmed))return toast("请确认无线所在国家/地区",4000);if(wifiEnabled&&radios.length)c.wifi.country=wifiCountrySelection;if(wifiEnabled&&radios.length&&(!S.secrets[wifiKey]||S.secrets[wifiKey].length<8))return toast("WiFi 密码至少需要 8 位",4000);S.wizardApply=true;startApply({config:S.cfg,secrets:S.secrets,base_rev:S.rev});}};
     const controls=[];if(n)controls.push(h("button",{class:"btn",onclick:()=>{n--;draw();}},"上一步"));controls.push(h("button",{class:"btn p",onclick:next},n<steps.length-1?"下一步":"预览并应用"));foot.replaceChildren(...controls);
     const skip=h("button",{class:"btn sm",onclick:async()=>{if(!confirm("跳过首次设置？之后仍可在各网络页面单独配置。"))return;try{await api("setup.complete",{});location.reload();}catch(e){toast(e.message,5000);}}},"跳过首次设置");
     root.replaceChildren(h("div",{class:"logo"},logo(40),"Mini-Router"),card("首次设置 · "+(n+1)+"/"+steps.length,[h("div",{class:"wizard-steps"},steps.map((x,i)=>h("span",{class:i===n?"act":i<n?"done":""},(i+1)+" "+x))),body],h("span",{class:"row"},skip,foot)),h("div",{class:"mut",style:"text-align:center;margin-top:12px"},"应用后请在确认窗口内检查网络并点击“保留”；未确认会自动回滚。"));

@@ -321,6 +321,14 @@ func TestWifiNoCountryNo80211h(t *testing.T) {
 	}
 }
 
+func TestWifiAllowsMissingCountryForLegacyConfig(t *testing.T) {
+	c := wifiLabConfig(t)
+	c.WiFi.Country = ""
+	if errs := c.Validate(); len(errs) != 0 {
+		t.Fatalf("legacy config with empty country was rejected: %s", strings.Join(errs, "\n"))
+	}
+}
+
 func TestParseStations(t *testing.T) {
 	out := "Station 02:E3:50:10:6A:63 (on phy0-ap0)\n\tinactive time:\t10 ms\n\trx bytes:\t123456789\n\trx packets:\t12\n" +
 		"\ttx bytes:\t987654321\n\ttx packets:\t34\n\ttx retries:\t5\n\ttx failed:\t1\n" +
