@@ -135,8 +135,19 @@ func TestVerifyDeadlineIncludesDialOrderWait(t *testing.T) {
 	c := testConfig(t)
 	c.MultiWAN.DialOrder = []string{"wan2", "wan", "wan3", "wan4"}
 	c.MultiWAN.DialWait = 60
-	if got := time.Until(verifyDeadline(c)); got < 90*time.Second+4*c.MultiWAN.dialWait()-time.Second {
-		t.Fatalf("verify deadline %v does not include dial order waits", got)
+	if got := time.Until(netVerifyDeadline(c, &WAN{Name: "wan4"})); got < 90*time.Second+2*c.MultiWAN.dialWait() {
+		t.Fatalf("later WAN deadline %v does not include its dial-order wait", got)
+	}
+}
+
+func TestNetVerifyDeadlineIsPerWANAndCapped(t *testing.T) {
+	c := testConfig(t)
+	c.MultiWAN.DialOrder = []string{"wan2", "wan", "wan3", "wan4"}
+	c.MultiWAN.DialWait = 120
+	base := time.Until(netVerifyDeadline(c, &c.WAN[1]))
+	later := time.Until(netVerifyDeadline(c, &WAN{Name: "wan4"}))
+	if base > 91*time.Second || later > 301*time.Second {
+		t.Fatalf("unexpected verification deadlines: base=%v later=%v", base, later)
 	}
 }
 

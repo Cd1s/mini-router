@@ -596,6 +596,9 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 		os.Remove(snap)
 		return err
 	}
+	if o.ListSnapshot != "" {
+		clearRestoreListMarker()
+	}
 	if o.BaseRev != "" && configRev() != o.BaseRev {
 		// router.yaml changed between the request and now (mr set, an editor, another client):
 		// installing the candidate would silently undo that change. Nothing is written yet.
@@ -1037,6 +1040,9 @@ func startRevert(snap string) (*pendingApply, bool) {
 
 func armConfirm(snap string, secs int, via, token string) {
 	p := pendingApply{Snapshot: snap, State: statePending, Deadline: time.Now().Unix() + int64(secs), Via: via}
+	if old, err := readPending(); err == nil && old.Snapshot == snap {
+		p.ListSnapshot = old.ListSnapshot
+	}
 	if token != "" {
 		h := sha256.Sum256([]byte(token))
 		p.ConfirmHash = hex.EncodeToString(h[:])
@@ -1093,6 +1099,7 @@ func confirmTransition() confirmResult {
 		commitCfg, _ = loadConfig(cfgPath, secPath)
 	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
+	clearRestoreListMarker()
 	acceptStaged()
 	return confirmResult{ok: true, commitCfg: commitCfg, snapshot: func() string {
 		if p != nil {
@@ -1193,6 +1200,10 @@ func rollbackCommand(args []string, cfgPath, secPath string) error {
 func rollbackAtBoot(cfgPath, secPath string) error {
 	p, err := readPending()
 	if errors.Is(err, fs.ErrNotExist) {
+		if snap := readRestoreListMarker(); snap != "" {
+			undoLists(snap)
+			appendChangeLog("boot: restore list files rolled back before apply marker was written")
+		}
 		return nil
 	}
 	at := bootClock()
@@ -1309,11 +1320,7 @@ func verify(c *Config, restarted []string) []string {
 
 // verifyDeadline is shared by module Verify funcs that wait for something to come up.
 var verifyDeadline = func(cs ...*Config) time.Time {
-	wait := 90 * time.Second
-	if len(cs) > 0 && len(cs[0].MultiWAN.DialOrder) > 1 {
-		wait += time.Duration(len(cs[0].MultiWAN.DialOrder)) * cs[0].MultiWAN.dialWait()
-	}
-	return time.Now().Add(wait)
+	return time.Now().Add(90 * time.Second)
 }
 
 func waitFor(deadline time.Time, ok func() bool) bool {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,16 @@ import (
 var sysNet = "/sys/class/net"
 
 var ipv4AddrsForVerify = ipv4Addrs
+
+var acceptedWANConfigForVerify = func() (*Config, bool) {
+	src := acceptedSources()
+	cfg, ok := src[cfgFile]
+	if !ok {
+		return nil, false
+	}
+	c, err := loadConfig(cfg, src[secFile])
+	return c, err == nil
+}
 
 func sysRead(dev, attr string) string {
 	return strings.TrimSpace(readFile(filepath.Join(sysNet, dev, attr)))
@@ -84,7 +95,6 @@ func netStatus(c *Config, st map[string]any) {
 
 func netVerify(c *Config, restarted []string) []string {
 	var errs []string
-	deadline := verifyDeadline(c)
 	for _, s := range restarted {
 		if s == "mr-network" { // network.sh ran again: did every link take its MTU?
 			errs = append(errs, linkMTUErrors(c)...)
@@ -94,8 +104,16 @@ func netVerify(c *Config, restarted []string) []string {
 		switch {
 		case strings.HasPrefix(s, "mr-pppoe."):
 			w, what = c.WANByName(strings.TrimPrefix(s, "mr-pppoe.")), "PPPoE did not come up"
-			if w != nil && (!carrier(w.LinkDev()) || otherWANUp(c, w.Name)) {
-				continue
+			if w != nil && !wanChangedFromAccepted(c, w.Name) {
+				noCarrier, backup := !carrier(w.LinkDev()), otherWANUp(c, w.Name)
+				if noCarrier || backup {
+					why := "another WAN is online"
+					if noCarrier {
+						why = "the link has no carrier"
+					}
+					logf("net verify: %s PPPoE not required for this apply (%s)", w.Name, why)
+					continue
+				}
 			}
 		case strings.HasPrefix(s, "mr-udhcpc."):
 			w, what = c.WANByName(strings.TrimPrefix(s, "mr-udhcpc.")), "no DHCP lease"
@@ -106,11 +124,51 @@ func netVerify(c *Config, restarted []string) []string {
 				continue
 			}
 		}
-		if w != nil && !waitFor(deadline, func() bool { return hasIPv4(w.Ifname()) }) {
+		if w != nil && !waitFor(netVerifyDeadline(c, w), func() bool { return hasIPv4(w.Ifname()) }) {
 			errs = append(errs, w.Name+": "+what+" before verification deadline")
 		}
 	}
 	return errs
+}
+
+func netVerifyDeadline(c *Config, w *WAN) time.Time {
+	base := verifyDeadline()
+	if w == nil {
+		return base
+	}
+	idx := -1
+	for i, name := range c.MultiWAN.DialOrder {
+		if name == w.Name {
+			idx = i
+			break
+		}
+	}
+	if idx <= 0 {
+		return base
+	}
+	d := base.Add(time.Duration(idx)*c.MultiWAN.dialWait() + dialSettle)
+	cap := time.Now().Add(300 * time.Second)
+	if d.After(cap) {
+		return cap
+	}
+	return d
+}
+
+// wanChangedFromAccepted distinguishes a PPPoE service restarted because its own
+// settings changed from one restarted as a consequence of another network change.
+// Without an accepted baseline, be conservative and verify the WAN strictly.
+func wanChangedFromAccepted(c *Config, name string) bool {
+	old, ok := acceptedWANConfigForVerify()
+	if !ok {
+		return true
+	}
+	nowW, oldW := c.WANByName(name), old.WANByName(name)
+	if nowW == nil || oldW == nil || !reflect.DeepEqual(*nowW, *oldW) {
+		return true
+	}
+	nowSecret, nowErr := c.Secret(nowW.Password)
+	oldSecret, oldErr := old.Secret(oldW.Password)
+	return nowErr != nil || oldErr != nil || nowSecret != oldSecret
 }
 
 // linkMTUErrors: WAN devices that network.sh had to raise above 1500 (e.g. 1508 for a PPPoE mtu of

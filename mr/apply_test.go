@@ -175,6 +175,40 @@ func TestBootRollbackRestoresRestoreListSnapshot(t *testing.T) {
 	}
 }
 
+func TestArmConfirmKeepsRestoreListSnapshot(t *testing.T) {
+	d, cfg, sec := confirmEnv(t)
+	oldSysHistory, oldStart := sysHistoryDir, startDetached
+	sysHistoryDir = HistoryDir
+	startDetached = func(string, ...string) {}
+	t.Cleanup(func() { sysHistoryDir, startDetached = oldSysHistory, oldStart })
+	list := filepath.Join(d, "etc", "mini-router", "dns", "block.list")
+	os.MkdirAll(filepath.Dir(list), 0755)
+	os.WriteFile(list, []byte("old\n"), 0644)
+	configSnap := filepath.Join(HistoryDir, "apply.tar.gz")
+	if err := writeSnapshot(configSnap, []string{cfg}); err != nil {
+		t.Fatal(err)
+	}
+	listSnap := filepath.Join(HistoryDir, "restore-lists.tar.gz")
+	if err := writeSnapshot(listSnap, []string{list}); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(list, []byte("unconfirmed\n"), 0644)
+	if err := claimPending(pendingApply{Snapshot: configSnap, ListSnapshot: listSnap, State: stateApplying, Via: "restore"}); err != nil {
+		t.Fatal(err)
+	}
+	armConfirm(configSnap, 120, "restore", "")
+	p, err := readPending()
+	if err != nil || p.ListSnapshot != listSnap {
+		t.Fatalf("armConfirm dropped list snapshot: %+v, %v", p, err)
+	}
+	if err := rollbackAtBoot(cfg, sec); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, list); got != "old\n" {
+		t.Fatalf("confirm-window rollback left restore list: %q", got)
+	}
+}
+
 func TestBootRollbackBadMarker(t *testing.T) {
 	d, cfg, sec := confirmEnv(t)
 	f := filepath.Join(d, "gen.conf")

@@ -59,6 +59,36 @@ var (
 	backupListDirs = map[string]string{"dns": "/etc/mini-router/dns", "proxy": "/etc/mini-router/proxy"}
 )
 
+func restoreListMarkerPath() string { return filepath.Join(sysHistoryDir, "restore-lists.pending") }
+
+func writeRestoreListMarker(snap string) error {
+	b, err := json.Marshal(map[string]string{"snapshot": snap})
+	if err != nil {
+		return err
+	}
+	return writeDurable(restoreListMarkerPath(), b, 0600)
+}
+
+func readRestoreListMarker() string {
+	b, err := os.ReadFile(restoreListMarkerPath())
+	if err != nil {
+		return ""
+	}
+	var m struct {
+		Snapshot string `json:"snapshot"`
+	}
+	if json.Unmarshal(b, &m) != nil || m.Snapshot == "" {
+		return ""
+	}
+	return m.Snapshot
+}
+
+func clearRestoreListMarker() {
+	if os.Remove(restoreListMarkerPath()) == nil {
+		syncDir(filepath.Dir(restoreListMarkerPath()))
+	}
+}
+
 var reBackupFile = lazyRegexp(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
 func validListName(n string) bool { return reBackupFile.MatchString(n) && !strings.Contains(n, "..") }
@@ -307,6 +337,7 @@ func undoLists(snap string) {
 		return
 	}
 	logf("restore: list files put back from %s", snap)
+	clearRestoreListMarker()
 }
 
 // restoreStage installs the list files of rs (after snapshotting the current ones) and validates +
@@ -339,8 +370,13 @@ func restoreStage(rs *restoreSet) (y []byte, sec map[string]string, snap string,
 	sort.Strings(changed)
 	if len(changed) > 0 {
 		snap = time.Now().Format("20060102-150405") + "-restore-lists.tar.gz"
-		if err := writeSnapshot(filepath.Join(sysHistoryDir, snap), changed); err != nil {
+		snapPath := filepath.Join(sysHistoryDir, snap)
+		if err := writeSnapshot(snapPath, changed); err != nil {
 			return nil, nil, "", nil, fmt.Errorf("snapshot of the list files: %w", err)
+		}
+		if err := writeRestoreListMarker(snap); err != nil {
+			os.Remove(snapPath)
+			return nil, nil, "", nil, fmt.Errorf("marker for list snapshot: %w", err)
 		}
 		if sysHistoryDir == HistoryDir {
 			live, _ := loadConfig(sysConfigPath, sysSecretsPath)

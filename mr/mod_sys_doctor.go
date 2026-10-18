@@ -445,18 +445,38 @@ func docIPv6(c *Config, e *docEnv) []docFinding {
 		out = append(out, docFinding{ID: "ipv6.route", Sev: "warn", Title: "IPv6", Detail: "no IPv6 default route although " + strings.Join(v6, ", ") + " has ipv6 on: IPv6 destinations are unreachable",
 			Fix: "mr routes; rc-service mr-dhcpcd status (router advertisements from the ISP?); grep dhcpcd /var/log/messages | tail"})
 	}
-	if len(pd) == 0 || !c.LAN.IPv6RA {
+	if len(pd) == 0 {
 		if len(out) > 0 {
 			return out
 		}
 		return []docFinding{{Sev: "skip", Title: "IPv6", Detail: "no WAN that is up asks for a delegated prefix (ipv6_pd) for the LAN (lan.ipv6_ra)"}}
 	}
-	as := e.global6(c.LAN.Bridge)
-	if len(as) == 0 {
-		return append(out, docFinding{Sev: "warn", Title: "IPv6", Detail: fmt.Sprintf("%s has no global IPv6 address: no delegated prefix from %s", c.LAN.Bridge, strings.Join(pd, ", ")),
-			Fix: "rc-service mr-dhcpcd status; grep dhcpcd /var/log/messages | tail; some ISPs need a reconnect: rc-service mr-pppoe." + pd[0] + " restart"})
+	if c.LAN.IPv6RA {
+		as := e.global6(c.LAN.Bridge)
+		if len(as) == 0 {
+			out = append(out, docFinding{ID: "ipv6", Sev: "warn", Title: "IPv6", Detail: fmt.Sprintf("%s has no global IPv6 address: no delegated prefix from %s", c.LAN.Bridge, strings.Join(pd, ", ")),
+				Fix: "rc-service mr-dhcpcd status; grep dhcpcd /var/log/messages | tail; some ISPs need a reconnect: rc-service mr-pppoe." + pd[0] + " restart"})
+		} else {
+			out = append(out, docOK("IPv6", fmt.Sprintf("%s has %s", c.LAN.Bridge, as[0])))
+		}
 	}
-	return append(out, docOK("IPv6", fmt.Sprintf("%s has %s", c.LAN.Bridge, as[0])))
+	for _, n := range c.Networks {
+		if !n.IPv6RA {
+			continue
+		}
+		as := e.global6(n.BridgeName())
+		if len(as) == 0 {
+			out = append(out, docFinding{ID: "ipv6." + n.Name, Sev: "warn", Title: "IPv6",
+				Detail: fmt.Sprintf("%s has no global IPv6 address: its RA network has no delegated /64", n.BridgeName()),
+				Fix:    "check the ISP delegated prefix size; rc-service mr-dhcpcd status; grep dhcpcd /var/log/messages | tail"})
+		} else {
+			out = append(out, docOK("IPv6", fmt.Sprintf("%s has %s", n.BridgeName(), as[0])))
+		}
+	}
+	if len(out) == 0 {
+		return []docFinding{{Sev: "skip", Title: "IPv6", Detail: "IPv6 RA is disabled on every LAN network"}}
+	}
+	return out
 }
 
 var reNftPackets = lazyRegexp(`counter packets ([0-9]+)`)

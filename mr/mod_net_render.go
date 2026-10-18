@@ -150,18 +150,19 @@ func renderDhcpcd(c *Config) string {
 		// remove the IPv6 source route (hookDhcpcd)
 		fmt.Fprintf(&b, "  # mr: ipv6_srcroute=%t\n", w.SrcRoute)
 		if w.IPv6PD {
-			var assigns []string
-			slaID := 0
+			assigns := []string{fmt.Sprintf("%s/0/64/1", c.LAN.Bridge)}
 			for _, ln := range c.LANNets() {
-				if !ln.IPv6RA {
+				if ln.Name == "lan" || !ln.IPv6RA {
 					continue
 				}
-				assigns = append(assigns, fmt.Sprintf("%s/%d/64/1", ln.Bridge, slaID))
-				slaID++
+				for idx, n := range c.Networks {
+					if n.BridgeName() == ln.Bridge {
+						assigns = append(assigns, fmt.Sprintf("%s/%d/64/1", ln.Bridge, idx+1))
+						break
+					}
+				}
 			}
-			if len(assigns) > 0 {
-				fmt.Fprintf(&b, "  ia_pd %d %s\n", i+1, strings.Join(assigns, " "))
-			}
+			fmt.Fprintf(&b, "  ia_pd %d %s\n", i+1, strings.Join(assigns, " "))
 		}
 	}
 	return b.String()
