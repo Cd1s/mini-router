@@ -456,8 +456,9 @@ The device must have Wake-on-LAN enabled (BIOS / NIC driver) and usually needs a
 Nothing resident: the checks run when asked, events are appended by the code that sees them, and notifications go out
 from short `mr` runs.
 
-**`mr doctor`** (`sys.doctor`, web UI 状态 › 体检与事件 › 体检) — a fixed list of read-only
-checks, each finding `ok | warn | risk | skip` with a one-line fix: `config` (validates, guard kept, edits not applied),
+**`mr doctor`** (`sys.doctor`, web UI 状态 › 体检与事件 › 体检) — a fixed list of checks that normally only read state; when a PPPoE
+WAN has no IPv4 address it may send a stateless DHCP DISCOVER on the physical port (never a REQUEST) and cache the result for 10 minutes;
+each finding is `ok | warn | risk | skip` with a one-line fix: `config` (validates, guard kept, edits not applied),
 `pending` (a change waiting for confirmation, a failed boot rollback), `wan` (IPv4 address, multi-WAN health, CGNAT /
 private address behind port forwards, a WAN address inside a LAN subnet — a hotel network on the same range), `routes`
 (main default route, every WAN's table), `dns` (an A lookup through
@@ -465,8 +466,9 @@ dnsmasq on 127.0.0.1: the first NTP host name), `ipv6` (delegated prefix on the 
 hardware flag, PPE entries), `services` (every service the config wants: installed and running), `wifi` (radios / BSSes
 up), `clock` (after the image's build time, NTP synced within 30 min), `storage` (config flash, `/tmp`), `memory`,
 `conntrack` (75 / 90 %), `temp` (90 / 105 °C), `crash` (pstore records, oops / BUG / OOM / lockup lines in this boot's
-kernel log), `ssh` (password logins). The only programs run are `ip -j`, `nft list flowtable inet mr ft` and
-`rc-service NAME status`; the rest is `/proc`, `/sys`, `/run` and the config. The result is kept in
+kernel log), `ssh` (password logins). Besides the bounded DHCP probe, the programs run are `ip -j`, `nft list flowtable inet mr ft` and
+`rc-service NAME status`; the rest is `/proc`, `/sys`, `/run` and the config. Probe state is kept in
+`/run/mini-router/doctor-dhcp.json` (tmpfs, at most one probe per WAN every 10 minutes). The result is kept in
 `/run/mini-router/doctor.json`; `mr status` has its problems (`doctor: {time, risk, warn, ok, problems[]}`), the overview
 shows them as 问题 (N).
 

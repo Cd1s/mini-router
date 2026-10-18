@@ -32,6 +32,14 @@ func TestParseDHCPOffer(t *testing.T) {
 	}
 }
 
+func TestDHCPDiscoverUsesPortableIPv4Flags(t *testing.T) {
+	p := dhcpDiscover(1, net.HardwareAddr{0, 1, 2, 3, 4, 5})
+	f := dhcpEthernetFrame(p, net.HardwareAddr{0, 1, 2, 3, 4, 5})
+	if f[20] != 0 || f[21] != 0 {
+		t.Fatalf("IPv4 flags set reserved bits: %#x", f[20:22])
+	}
+}
+
 func TestParseRouterAdvertisement(t *testing.T) {
 	b := make([]byte, 16+32)
 	b[0], b[5] = 134, 0xc0

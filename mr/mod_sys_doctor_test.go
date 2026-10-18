@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -243,6 +244,131 @@ func TestDoctorFindings(t *testing.T) {
 	}
 	if !strings.HasPrefix(strings.Split(txt, "\n")[1], "RISK") {
 		t.Errorf("problems not first:\n%s", txt)
+	}
+}
+
+func TestDoctorRequiresPublicIPGiveUpIsRisk(t *testing.T) {
+	tempState(t)
+	c := testConfig(t)
+	c.WAN[0].RequirePublicIP = true
+	e := fakeDocEnv()
+	e.addrs4 = func(dev string) []string {
+		if dev == c.WAN[0].Ifname() {
+			return []string{"100.64.3.4/32"}
+		}
+		return []string{"198.51.100.20/32"}
+	}
+	e.health = func(*Config) map[string]string { return map[string]string{"wan": "down"} }
+	if err := os.MkdirAll(filepath.Dir(requirePublicFile), 0700); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(map[string]requirePublicRecord{"wan": {Attempts: requirePublicMax, Risk: true}})
+	if err := os.WriteFile(requirePublicFile, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	f := docFind(runDoctor(c, e), "wan.wan")
+	if f.Sev != "risk" || !strings.Contains(f.Detail, "stopped") {
+		t.Fatalf("give-up state: %+v", f)
+	}
+}
+
+func TestDoctorHintsDHCPLineAfterPPPoEOutage(t *testing.T) {
+	c := testConfig(t)
+	e := fakeDocEnv()
+	e.now = time.Unix(1_800_000_600, 0)
+	e.addrs4 = func(dev string) []string {
+		if dev == c.WAN[1].Ifname() {
+			return []string{"198.51.100.20/32"}
+		}
+		return nil
+	}
+	e.dhcpOffer = func(port string) bool { return port == c.WAN[0].LinkDev() }
+	d := t.TempDir() + "/doctor-dhcp.json"
+	old := doctorDHCPStateFile
+	doctorDHCPStateFile = d
+	t.Cleanup(func() { doctorDHCPStateFile = old })
+	b, _ := json.Marshal(map[string]doctorDHCPRecord{"wan": {FirstSeen: e.now.Add(-3 * time.Minute).Unix()}})
+	if err := os.WriteFile(d, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	f := docFind(runDoctor(c, e), "wan.wan")
+	if !strings.Contains(f.Detail, "switched to DHCP") || !strings.Contains(f.Fix, "detect") {
+		t.Fatalf("DHCP switch hint: %+v", f)
+	}
+}
+
+func TestDoctorDHCPProbeIsThrottledAndClearedWhenUp(t *testing.T) {
+	c := testConfig(t)
+	e := fakeDocEnv()
+	e.now = time.Unix(1_800_000_600, 0)
+	e.dhcpOffer = func(string) bool { return true }
+	d := t.TempDir() + "/doctor-dhcp.json"
+	old := doctorDHCPStateFile
+	doctorDHCPStateFile = d
+	t.Cleanup(func() { doctorDHCPStateFile = old })
+	b, _ := json.Marshal(map[string]doctorDHCPRecord{"wan": {FirstSeen: e.now.Add(-3 * time.Minute).Unix()}})
+	if err := os.WriteFile(d, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	e.dhcpOffer = func(string) bool { calls++; return true }
+	w := c.WAN[0]
+	if !docDHCPHint(w, e, e.now.Unix(), false) || calls != 1 {
+		t.Fatalf("first probe: hint/calls=%v/%d", true, calls)
+	}
+	if !docDHCPHint(w, e, e.now.Add(5*time.Minute).Unix(), false) || calls != 1 {
+		t.Fatalf("cooldown ignored: calls=%d", calls)
+	}
+	docDHCPHint(w, e, e.now.Add(5*time.Minute).Unix(), true)
+	if _, err := os.Stat(d); !os.IsNotExist(err) {
+		t.Fatalf("up WAN did not clear DHCP state: %v", err)
+	}
+}
+
+func TestDoctorDHCPNegativeProbeIsThrottled(t *testing.T) {
+	c := testConfig(t)
+	e := fakeDocEnv()
+	e.now = time.Unix(1_800_000_600, 0)
+	d := t.TempDir() + "/doctor-dhcp.json"
+	old := doctorDHCPStateFile
+	doctorDHCPStateFile = d
+	t.Cleanup(func() { doctorDHCPStateFile = old })
+	b, _ := json.Marshal(map[string]doctorDHCPRecord{"wan": {FirstSeen: e.now.Add(-3 * time.Minute).Unix()}})
+	if err := os.WriteFile(d, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	e.dhcpOffer = func(string) bool { calls++; return false }
+	w := c.WAN[0]
+	for i := 0; i < 3; i++ {
+		if docDHCPHint(w, e, e.now.Add(time.Duration(i)*time.Minute).Unix(), false) {
+			t.Fatal("negative DHCP probe reported an offer")
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("negative result was probed %d times, want 1", calls)
+	}
+}
+
+func TestDoctorIgnoresStalePublicRiskWhenGuardDisabled(t *testing.T) {
+	tempState(t)
+	c := testConfig(t)
+	c.WAN[0].RequirePublicIP = false
+	e := fakeDocEnv()
+	e.addrs4 = func(dev string) []string {
+		if dev == c.WAN[0].Ifname() {
+			return []string{"100.64.3.4/32"}
+		}
+		return []string{"198.51.100.20/32"}
+	}
+	e.health = func(*Config) map[string]string { return map[string]string{"wan": "down"} }
+	b, _ := json.Marshal(map[string]requirePublicRecord{"wan": {Attempts: requirePublicMax, Risk: true}})
+	if err := os.WriteFile(requirePublicFile, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	f := docFind(runDoctor(c, e), "wan.wan")
+	if f.Sev == "risk" || strings.Contains(f.Detail, "automatic public-IP redial stopped") {
+		t.Fatalf("disabled guard kept stale risk: %+v", f)
 	}
 }
 
