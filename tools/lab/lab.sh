@@ -419,6 +419,15 @@ isp_cmd(){
       # shellcheck disable=SC2086
       run_ns "$n" dnsmasq $dns --interface="$dev" --bind-interfaces --dhcp-range="$pool,255.255.255.0,1h" \
         --dhcp-option=3,"$subnet.$gw" --dhcp-option=6,"$subnet.$gw"
+      if [ "$v6" != none ]; then
+        # DHCP modem mode can also advertise a single on-link /64.  It deliberately has
+        # no DHCPv6-PD service, which is the IPv6 relay scenario.
+        run_ns "$n" ip -6 addr add "2001:db8:$id:$wan::1/64" dev "$dev"
+        run_ns "$n" ip -6 addr add "fe80::1/64" dev "$dev"
+        printf 'interface %s { AdvSendAdvert on; MinRtrAdvInterval 3; MaxRtrAdvInterval 10; AdvManagedFlag off; AdvOtherConfigFlag off; prefix 2001:db8:%s:%s::/64 { AdvOnLink on; AdvAutonomous on; }; };\n' \
+          "$dev" "$id" "$wan" > "$d/radvd.conf"
+        run_ns "$n" radvd -C "$d/radvd.conf" -p "$d/radvd.pid" -m logfile -l "$d/radvd.log"
+      fi
       [ "$subnet" = 192.168.1 ] && { (cd "$d" && exec ip netns exec "$n" python3 -m http.server 80 --bind "$subnet.$gw" >/dev/null 2>&1) & echo $! > "$d/http.pid"; }
       ;;
     static)

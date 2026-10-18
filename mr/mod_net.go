@@ -44,6 +44,7 @@ type WAN struct {
 	PeerDNS            bool     `yaml:"peerdns"`
 	IPv6               bool     `yaml:"ipv6"`
 	IPv6PD             bool     `yaml:"ipv6_pd"`                         // request a delegated prefix and put it on the LAN
+	IPv6Relay          bool     `yaml:"ipv6_relay,omitempty"`            // relay a SLAAC /64 to the LAN when no PD exists
 	SrcRoute           bool     `yaml:"ipv6_srcroute"`                   // IPv6 traffic sourced from this WAN's prefix leaves via this WAN
 	RequirePublicIP    bool     `yaml:"require_public_ip,omitempty"`     // PPPoE: redial while the assigned IPv4 is private/CGNAT
 	RequirePublicIPGap int      `yaml:"require_public_ip_gap,omitempty"` // seconds between automatic redials (default 180)
@@ -306,7 +307,9 @@ func init() {
 		},
 		Commands: map[string]func(c *Config, args []string) error{
 			"wan": wanCommand,
+			"net": netCommand,
 		},
+		Cron: ipv6RelayCronLine,
 	})
 }
 
@@ -638,6 +641,12 @@ func netValidateWAN(c *Config, v *Validator, ports, vlans map[string]string) {
 		}
 		if w.RequirePublicIPGap < 0 || w.RequirePublicIPGap > 86400 {
 			v.Add("%s.require_public_ip_gap: 1-86400 seconds (0 = default 180)", p)
+		}
+		if w.IPv6Relay && !w.IPv6 {
+			v.Add("%s.ipv6_relay: requires ipv6: true", p)
+		}
+		if w.IPv6Relay && !c.LAN.IPv6RA {
+			v.Add("%s.ipv6_relay: requires lan.ipv6_ra: true", p)
 		}
 		if w.Proto != "static" && (w.IPv4 != "" || w.Gateway != "" || len(w.DNS) > 0) {
 			v.Add("%s: ipv4/gateway/dns are only for proto static", p)

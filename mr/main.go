@@ -52,6 +52,7 @@ const usage = `mr — mini-router control
   mr version
 
 module commands (JSON output unless noted):
+  mr net ipv6-relay --cron         refresh SLAAC IPv6 relay neighbours (crond / WAN hooks)
   mr wan status | health      WAN state; multi-WAN health
                               | dial-wait WAN | dial-restore   multiwan.dial_order (pppoe-dial, pppd hook, crond)
   mr wifi status | stations | survey | health | scan PHY | kick MAC [IFNAME]

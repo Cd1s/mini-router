@@ -155,6 +155,7 @@ wan:
       address: 192.168.1.1   # 物理口别名 + /32 路由，并只对该地址做 masquerade
     ipv6: true                # dhcpcd：RA / DHCPv6
     ipv6_pd: true             # 申请前缀放到 LAN
+    ipv6_relay: false         # 无 PD 时把 WAN SLAAC /64 通告到 LAN，并代理 LAN 邻居
     ipv6_srcroute: false      # 源地址是本线路前缀的 IPv6 从本线路走（多线必开）
     require_public_ip: true   # PPPoE 被 ISP 放入私网/CGNAT 时自动重拨这一条线
     require_public_ip_gap: 180 # 自动重拨冷却秒数（默认 180）
@@ -182,6 +183,16 @@ LAN bridge 设置 proxy ARP；LAN 到这个单一网关地址做 masquerade。`m
 同网段并建议把 LAN 改到其它网段。静态 WAN 与 LAN 网段重叠会被校验拒绝。桥接 PPPoE 可用 `modem.address`
 （仅支持 PPPoE，地址必须是私网 IPv4）；
 例如 `192.168.1.1` 会在物理口加 `192.168.1.2/32` 和主机路由，LAN 可访问光猫管理页（面板入口留待后续）。
+`ipv6_relay` 默认关闭，且需要 `ipv6: true` 与 `lan.ipv6_ra: true`。它适用于上游只有 SLAAC `/64`、没有 DHCPv6-PD 的线路：
+dhcpcd 事件和 crond 每分钟扫描 WAN 的全局 `/64`，给 `br-lan` 放一个稳定的 `::1` 地址，让现有 dnsmasq
+`constructor:br-lan` RA 渲染通告该前缀；同时按 LAN 邻居表逐地址维护 `ip -6 neigh ... proxy`。PD 文件出现时
+relay 立即让位，PD 消失后下一次事件恢复。WAN 变化、关闭开关或删除 WAN 会删除代理项和 LAN relay 地址。
+这不是 NAT66，LAN 主机仍使用运营商的全局地址；防火墙只放行动态 relay 前缀从 relay WAN 到 LAN 的转发。
+
+实现方案比较：Linux `proxy_ndp` 本身只提供逐地址的邻居代理，需要持续跟踪动态主机；`ndppd` 可以常驻并按前缀响应，Alpine
+community 在部分 Alpine 版本有包（当前 v3.24 索引未提供；安装包体积随版本变化，需以目标索引为准），并会给默认镜像增加一个常驻进程和运行时内存。这里采用现有 dhcpcd 钩子加 crond 的扫描，
+没有空闲常驻进程，默认也不启用 crond relay 行；这是小内存路由器的优先方案。扫描只在配置开启时生成 `mr net ipv6-relay --cron`。
+
 没有任何开了 `ipv6` 的 DHCP / 静态 WAN 落在其上的 WAN 接口（`ipv6: false`，或只跑 PPPoE）不收 RA：`network.sh` 把它的
 `accept_ra` 设为 0，并清掉留在上面的全局 IPv6 地址和 RA 默认路由（dhcpcd 停止管理接口时不删自己的地址）。
 网页上删除 WAN、关闭它的 `ipv6` / `ipv6_pd` 时，会列出引用它、否则无法保存的设置（策略路由、多线路权重与拨号顺序、

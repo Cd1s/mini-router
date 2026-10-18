@@ -89,7 +89,7 @@ grep -qx 'crond' "$L/etc/mini-router/gen/services" || fail "lab: crond not enabl
 grep -qx 'crond' "$H/etc/mini-router/gen/services" || fail "home: crond not enabled"
 grep -qx "export TZ='CET-1CEST,M3.5.0,M10.5.0/3'" "$L/etc/conf.d/crond" || fail "lab: crond zone"
 block=$(sed -n '/^# --- begin mini-router schedules/,/^# --- end mini-router schedules/p' "$C" | grep -v '^#')
-[ "$(echo "$block" | wc -l)" = 12 ] || fail "lab crontab: want 5 jobs + the DDNS check + the certificate check + the adblock check + the public-IP, wifi, watchcat and presence ticks, got: $block"
+[ "$(echo "$block" | wc -l)" = 13 ] || fail "lab crontab: want 5 jobs + the DDNS check + the certificate check + the adblock check + the public-IP, IPv6 relay, wifi, watchcat and presence ticks, got: $block"
 echo "$block" | grep -qE '^[0-9]+ \* \* \* \* /usr/sbin/mr dns adblock update --cron$' || fail "lab crontab: hourly adblock check missing"
 echo "$block" | while read -r m hr d mo w cmd; do
 	if [ "$cmd" = "/usr/sbin/mr ddns sync --cron" ]; then
@@ -110,6 +110,10 @@ echo "$block" | while read -r m hr d mo w cmd; do
 	fi
 	if [ "$cmd" = "/usr/sbin/mr wifi tick" ] || [ "$cmd" = "/usr/sbin/mr watchcat tick" ] || [ "$cmd" = "/usr/sbin/mr presence tick" ]; then # per-minute ticks
 		[ "$m $hr $d $mo $w" = "* * * * *" ] || fail "wifi tick time spec: $m $hr $d $mo $w"
+		continue
+	fi
+	if [ "$cmd" = "/usr/sbin/mr net ipv6-relay --cron" ]; then
+		[ "$m $hr $d $mo $w" = "* * * * *" ] || fail "IPv6 relay time spec: $m $hr $d $mo $w"
 		continue
 	fi
 	echo "$m $hr $d $mo $w" | grep -Eq '^[0-9]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$' || fail "bad time spec: $m $hr $d $mo $w"

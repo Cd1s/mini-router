@@ -43,7 +43,8 @@ ip -br link | grep -c mrlab                     # must print 0
 ```
 
 Scenarios (TAP output, log in `/tmp/mrlab<ID>-<name>.log`): `$L run $ID 01-fresh-dhcp`,
-`02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`.
+`02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`,
+`06-dhcp-slaac-relay` (DHCP WAN with `v6=slaac`, no PD, then relay enabled and disabled).
 Each starts with `reset` and removes its lab when it ends (passed, failed or interrupted;
 `MRLAB_KEEP=1` leaves it up for inspection), so give every parallel scenario its own ID. A failed
 setup step prints `Bail out!` and stops the scenario.
@@ -106,7 +107,7 @@ namespace replaces with lab directories. Go comes from `/etc/profile.d/buildtool
 
 | `isp <id> <wan> ...` | ISP side | router WAN |
 | --- | --- | --- |
-| `dhcp [--subnet 192.168.1.0/24]` | dnsmasq DHCP + DNS on `10.<id>.<wan>.1/24`; with `--subnet 192.168.1.0/24` it also serves a modem page on 192.168.1.1 | DHCP |
+| `dhcp [v6=slaac] [--subnet 192.168.1.0/24]` | dnsmasq DHCP + DNS on `10.<id>.<wan>.1/24`; `v6=slaac` additionally advertises `2001:db8:<id>:<wan>::/64` with radvd and provides no PD; with `--subnet 192.168.1.0/24` it also serves a modem page on 192.168.1.1 | DHCP |
 | `static` | `10.<id>.<wan>.1/24` + DNS; `install --wan-proto static` uses `.2/24` | static |
 | `pppoe [v6=slaac\|pd] [--badpass] [nopado] [--cgnat]` | pppoe-server, CHAP `lab`/`labpass` (`--badpass`: the server expects another password; `nopado`: no server at all; `--cgnat`: 100.64.<id>.x). After IPv6CP the ISP end is `2001:db8:<id>:<wan>::1/64`; `v6=slaac` adds RAs for that /64, `v6=pd` also kea DHCPv6 delegating /60s from `2001:db8:<id>:<wan>00::/56` | PPPoE |
 | `down` | link down | — |

@@ -321,6 +321,9 @@ func renderDnsmasq(c *Config) string {
 		}
 		if n.ra {
 			ra = true
+			if n.bridge == c.LAN.Bridge && ipv6RelayEnabled(c) {
+				b.WriteString("# IPv6 SLAAC relay prefixes are supplied dynamically on br-lan\n")
+			}
 			renderRA(&b, n.bridge, n.ipv6)
 		}
 	}
