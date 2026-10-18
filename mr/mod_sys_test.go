@@ -487,6 +487,20 @@ func TestSysBackupRestore(t *testing.T) {
 	if !strings.HasSuffix(snap, "-restore-lists.tar.gz") || len(y) == 0 || sec[pwSecretKey] != "pbkdf2-sha256$1$aa$bb" || sec["pppoe_password"] != "live-pw" {
 		t.Errorf("stage: snap %q, secrets %v", snap, sec)
 	}
+	if _, err := os.Stat(restoreListMarkerPath()); err != nil {
+		t.Fatalf("restore list marker missing before apply claims its pending marker: %v", err)
+	}
+	// A power loss in the small window before apply-job claims confirm-pending must
+	// still undo the newly staged list files.
+	oldConfirm := ConfirmFile
+	ConfirmFile = filepath.Join(d, "confirm-pending")
+	if err := rollbackAtBoot("/nonexistent", "/nonexistent"); err != nil {
+		t.Fatal(err)
+	}
+	ConfirmFile = oldConfirm
+	if b, _ := os.ReadFile(dnsList); string(b) != "changed.example\n" {
+		t.Errorf("early restore marker did not undo list: %q", b)
+	}
 	undoLists(snap) // the snapshot is in the core format: restore() puts the list back
 	if b, _ := os.ReadFile(dnsList); string(b) != "changed.example\n" {
 		t.Errorf("undo: %q", b)

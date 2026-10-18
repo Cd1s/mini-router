@@ -59,6 +59,36 @@ var (
 	backupListDirs = map[string]string{"dns": "/etc/mini-router/dns", "proxy": "/etc/mini-router/proxy"}
 )
 
+func restoreListMarkerPath() string { return filepath.Join(sysHistoryDir, "restore-lists.pending") }
+
+func writeRestoreListMarker(snap string) error {
+	b, err := json.Marshal(map[string]string{"snapshot": snap})
+	if err != nil {
+		return err
+	}
+	return writeDurable(restoreListMarkerPath(), b, 0600)
+}
+
+func readRestoreListMarker() string {
+	b, err := os.ReadFile(restoreListMarkerPath())
+	if err != nil {
+		return ""
+	}
+	var m struct {
+		Snapshot string `json:"snapshot"`
+	}
+	if json.Unmarshal(b, &m) != nil || m.Snapshot == "" {
+		return ""
+	}
+	return m.Snapshot
+}
+
+func clearRestoreListMarker() {
+	if os.Remove(restoreListMarkerPath()) == nil {
+		syncDir(filepath.Dir(restoreListMarkerPath()))
+	}
+}
+
 var reBackupFile = lazyRegexp(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
 func validListName(n string) bool { return reBackupFile.MatchString(n) && !strings.Contains(n, "..") }
@@ -307,6 +337,17 @@ func undoLists(snap string) {
 		return
 	}
 	logf("restore: list files put back from %s", snap)
+	clearRestoreListMarker()
+}
+
+// undoRestoreLists is used by the legacy watcher. Once the durable rollback path
+// has restored the lists and cleared the marker, the watcher must not overwrite
+// files that the user may have edited afterward.
+func undoRestoreLists(snap string) {
+	if readRestoreListMarker() == "" {
+		return
+	}
+	undoLists(snap)
 }
 
 // restoreStage installs the list files of rs (after snapshotting the current ones) and validates +
@@ -339,8 +380,13 @@ func restoreStage(rs *restoreSet) (y []byte, sec map[string]string, snap string,
 	sort.Strings(changed)
 	if len(changed) > 0 {
 		snap = time.Now().Format("20060102-150405") + "-restore-lists.tar.gz"
-		if err := writeSnapshot(filepath.Join(sysHistoryDir, snap), changed); err != nil {
+		snapPath := filepath.Join(sysHistoryDir, snap)
+		if err := writeSnapshot(snapPath, changed); err != nil {
 			return nil, nil, "", nil, fmt.Errorf("snapshot of the list files: %w", err)
+		}
+		if err := writeRestoreListMarker(snap); err != nil {
+			os.Remove(snapPath)
+			return nil, nil, "", nil, fmt.Errorf("marker for list snapshot: %w", err)
 		}
 		if sysHistoryDir == HistoryDir {
 			live, _ := loadConfig(sysConfigPath, sysSecretsPath)
@@ -406,7 +452,7 @@ func startRestore(rs *restoreSet, confirmSecs int) (map[string]any, []string, er
 		undoLists(snap)
 		return nil, nil, err
 	}
-	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: "restore"})
+	writeJob(jobState{State: "running", Started: time.Now().Unix(), Confirm: confirmSecs, Via: "restore", ListSnapshot: snap})
 	lists := 0
 	if snap != "" {
 		lists = len(rs.lists)
@@ -436,7 +482,7 @@ func sysRestoreWatch(secs int, snap string, logStart int64) error {
 	}
 	switch readJob().State {
 	case "failed":
-		undoLists(snap)
+		undoRestoreLists(snap)
 		appendChangeLog("restore failed: list files put back from " + snap)
 		return nil
 	case "ok":
@@ -458,7 +504,7 @@ func sysRestoreWatch(secs int, snap string, logStart int64) error {
 	tail, _ := io.ReadAll(io.LimitReader(f, 1<<20))
 	for _, l := range strings.Split(string(tail), "\n") {
 		if strings.Contains(l, "failed and rolled back") || strings.Contains(l, "mr rollback: ") {
-			undoLists(snap)
+			undoRestoreLists(snap)
 			appendChangeLog("restore rolled back: list files put back from " + snap)
 			break
 		}

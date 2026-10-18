@@ -11,7 +11,7 @@
    - 树莓派：**Raspberry Pi** 镜像（aarch64）。
 2. 从 U 盘 / SD 卡启动，root 登录（无密码），运行 `setup-alpine`：
    - 键盘、主机名随意；网络先选一个能上网的口用 DHCP（装完 mini-router 会接管网口）；
-   - 时区、镜像源按提示；SSH 选 `openssh` 或 `dropbear` 都行；
+   - 时区、镜像源按提示；SSH 选 `openssh` 或 `dropbear` 都行（OpenSSH 由 Alpine 自己管理，`mr` 只管理 dropbear）；
    - **磁盘选 `sys`**（装到硬盘 / SD 卡）。`diskless` / `data` 模式下 `/etc` 的改动要 `lbu commit` 才能保存，
      mini-router 每次改配置都写 `/etc/mini-router`，不推荐。
 3. 重启，确认能上网：`ping -c3 alpinelinux.org`。

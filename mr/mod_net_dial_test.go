@@ -14,11 +14,12 @@ func dialEnv(t *testing.T) (c *Config, now *time.Time, sleeps *int, onSleep *fun
 	t.Helper()
 	c = testConfig(t)
 	d, now, _, _ := eventEnv(t)
-	oRun, oState, oLock, oSleep, oRestart, oSpawn := wanRunDir, dialStateFile, dialLockFile, dialSleep, dialRestart, dialSpawn
+	oRun, oState, oLock, oStart, oSleep, oRestart, oSpawn := wanRunDir, dialStateFile, dialLockFile, dialStartDir, dialSleep, dialRestart, dialSpawn
 	t.Cleanup(func() {
-		wanRunDir, dialStateFile, dialLockFile, dialSleep, dialRestart, dialSpawn = oRun, oState, oLock, oSleep, oRestart, oSpawn
+		wanRunDir, dialStateFile, dialLockFile, dialStartDir, dialSleep, dialRestart, dialSpawn = oRun, oState, oLock, oStart, oSleep, oRestart, oSpawn
 	})
 	wanRunDir, dialStateFile, dialLockFile = filepath.Join(d, "wan"), filepath.Join(d, "run", "dial.json"), filepath.Join(d, "run", "dial.lock")
+	dialStartDir = filepath.Join(d, "run", "dial-start")
 	os.MkdirAll(wanRunDir, 0755)
 	sleeps, onSleep = new(int), new(func(int))
 	dialSleep = func(x time.Duration) {
@@ -116,6 +117,37 @@ func TestDialWait(t *testing.T) {
 	dialWait(c, "wan")
 	if *sleeps != 6 {
 		t.Errorf("wan2 ready after its prefix: slept %d times", *sleeps)
+	}
+}
+
+func TestDialWaitIgnoresLeaseFromBeforeRestart(t *testing.T) {
+	c, now, _, _ := dialEnv(t)
+	start := *now
+	writeLease("wan2", wanLease{IP: "192.0.2.2", Since: now.Unix() - 120})
+	markDialStart("wan2", now.Unix())
+	dialWait(c, "wan")
+	if elapsed := now.Sub(start); elapsed < c.MultiWAN.dialWait() {
+		t.Fatalf("dial-wait returned before the new session: %v", elapsed)
+	}
+}
+
+func TestVerifyDeadlineIncludesDialOrderWait(t *testing.T) {
+	c := testConfig(t)
+	c.MultiWAN.DialOrder = []string{"wan2", "wan", "wan3", "wan4"}
+	c.MultiWAN.DialWait = 60
+	if got := time.Until(netVerifyDeadline(c, &WAN{Name: "wan4"})); got < 90*time.Second+2*c.MultiWAN.dialWait() {
+		t.Fatalf("later WAN deadline %v does not include its dial-order wait", got)
+	}
+}
+
+func TestNetVerifyDeadlineIsPerWANAndCapped(t *testing.T) {
+	c := testConfig(t)
+	c.MultiWAN.DialOrder = []string{"wan2", "wan", "wan3", "wan4"}
+	c.MultiWAN.DialWait = 120
+	base := time.Until(netVerifyDeadline(c, &c.WAN[1]))
+	later := time.Until(netVerifyDeadline(c, &WAN{Name: "wan4"}))
+	if base > 91*time.Second || later > 301*time.Second {
+		t.Fatalf("unexpected verification deadlines: base=%v later=%v", base, later)
 	}
 }
 

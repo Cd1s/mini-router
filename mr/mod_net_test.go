@@ -36,10 +36,12 @@ func mustValid(t *testing.T, c *Config) {
 func tempState(t *testing.T) string {
 	t.Helper()
 	d := t.TempDir()
-	a, b, c, g, rp := wanRunDir, wanStateFile, resolvConf, gatewayConflictFile, requirePublicFile
+	a, b, c, g, rp, dd := wanRunDir, wanStateFile, resolvConf, gatewayConflictFile, requirePublicFile, doctorDHCPStateFile
 	wanRunDir, wanStateFile, resolvConf = filepath.Join(d, "wan"), filepath.Join(d, "wan-state.json"), filepath.Join(d, "resolv.conf")
-	gatewayConflictFile, requirePublicFile = filepath.Join(d, "gateway-conflicts.json"), filepath.Join(d, "require-public-ip.json")
-	t.Cleanup(func() { wanRunDir, wanStateFile, resolvConf, gatewayConflictFile, requirePublicFile = a, b, c, g, rp })
+	gatewayConflictFile, requirePublicFile, doctorDHCPStateFile = filepath.Join(d, "gateway-conflicts.json"), filepath.Join(d, "require-public-ip.json"), filepath.Join(d, "doctor-dhcp.json")
+	t.Cleanup(func() {
+		wanRunDir, wanStateFile, resolvConf, gatewayConflictFile, requirePublicFile, doctorDHCPStateFile = a, b, c, g, rp, dd
+	})
 	return d
 }
 
@@ -105,6 +107,28 @@ func TestNetHomeConfig(t *testing.T) {
 	if serviceFor("/etc/init.d/mr-pppoe.wan") != "" || serviceFor("/etc/ppp/peers/wan") != "mr-pppoe.wan" {
 		t.Error("restart mapping for pppoe files")
 	}
+}
+
+func TestRenderDhcpcdAllocatesIPv6PDToRAEnabledNetworks(t *testing.T) {
+	c := testConfig(t)
+	c.Networks = []Network{
+		{Name: "iot", IPv4: "192.168.30.1/24", IPv6RA: true},
+		{Name: "guest", IPv4: "192.168.40.1/24", IPv6RA: false},
+	}
+	got := renderDhcpcd(c)
+	wantSubs(t, "dhcpcd.conf", got, "ia_pd 1 br-lan/0/64/1 br-iot/1/64/1\n")
+	wantNone(t, "dhcpcd.conf", got, "br-guest/2/64/1")
+}
+
+func TestRenderDhcpcdKeepsPDWhenMainRAIsOff(t *testing.T) {
+	c := testConfig(t)
+	c.LAN.IPv6RA = false
+	c.Networks = []Network{
+		{Name: "guest", IPv4: "192.168.30.1/24", IPv6RA: false},
+		{Name: "iot", IPv4: "192.168.40.1/24", IPv6RA: true},
+	}
+	got := renderDhcpcd(c)
+	wantSubs(t, "dhcpcd.conf", got, "ia_pd 1 br-lan/0/64/1 br-iot/2/64/1\n")
 }
 
 func TestNetGeneratedLinkCleanupOnce(t *testing.T) {

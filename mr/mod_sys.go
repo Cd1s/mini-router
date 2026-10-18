@@ -320,6 +320,9 @@ func init() {
 		// failure never fails an apply).
 		// Events: a WAN that went down / came back / failed over (mod_sys_event.go).
 		OnWAN: func(c *Config, wan, event string) {
+			if event == "up" {
+				doctorWANUp(wan)
+			}
 			if ddnsOn(c) && ddnsUses(c, event) {
 				ddnsKick()
 			}

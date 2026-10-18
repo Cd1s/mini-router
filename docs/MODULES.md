@@ -99,6 +99,8 @@ runlevel links (`linkRunlevel`). While the marker exists every other change is r
 apply, `mr sys restore`: `pendingBlocks`; the marker is claimed with O_EXCL, so two applies started at once cannot
 both run); `mr confirm` keeps the change, `mr rollback` (no argument) undoes it. Every API answer to a logged-in
 client carries `X-MR-Pending: {"state","via","left"}`, and the web UI shows a banner with 保留 / 回滚 on every page.
+Restore list files also have a durable `history/restore-lists.pending` marker until the apply claims their
+`ListSnapshot`; a power loss before that claim restores the lists before accepting another change.
 
 API clients (`docs/api.md`): `Authorization: Bearer mrt_…` tokens from `api.tokens` (hash in secrets.yaml,
 scopes read / operate / apply, `allow`, `from`, `expires`; bad tokens count in the login throttle) reach the

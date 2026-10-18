@@ -26,6 +26,11 @@ import (
 	"strings"
 )
 
+var (
+	runLan6      = run
+	runLan6Stdin = runStdin
+)
+
 // renderNft builds the whole ruleset. exists() reports whether a netdev is present right now:
 // nft refuses flowtables that reference missing devices, and PPPoE / WiFi netdevs come and go,
 // so the ruleset is re-rendered by the ppp and hostapd hooks.
@@ -786,12 +791,16 @@ func refreshLan6() error {
 }
 
 func refreshLan6For(c *Config) error {
-	out, err := run("ip", "-6", "-o", "addr", "show", "dev", c.LAN.Bridge, "scope", "global")
-	if err != nil {
-		return nil // bridge not up yet
+	var out strings.Builder
+	for _, bridge := range c.LANBridges() {
+		part, err := runLan6("ip", "-6", "-o", "addr", "show", "dev", bridge, "scope", "global")
+		if err != nil {
+			continue // this bridge is not up yet
+		}
+		out.WriteString(part)
 	}
 	elems := []string{"fe80::/10", "ff00::/8"}
-	for _, l := range strings.Split(out, "\n") {
+	for _, l := range strings.Split(out.String(), "\n") {
 		f := strings.Fields(l)
 		for i := 0; i+1 < len(f); i++ {
 			if f[i] == "inet6" {
@@ -803,7 +812,7 @@ func refreshLan6For(c *Config) error {
 	}
 	script := fmt.Sprintf("flush set inet mr lan6\nadd element inet mr lan6 { %s }\n", strings.Join(dedup(elems), ", "))
 	script += pd6Script(c)
-	_, err = runStdin(script, "nft", "-f", "-")
+	_, err := runLan6Stdin(script, "nft", "-f", "-")
 	return err
 }
 
