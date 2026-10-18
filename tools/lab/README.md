@@ -54,9 +54,20 @@ MRLAB_FORCE=1 $L reset $ID                      # only after checking that nobod
 
 Scenarios (TAP output, log in `/tmp/mrlab<ID>-<name>.log`): `$L run $ID 01-fresh-dhcp`,
 `02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`,
-`06-lan-renumber` (192.168.1.1 → .6 → 192.168.2.1 via the API), `07-require-public-ip` (PPPoE behind
-CGNAT, `wan[].require_public_ip`), `08-dhcp-slaac-relay` (DHCP WAN with `v6=slaac`, no PD, then
-relay enabled and disabled).
+`06-lan-renumber`, `07-require-public-ip`, `08-dhcp-slaac-relay`, `09-first-run-wizard`.
+The longer scenarios have these purposes and waits:
+
+- `05-isp-switch-live` changes a live PPPoE line to down, back to PPPoE, then DHCP and back; it
+  waits 25 s for the outage diagnosis and up to 90 s for each redial.
+- `06-lan-renumber` confirms 192.168.1.1 → .6 → 192.168.2.1 through the API and waits 130 s after
+  each change for the 120 s confirmation window to prove there is no rollback.
+- `07-require-public-ip` exercises PPPoE CGNAT redial and recovery; it can wait 150 s for a new
+  session, up to 420 s for the five-redial stop, another 90 s to prove it stays stopped, then up to
+  120 s for a public address and 60 s for LAN traffic.
+- `08-dhcp-slaac-relay` enables and disables IPv6 relay on a DHCP-only SLAAC upstream; probe and
+  proxy checks retry for up to 70 s.
+- `09-first-run-wizard` checks deferred install discovery and the session/plan/apply/confirm/
+  `setup.complete` API path, then verifies a normal installed router skips the wizard.
 Each starts with `reset` and removes its lab when it ends (passed, failed or interrupted;
 `MRLAB_KEEP=1` leaves it up for inspection), so give every parallel scenario its own ID. A failed
 setup step prints `Bail out!` and stops the scenario.
