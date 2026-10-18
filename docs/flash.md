@@ -1,4 +1,4 @@
-# mini-router v0.4.0 上闪存：内存测试 → 刷机 → 首次启动 → 回滚 → U-Boot 救援
+# mini-router 上闪存：内存测试 → 刷机 → 首次启动 → 回滚 → U-Boot 救援
 
 对象：Redmi AX6000（hanwckf 110M U-Boot，UBI 在 `0x600000`/`0x6e00000`，卷 `kernel` / `rootfs` / `rootfs_data`），
 现在闪存里是 OpenWrt main 6.18（r36531），路由器 `192.168.1.6`，SSH 别名 `router`。
@@ -6,10 +6,10 @@ M3 的设计和校验细节见 [modules/platform.md](modules/platform.md)。**�
 
 规则：每一步先读、后写；任何一步和预期不符，停下来，不要"修一修继续"。
 
-本文对应发布版 **v0.4.0**。AX6000 镜像的 rootfs 已包含 `ethtool`（v0.4.0 用它读取永久 MAC，换 WAN / 多拨时
+最新发行版的 AX6000 镜像 rootfs 已包含 `ethtool`（用它读取永久 MAC，换 WAN / 多拨时
 恢复硬件地址），不需要在路由器上另装；如果在 Alpine 构建机或旁路环境里运行同一套工具，先 `apk add ethtool`。
 
-This page describes **v0.4.0**. The AX6000 rootfs already ships `ethtool`, used to read the permanent MAC when a WAN
+This page follows the latest release. The AX6000 rootfs ships `ethtool`, used to read the permanent MAC when a WAN
 or multi-dial setup changes; no package installation is needed on the flashed router. Install `ethtool` in an Alpine
 build or side environment that runs the same tools.
 
@@ -113,12 +113,12 @@ cat /etc/router-changes.log | tail -3
 
 ### 首次设置向导 / First-run setup wizard
 
-全新或擦除后的 `rootfs_data` 会由 `mr-preinit` 写入 `/etc/mini-router/state/first-run`。因此 v0.4.0 刷机后，
+全新或擦除后的 `rootfs_data` 会由 `mr-preinit` 写入 `/etc/mini-router/state/first-run`。因此刷入最新发行版后，
 第一次从 LAN 打开面板会进入向导；已经有配置的升级只保留原设置，不会弹向导。出厂机若还没有管理员密码，
 先在当前 LAN 的首次设密页设置密码，再进入向导。
 
 The marker `/etc/mini-router/state/first-run` is created by `mr-preinit` on a new or erased `rootfs_data`. After a
-v0.4.0 flash, the first panel visit from the LAN opens the wizard; an upgrade with existing settings keeps them and does
+flashing the latest release, the first panel visit from the LAN opens the wizard; an upgrade with existing settings keeps them and does
 not show it. A factory image without an administrator password first shows the LAN-only password setup page, then opens
 the wizard.
 
@@ -132,17 +132,17 @@ The wizard covers the password, time zone, “Detect connection type”, upstrea
 route. Apply uses validate → plan → apply → confirm and rolls back when it is not confirmed. The wizard suggests a LAN
 range but never changes it automatically.
 
-### v0.4.0 升级 / v0.4.0 upgrade
+### 升级 / Upgrade
 
-以后的升级（包括从 v0.3.x 升到 v0.4.0）：先用发布页 `SHA256SUMS` 校验对应的
-`mini-router-ax6000-v0.4.0-sysupgrade.tar`，再执行：
+以后升级：从 Releases 页下载最新发行版的 `mini-router-ax6000-<VERSION>-sysupgrade.tar`，先用同一发行版的
+`SHA256SUMS` 校验，再执行：
 
 ```sh
-/usr/libexec/mr/sysupgrade -T --sha256 <SHA256SUMS 里的值> /tmp/mini-router-ax6000-v0.4.0-sysupgrade.tar
-setsid /usr/libexec/mr/sysupgrade -y --sha256 <同上> /tmp/mini-router-ax6000-v0.4.0-sysupgrade.tar > /tmp/su.log 2>&1 &
+/usr/libexec/mr/sysupgrade -T --sha256 <SHA256SUMS 里的值> /tmp/mini-router-ax6000-<VERSION>-sysupgrade.tar
+setsid /usr/libexec/mr/sysupgrade -y --sha256 <同上> /tmp/mini-router-ax6000-<VERSION>-sysupgrade.tar > /tmp/su.log 2>&1 &
 ```
 
-For an upgrade (including v0.3.x → v0.4.0), verify the v0.4.0 sysupgrade tarball against `SHA256SUMS`, then run the
+For an upgrade, download the latest AX6000 sysupgrade tarball and its matching `SHA256SUMS` from Releases, then run the
 same two commands above. Do not erase `rootfs_data`: settings stay in place and an existing installation will not enter
 the first-run wizard.
 

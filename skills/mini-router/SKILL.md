@@ -20,12 +20,12 @@ No python/jq there: edit YAML with care, or edit a copy on your side and send it
 
 On a factory AX6000 image, a new or erased `rootfs_data`, or an Alpine install with `MR_APPLY=0`, the first panel
 visit has a wizard. It covers the password (factory image), time zone, WAN detection, upstream/LAN conflict advice,
-WiFi and a normal validate → plan → apply → confirm apply. Existing installations upgraded to v0.4.0 do not show it.
+WiFi and a normal validate → plan → apply → confirm apply. Existing installations upgraded in place do not show it.
 “Detect connection type” is the same stateless probe as `mr wan detect <physical-port>`: PPPoE discovery and one DHCP
 DISCOVER, no lease and no route. The wizard only suggests a LAN renumber; it does not change `lan.ipv4` automatically.
 
 AX6000 出厂镜像、新建或擦除的 `rootfs_data`，以及 Alpine 的 `MR_APPLY=0` 安装，第一次打开面板会进入向导；
-升级到 v0.4.0 的旧安装不会弹出。向导会检测 WAN、提示上游与 LAN 冲突，并在确认窗口内应用。改 LAN 网段请按
+旧安装升级不会弹出。向导会检测 WAN、提示上游与 LAN 冲突，并在确认窗口内应用。改 LAN 网段请按
 下面的跨地址确认流程操作。
 
 ## The safe change workflow (every change)
@@ -85,7 +85,7 @@ wan:
     modem: {address: 192.168.1.1}     # optional bridged-modem management address
     ipv6: true
     ipv6_pd: true
-    ipv6_relay: false                 # optional SLAAC /64 relay when ISP has no PD
+    ipv6_relay: false                 # next release: optional SLAAC /64 relay when ISP has no PD
     require_public_ip: true           # bounded redials for private / CGNAT PPPoE addresses
     require_public_ip_gap: 180        # seconds; 0 uses the 180-second default
   - {name: wan2, device: eth2, proto: dhcp}           # proto: pppoe | dhcp | static (ipv4:, gateway:, dns:)
@@ -163,7 +163,7 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
   For a bridged modem page, set `wan[].modem.address` (PPPoE only); mini-router adds a host route, gateway-only proxy
   ARP and masquerade. `wan[].require_public_ip: true` redials a PPPoE line that receives RFC1918, 100.64.0.0/10 or
   169.254.0.0/16, waits `require_public_ip_gap` (default 180 s), and stops after five attempts. `wan[].ipv6_relay: true`
-  is optional and requires WAN IPv6 plus LAN RA; it relays an upstream SLAAC /64 when no PD exists.
+  is a next-release option on main, requires WAN IPv6 plus LAN RA, and relays an upstream SLAAC /64 when no PD exists.
 
 - **LAN renumber / 改 LAN 网段**: changing `lan.ipv4` in the web UI can shift matching DHCP leases, device addresses,
   forwards, policy/static routes, DNS/DHCP options, edge routes and API source ranges. Review the list and select only
@@ -253,9 +253,9 @@ the user to do those. Never print or store a token in files, logs or chat.
 /usr/libexec/mr/sysupgrade -T --sha256 <SHA> /tmp/<image>-sysupgrade.tar      # verify only
 setsid /usr/libexec/mr/sysupgrade -y --sha256 <SHA> /tmp/<image> > /tmp/su.log 2>&1 &
 ```
-For v0.4.0 use `mini-router-ax6000-v0.4.0-sysupgrade.tar` and its `SHA256SUMS` entry. The AX6000 image includes
-`ethtool`; plain Alpine upgrades need `apk add ethtool` before replacing `/usr/sbin/mr` and unpacking the v0.4.0
-rootfs tarball. The router kexecs an installer, writes flash and reboots (≈2 min offline); settings are kept. A failure
+Use the latest release's `mini-router-ax6000-<VERSION>-sysupgrade.tar` and matching `SHA256SUMS` entry. The AX6000 image
+includes `ethtool`; plain Alpine upgrades need `apk add ethtool` before replacing `/usr/sbin/mr` and unpacking the
+matching rootfs tarball. The router kexecs an installer, writes flash and reboots (≈2 min offline); settings are kept. A failure
 before the write reboots the old system. Afterwards: `cat /etc/mini-router-release`, `rc-status -c`, `mr plan` (a new
 version may render files differently) and `mr apply --confirm 120` + `mr confirm` if it shows changes. An existing
 installation does not show the first-run wizard after upgrade.

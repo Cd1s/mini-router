@@ -16,14 +16,14 @@
      mini-router 每次改配置都写 `/etc/mini-router`，不推荐。
 3. 重启，确认能上网：`ping -c3 alpinelinux.org`。
 
-mini-router v0.4.0 需要 `ethtool`（用来读取网卡永久 MAC，换 WAN / 多拨时恢复硬件地址）。安装脚本会自动安装它；
+当前发行版需要 `ethtool`（用来读取网卡永久 MAC，换 WAN / 多拨时恢复硬件地址）。安装脚本会自动安装它；
 如果是从旧版本手工升级，先执行：
 
 ```sh
 apk add ethtool
 ```
 
-Mini-Router v0.4.0 requires `ethtool` to read the permanent NIC address. The installer adds it automatically; install it
+The current Mini-Router release requires `ethtool` to read the permanent NIC address. The installer adds it automatically; install it
 manually before upgrading an older Alpine installation.
 
 ## 2. 认出网口
@@ -61,9 +61,11 @@ wan:
 ## 4. 安装
 
 ```sh
-wget -O install.sh https://github.com/Cd1s/mini-router/releases/download/v0.4.0/install.sh
-MR_VERSION=v0.4.0 sh install.sh
+wget -O install.sh https://github.com/Cd1s/mini-router/releases/latest/download/install.sh
+sh install.sh
 ```
+
+To pin a release, set `MR_VERSION=vX.Y.Z` on the second line.
 
 问题依次是：工作模式（router / bypass / ap）、网口、WAN 类型（DHCP / PPPoE / 静态）、地址、WiFi、网页管理员密码、时区。
 只发现一个网口时，工作模式默认建议 `bypass`。脚本会安装软件包、下载对应架构的 `mr`、生成配置并应用。应用前它停用 Alpine
@@ -86,12 +88,12 @@ mr doctor                 # 体检：每项 ok / warn / risk，附修复方法
 ### 首次设置向导 / First-run setup wizard
 
 `MR_APPLY=0` 的安装会在 `/etc/mini-router/state/first-run` 写入一次性标记；
-已经询问 WAN、密码并完成 apply 的 `MR_APPLY=1` 安装不会写入标记。AX6000 v0.4.0 出厂镜像和新建、擦除后的
+已经询问 WAN、密码并完成 apply 的 `MR_APPLY=1` 安装不会写入标记。AX6000 出厂镜像和新建、擦除后的
 `rootfs_data` 由 `mr-preinit` 创建同一标记。因此，AX6000 刷机后或 Alpine 使用 `MR_APPLY=0` 安装后，
 第一次打开面板会进入向导；旧用户升级不会弹出向导。
 
 `MR_APPLY=0` writes a one-time marker at `/etc/mini-router/state/first-run`; an install that already asked for the
-WAN, password and completed apply does not. The v0.4.0 AX6000 factory image and a new or erased `rootfs_data` get
+WAN, password and completed apply does not. The AX6000 factory image and a new or erased `rootfs_data` get
 the same marker from `mr-preinit`. Thus the first panel visit after flashing AX6000, or after an Alpine `MR_APPLY=0`
 install, opens the wizard; an upgrade of an existing installation does not.
 
@@ -106,9 +108,9 @@ stateless PPPoE discovery and DHCP DISCOVER: it waits for an answer but takes no
 use the normal validate → plan → apply → confirm flow and roll back on failure. The wizard suggests a LAN range when it
 detects a conflict but never changes it automatically. Confirming the apply removes the marker.
 
-### v0.4.0 升级 / Upgrade to v0.4.0
+### 升级 / Upgrade
 
-不要重新运行完整 `install.sh` 来升级，它会重新生成 `router.yaml`。下载与当前架构匹配的 v0.4.0 `mr-linux-*`，
+不要重新运行完整 `install.sh` 来升级，它会重新生成 `router.yaml`。下载最新发行版中与当前架构匹配的 `mr-linux-*`，
 覆盖 `/usr/sbin/mr`，再把 `mini-router-rootfs.tar.gz` 解到 `/`（相当于安装脚本第 2 步）：
 
 ```sh
@@ -123,7 +125,7 @@ mr apply --confirm 120
 但防火墙只允许 LAN 网桥和 Tailscale，WAN 仍被拒绝。旧安装不会因此进入首次设置向导。
 
 Do not rerun the complete installer: it would regenerate `router.yaml`. Install `ethtool`, replace `/usr/sbin/mr`
-with the v0.4.0 binary for the current architecture, unpack `mini-router-rootfs.tar.gz` over `/`, then inspect
+with the latest-release binary for the current architecture, unpack `mini-router-rootfs.tar.gz` over `/`, then inspect
 `mr plan` and run `mr apply --confirm 120`. The first apply reloads the firewall, restarts `mr-panel` and reruns
 `network.sh`; the panel binds all addresses while the firewall still permits only LAN bridges and Tailscale. Existing
 installations do not enter the wizard.
@@ -153,9 +155,9 @@ installations do not enter the wizard.
 3. One port only: run it as a **side router** (`mode: bypass`, recommended; the installer keeps the current address and
    gateway), or as a **one-armed router** with a VLAN-capable switch (`wan: [{device: eth0, vlan: 10, …}]`, LAN untagged on
    the same port; install with `MR_APPLY=0`, edit router.yaml, then `mr plan` / `mr apply --confirm 120`).
-4. For v0.4.0, download `https://github.com/Cd1s/mini-router/releases/download/v0.4.0/install.sh` and run it with
-   `MR_VERSION=v0.4.0`; the installer installs `ethtool`.
-5. After an AX6000 v0.4.0 flash or an Alpine `MR_APPLY=0` install, the first panel visit opens the wizard, including
+4. Download the latest release's installer from `https://github.com/Cd1s/mini-router/releases/latest/download/install.sh` and
+   run it with `sh install.sh`; the installer installs `ethtool`.
+5. After a fresh AX6000 flash or an Alpine `MR_APPLY=0` install, the first panel visit opens the wizard, including
    “Detect connection type” (`mr wan detect`). Existing upgrades do not show it.
 6. Check with `mr status`, `mr doctor` and the web UI (`http://<LAN address>/`).
 7. Every change rolls back unless confirmed; `mr history` / `mr rollback N`. The installer disables Alpine's `networking` /
