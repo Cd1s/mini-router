@@ -5,11 +5,9 @@
 NAME=06-lan-renumber
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
-online() { lab lan "$ID" exec 'curl -4 -fsS -o /dev/null --max-time 10 http://example.com/'; }
 # shellcheck disable=SC2016
 panel_on() { lab lan "$ID" exec "test \"\$(curl -s -o /dev/null -w %{http_code} --max-time 5 http://$1/)\" = 200"; }
 lan_is() { lab console "$ID" "grep -q '^  ipv4: $1\$' /etc/mini-router/router.yaml && ip -4 -o addr show br-lan | grep -q ' $1 '"; }
-gw_is() { lab lan "$ID" exec "ip -4 route show default | grep -q 'via $1 '"; }
 step lab reset "$ID"
 step lab isp "$ID" 1 dhcp
 check "install.sh completes (DHCP WAN)" lab install "$ID" --wan-proto dhcp

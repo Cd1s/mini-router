@@ -5,7 +5,7 @@
 NAME=07-require-public-ip
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
-sessions() { grep -c "^remote IP address" "$(dirname "$LAB_SH")/state/mrlab$ID/isp1/pppd.log" 2>/dev/null || echo 0; }
+sessions() { _c=$(grep -c "^remote IP address" "$(dirname "$LAB_SH")/state/mrlab$ID/isp1/pppd.log" 2>/dev/null) || _c=0; echo "$_c"; }
 more_sessions() { [ "$(sessions)" -gt "$1" ]; }
 step lab reset "$ID"
 step lab isp "$ID" 1 pppoe --cgnat
@@ -21,7 +21,8 @@ check "syslog: 'cgnat IPv4 address; redial N/4'" retry 60 lab console "$ID" 'gre
 check "after 5 private addresses: redial stops with a risk event" retry 420 lab console "$ID" 'mr event list 2>&1 | grep -q "automatic redial stopped"'
 n1=$(sessions)
 sleep 90
-check "stopped: no further redials (sessions stay at $n1)" sh -c "[ \"\$(grep -c '^remote IP address' '$(dirname "$LAB_SH")/state/mrlab$ID/isp1/pppd.log')\" -le $((n1 + 0)) ]"
+no_more_sessions() { [ "$(sessions)" -le "$1" ]; }
+check "stopped: no further redials (sessions stay at $n1)" no_more_sessions "$n1"
 # a CGNAT session that passes the health check is "ok" in mr doctor by design (#150); the stop is
 # recorded as the risk event above
 info lab console "$ID" 'mr doctor 2>&1 | grep -A1 "wan.wan"'
