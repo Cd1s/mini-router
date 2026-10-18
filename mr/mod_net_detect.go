@@ -56,7 +56,7 @@ type wanDetectResult struct {
 	PPPoE          detectPPPoE `json:"pppoe"`
 	DHCP           detectDHCP  `json:"dhcp"`
 	IPv6RA         detectRA    `json:"ipv6_ra"`
-	Recommendation string      `json:"recommendation"` // pppoe | dhcp | static
+	Recommendation string      `json:"recommendation"` // pppoe | dhcp | unknown
 	LANConflict    bool        `json:"lan_conflict"`
 	SuggestedLAN   string      `json:"suggested_lan,omitempty"`
 	ElapsedMS      int64       `json:"elapsed_ms"`
@@ -138,9 +138,9 @@ func probeWAN(ctx context.Context, port string) (detectObservation, error) {
 		err  error
 	}
 	results := make(chan result, 3)
-	pppCtx, pppCancel := context.WithTimeout(ctx, 3*time.Second)
-	dhcpCtx, dhcpCancel := context.WithTimeout(ctx, 4*time.Second)
-	raCtx, raCancel := context.WithTimeout(ctx, 3*time.Second)
+	pppCtx, pppCancel := context.WithTimeout(ctx, 4*time.Second)
+	dhcpCtx, dhcpCancel := context.WithTimeout(ctx, 7*time.Second)
+	raCtx, raCancel := context.WithTimeout(ctx, 4*time.Second)
 	defer pppCancel()
 	defer dhcpCancel()
 	defer raCancel()
@@ -175,7 +175,7 @@ func probePPPoE(ctx context.Context, port string) (detectPPPoE, error) {
 	if err != nil {
 		return detectPPPoE{}, err
 	}
-	cmd := exec.CommandContext(ctx, p, "-I", port, "-U", "-a", "1", "-t", "1")
+	cmd := exec.CommandContext(ctx, p, "-I", port, "-U", "-a", "2", "-t", "1")
 	b, err := cmd.CombinedOutput()
 	return parsePPPoEDiscovery(string(b), err == nil), err
 }
@@ -237,24 +237,43 @@ func probeDHCP(ctx context.Context, port string) (detectDHCP, error) {
 	if _, err = syscall.Write(fd, frame); err != nil {
 		return out, err
 	}
-	d := time.Until(deadline(ctx))
-	if d <= 0 {
-		return out, context.DeadlineExceeded
-	}
-	tv := syscall.NsecToTimeval(d.Nanoseconds())
-	_ = syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
+	end := deadline(ctx)
 	buf := make([]byte, 2048)
 	for {
-		n, _, e := syscall.Recvfrom(fd, buf, 0)
-		if e != nil {
-			return out, e
+		rem := time.Until(end)
+		if rem <= 0 {
+			return out, context.DeadlineExceeded
 		}
-		if len(buf) >= 14+20+8 && binary.BigEndian.Uint16(buf[12:14]) == 0x0800 {
-			i := 14 + int(buf[14]&0x0f)*4
-			if i+8 <= n && buf[14+9] == 17 && binary.BigEndian.Uint16(buf[i+2:i+4]) == 68 {
-				if d, ok := parseDHCPOffer(buf[i+8:n], xid); ok {
-					return d, nil
+		window := rem
+		if window > 2*time.Second {
+			window = 2 * time.Second
+		}
+		windowEnd := time.Now().Add(window)
+		tv := syscall.NsecToTimeval(window.Nanoseconds())
+		_ = syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
+		for {
+			if time.Now().After(windowEnd) {
+				break
+			}
+			n, _, e := syscall.Recvfrom(fd, buf, 0)
+			if e != nil {
+				if e == syscall.EAGAIN || e == syscall.EWOULDBLOCK {
+					break
 				}
+				return out, e
+			}
+			if len(buf) >= 14+20+8 && binary.BigEndian.Uint16(buf[12:14]) == 0x0800 {
+				i := 14 + int(buf[14]&0x0f)*4
+				if i+8 <= n && buf[14+9] == 17 && binary.BigEndian.Uint16(buf[i+2:i+4]) == 68 {
+					if d, ok := parseDHCPOffer(buf[i+8:n], xid); ok {
+						return d, nil
+					}
+				}
+			}
+		}
+		if time.Until(end) > 0 {
+			if _, err = syscall.Write(fd, frame); err != nil {
+				return out, err
 			}
 		}
 	}
@@ -272,7 +291,7 @@ func dhcpEthernetFrame(payload []byte, mac net.HardwareAddr) []byte {
 	binary.BigEndian.PutUint16(f[12:14], 0x0800)
 	f[14], f[15], f[16], f[17] = 0x45, 0, byte(iplen>>8), byte(iplen)
 	f[18], f[19] = 0, 1
-	f[20], f[21] = 0x80, 0
+	f[20], f[21] = 0, 0
 	f[22], f[23], f[24], f[25] = 128, 17, 0, 0
 	copy(f[26:30], net.IPv4zero.To4())
 	copy(f[30:34], net.IPv4bcast.To4())

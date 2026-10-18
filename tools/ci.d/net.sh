@@ -673,7 +673,12 @@ cleanup_detect_all() {
 	cleanup_detect
 	cleanup
 }
-trap cleanup_detect_all EXIT HUP INT TERM
+cleanup_detect_signal() {
+	cleanup_detect_all
+	exit 1
+}
+trap cleanup_detect_all EXIT
+trap cleanup_detect_signal HUP INT TERM
 for n in "$PDPS" "$PDPC" "$PDDS" "$PDDC"; do ip netns add "$n"; done
 ip link add pps netns "$PDPC" type veth peer name pps netns "$PDPS"
 ip -n "$PDPC" link set lo up; ip -n "$PDPS" link set lo up

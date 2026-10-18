@@ -45,8 +45,13 @@ var (
 	JobFile          = RunDir + "/job.json"
 	JobLog           = RunDir + "/job.log"
 	confirmTokenFile = RunDir + "/confirm-token"
-	loadLANConfig    = func() (*Config, error) { return loadConfig(ConfigPath, SecretsPath) }
-	lanBridgeAddrs   = func(bridge string) ([]net.Addr, error) {
+	// API paths are variables so the complete first-run flow can be tested through handleAPI
+	// without touching the router's persistent /etc and /run trees.
+	apiSecretsPath = SecretsPath
+	sessionDir     = SessionDir
+	apiReadSecrets = func() map[string]string { return readSecrets() }
+	loadLANConfig  = func() (*Config, error) { return loadConfig(ConfigPath, SecretsPath) }
+	lanBridgeAddrs = func(bridge string) ([]net.Addr, error) {
 		i, err := net.InterfaceByName(bridge)
 		if err != nil {
 			return nil, err
@@ -239,8 +244,8 @@ func handleAPI(r apiReq) apiResp {
 	if r.header != "1" {
 		return errResp(403, "missing X-MR header")
 	}
-	os.MkdirAll(SessionDir, 0700)
-	secrets := readSecrets()
+	os.MkdirAll(sessionDir, 0700)
+	secrets := apiReadSecrets()
 
 	switch r.action {
 	case "session":
@@ -273,7 +278,7 @@ func apiAction(r apiReq, secrets map[string]string) apiResp {
 	switch r.action {
 	case "logout":
 		if tok := sessionToken(r.cookie); tok != "" {
-			os.Remove(filepath.Join(SessionDir, tok))
+			os.Remove(filepath.Join(sessionDir, tok))
 		}
 		return apiResp{body: map[string]any{"ok": true}, cookie: "mrsid=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"}
 	case "status":
@@ -364,7 +369,7 @@ func newSession() string {
 	b := make([]byte, 24)
 	rand.Read(b)
 	tok := base64.RawURLEncoding.EncodeToString(b)
-	os.WriteFile(filepath.Join(SessionDir, tok), []byte(time.Now().Add(sessionTTL).Format(time.RFC3339)), 0600)
+	os.WriteFile(filepath.Join(sessionDir, tok), []byte(time.Now().Add(sessionTTL).Format(time.RFC3339)), 0600)
 	return tok
 }
 
@@ -386,13 +391,13 @@ func validSession(cookie string) bool {
 	if tok == "" {
 		return false
 	}
-	b, err := os.ReadFile(filepath.Join(SessionDir, tok))
+	b, err := os.ReadFile(filepath.Join(sessionDir, tok))
 	if err != nil {
 		return false
 	}
 	exp, err := time.Parse(time.RFC3339, strings.TrimSpace(string(b)))
 	if err != nil || time.Now().After(exp) {
-		os.Remove(filepath.Join(SessionDir, tok))
+		os.Remove(filepath.Join(sessionDir, tok))
 		return false
 	}
 	return true
@@ -484,7 +489,7 @@ func apiSetup(r apiReq, secrets map[string]string) apiResp {
 		return errResp(400, "password must be at least 8 characters")
 	}
 	secrets[pwSecretKey] = hashPassword(in.Password)
-	if err := writeSecrets(SecretsPath, secrets); err != nil {
+	if err := writeSecrets(apiSecretsPath, secrets); err != nil {
 		return errResp(500, "%v", err)
 	}
 	if err := markFirstRunPasswordDone(); err != nil && !os.IsNotExist(err) {
@@ -507,11 +512,11 @@ func apiPassword(r apiReq, secrets map[string]string) apiResp {
 		return errResp(400, "password must be at least 8 characters")
 	}
 	secrets[pwSecretKey] = hashPassword(in.New)
-	if err := writeSecrets(SecretsPath, secrets); err != nil {
+	if err := writeSecrets(apiSecretsPath, secrets); err != nil {
 		return errResp(500, "%v", err)
 	}
-	os.RemoveAll(SessionDir) // log out everyone else
-	os.MkdirAll(SessionDir, 0700)
+	os.RemoveAll(sessionDir) // log out everyone else
+	os.MkdirAll(sessionDir, 0700)
 	appendChangeLog("webui: admin password changed")
 	return apiResp{body: map[string]any{"ok": true}, cookie: sessionCookie(newSession())}
 }

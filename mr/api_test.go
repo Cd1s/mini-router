@@ -8,10 +8,13 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestLANConfirmTokenIsScopedAndHashed(t *testing.T) {
@@ -101,6 +104,48 @@ func TestSetupReportsInvalidConfigSeparatelyFromLANAccess(t *testing.T) {
 	msg := r.body.(map[string]any)["error"].(string)
 	if r.status != 500 || !strings.Contains(msg, "配置文件缺失") || strings.Contains(msg, "router.yaml: invalid") {
 		t.Fatalf("invalid config setup response: %d %v", r.status, r.body)
+	}
+}
+
+func TestFirstRunWizardAPISequence(t *testing.T) {
+	d := t.TempDir()
+	oldMarker, oldSecrets, oldSession, oldRead, oldLAN := firstRunMarker, apiSecretsPath, sessionDir, apiReadSecrets, loadLANConfig
+	t.Cleanup(func() {
+		firstRunMarker, apiSecretsPath, sessionDir, apiReadSecrets, loadLANConfig = oldMarker, oldSecrets, oldSession, oldRead, oldLAN
+	})
+	firstRunMarker = filepath.Join(d, "state", "first-run")
+	apiSecretsPath = filepath.Join(d, "secrets.yaml")
+	sessionDir = filepath.Join(d, "sessions")
+	apiReadSecrets = func() map[string]string {
+		m := map[string]string{}
+		b, _ := os.ReadFile(apiSecretsPath)
+		_ = yaml.Unmarshal(b, &m)
+		return m
+	}
+	loadLANConfig = func() (*Config, error) { return &Config{LAN: LAN{IPv4: "192.168.1.1/24"}}, nil }
+	if err := os.MkdirAll(filepath.Dir(firstRunMarker), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(firstRunMarker, []byte("factory\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := handleAPI(apiReq{method: "GET", action: "session", header: "1", remote: "192.168.1.20"}); got.status != 0 || !got.body.(map[string]any)["wizard"].(bool) {
+		t.Fatalf("initial session: %d %v", got.status, got.body)
+	}
+	setup := handleAPI(apiReq{method: "POST", action: "setup", header: "1", remote: "192.168.1.20", body: []byte(`{"password":"correct horse"}`)})
+	if setup.status != 0 {
+		t.Fatalf("setup: %d %v", setup.status, setup.body)
+	}
+	cookie := setup.cookie
+	if got := handleAPI(apiReq{method: "GET", action: "session", header: "1", remote: "192.168.1.20", cookie: cookie}); got.status != 0 || !got.body.(map[string]any)["wizard"].(bool) {
+		t.Fatalf("wizard disappeared after password setup: %d %v", got.status, got.body)
+	}
+	complete := handleAPI(apiReq{method: "POST", action: "setup.complete", header: "1", remote: "192.168.1.20", cookie: cookie})
+	if complete.status != 0 {
+		t.Fatalf("setup.complete: %d %v", complete.status, complete.body)
+	}
+	if got := handleAPI(apiReq{method: "GET", action: "session", header: "1", remote: "192.168.1.20", cookie: cookie}); got.status != 0 || got.body.(map[string]any)["wizard"].(bool) {
+		t.Fatalf("wizard remained after completion: %d %v", got.status, got.body)
 	}
 }
 

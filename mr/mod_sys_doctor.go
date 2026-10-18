@@ -23,6 +23,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,6 +84,7 @@ type docEnv struct {
 	v6default func() bool                  // an IPv6 default route in the main table; nil = not checked
 	nftChain  func(name string) string     // nft list chain inet mr NAME ("" = none)
 	restart   func(svc string) error       // --heal
+	dhcpOffer func(port string) bool       // one-shot DHCP OFFER probe for a PPPoE physical port
 
 	// the current plan (reads files only); nil = not checked
 	plan func(c *Config) (*Plan, error)
@@ -90,6 +92,21 @@ type docEnv struct {
 
 // doctorFile keeps the last result (tmpfs).
 var doctorFile = RunDir + "/doctor.json"
+
+// doctorDHCPStateFile records the first observation of a missing PPPoE address and the last
+// one-shot probe. It keeps doctor useful after a line change without probing on every request.
+var doctorDHCPStateFile = RunDir + "/doctor-dhcp.json"
+
+const (
+	doctorDHCPWait = 2 * time.Minute
+	doctorDHCPGap  = 10 * time.Minute
+)
+
+type doctorDHCPRecord struct {
+	FirstSeen int64 `json:"first_seen"`
+	LastProbe int64 `json:"last_probe,omitempty"`
+	Offer     bool  `json:"offer,omitempty"`
+}
 
 // ntpSyncDir: mr-clock creates it for ntpd's user; clock-save (ntpd -S) touches synced in it on every
 // sync report and removes it on "unsync". adjtimex cannot tell: busybox ntpd never lowers the kernel's
@@ -182,6 +199,12 @@ var newDocEnv = func() *docEnv {
 			return out
 		},
 		restart: func(s string) error { _, err := run("rc-service", s, "restart"); return err },
+		dhcpOffer: func(port string) bool {
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+			defer cancel()
+			d, err := probeDHCP(ctx, port)
+			return err == nil && d.Offer
+		},
 	}
 }
 
@@ -305,11 +328,68 @@ func docWANsUp(c *Config, e *docEnv) map[string]string {
 	return up
 }
 
+func readDoctorDHCPState() map[string]doctorDHCPRecord {
+	m := map[string]doctorDHCPRecord{}
+	b, err := os.ReadFile(doctorDHCPStateFile)
+	if err == nil {
+		_ = json.Unmarshal(b, &m)
+	}
+	return m
+}
+
+func writeDoctorDHCPState(m map[string]doctorDHCPRecord) {
+	if len(m) == 0 {
+		_ = os.Remove(doctorDHCPStateFile)
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(doctorDHCPStateFile), 0700)
+	b, _ := json.Marshal(m)
+	_ = writeAtomic(doctorDHCPStateFile, b, 0600)
+}
+
+// docDHCPHint tracks an outage locally and probes only after it has lasted long enough, with a
+// ten-minute cooldown between probes. The probe is the same stateless DHCP exchange as `mr wan detect`.
+func docDHCPHint(w WAN, e *docEnv, now int64, up bool) bool {
+	lk := flock(doctorDHCPStateFile+".lock", false)
+	if lk == nil {
+		return false
+	}
+	defer lk.Close()
+	m := readDoctorDHCPState()
+	r, ok := m[w.Name]
+	if up || w.Proto != "pppoe" {
+		if ok {
+			delete(m, w.Name)
+			writeDoctorDHCPState(m)
+		}
+		return false
+	}
+	if !ok || r.FirstSeen == 0 {
+		r.FirstSeen = now
+		m[w.Name] = r
+		writeDoctorDHCPState(m)
+		return false
+	}
+	if now < r.FirstSeen || now-r.FirstSeen < int64(doctorDHCPWait.Seconds()) || e.dhcpOffer == nil {
+		return r.Offer && r.LastProbe != 0 && now >= r.LastProbe && now-r.LastProbe < int64(doctorDHCPGap.Seconds())
+	}
+	if r.Offer && r.LastProbe != 0 && now-r.LastProbe < int64(doctorDHCPGap.Seconds()) {
+		return true
+	}
+	r.LastProbe = now
+	r.Offer = e.dhcpOffer(w.LinkDev())
+	m[w.Name] = r
+	writeDoctorDHCPState(m)
+	return r.Offer
+}
+
 func docWAN(c *Config, e *docEnv) []docFinding {
 	if len(c.WAN) == 0 {
 		return []docFinding{{Sev: "skip", Title: "WAN", Detail: "no WAN configured"}}
 	}
 	up, health := docWANsUp(c, e), e.health(c)
+	publicState := readRequirePublic()
+	publicStateChanged := false
 	var out []docFinding
 	usable := 0
 	for _, w := range c.WAN {
@@ -320,17 +400,50 @@ func docWAN(c *Config, e *docEnv) []docFinding {
 			restart += "; rc-service " + svc + " restart"
 		}
 		ip, isUp := up[w.Name]
+		if rec, risk := publicState[w.Name]; risk && rec.Risk && isUp && addrClass(ip) == "" {
+			delete(publicState, w.Name)
+			publicStateChanged = true
+			rec.Risk = false
+		}
+		dhcpHint := docDHCPHint(w, e, e.now.Unix(), isUp)
+		if !isUp && dhcpHint {
+			f.Sev = "risk"
+			f.Detail = fmt.Sprintf("no IPv4 address on %s (PPPoE); the line may have been switched to DHCP (modem now routes?)", w.Ifname())
+			f.Fix = "open the Network page and click Detect internet connection type (mr wan detect " + w.LinkDev() + ")"
+			out = append(out, f)
+			continue
+		}
+		if rec := publicState[w.Name]; isUp && rec.Risk && addrClass(ip) != "" {
+			cls := addrClass(ip)
+			f.Sev = "risk"
+			f.Detail = fmt.Sprintf("has %s (%s); automatic public-IP redial stopped after repeated private addresses", ip, cls)
+			f.Fix = restart + "; ask the ISP for a public IPv4 address"
+			out = append(out, f)
+			continue
+		}
 		switch {
 		case !isUp && w.Proto == "pppoe" && !e.exists("/proc/net/pppoe"):
 			k := strings.TrimSpace(e.read("/proc/sys/kernel/osrelease"))
 			f.Sev, f.Detail = "warn", fmt.Sprintf("no IPv4 address on %s: the kernel %s has no PPPoE (the pppoe module is not loaded)", w.Ifname(), k)
+			if publicState[w.Name].Risk {
+				f.Sev = "risk"
+				f.Detail += "; automatic public-IP redial stopped after repeated private addresses"
+			}
 			f.Fix = "modprobe pppoe; a kernel without it (Alpine's linux-virt): apk add linux-lts, reboot"
 		case !isUp:
 			f.Sev, f.Detail = "warn", fmt.Sprintf("no IPv4 address on %s (%s)", w.Ifname(), w.Proto)
+			if publicState[w.Name].Risk {
+				f.Sev = "risk"
+				f.Detail += "; automatic public-IP redial stopped after repeated private addresses"
+			}
 			f.Fix = restart + "; grep -E 'pppd|udhcpc' /var/log/messages | tail (cable, account, ISP)"
 		case w.Proto == "pppoe" && health[w.Name] == "down" && addrClass(ip) != "":
 			cls := addrClass(ip)
 			f.Sev, f.Detail = "warn", fmt.Sprintf("has %s (%s) and fails the health check; the ISP likely placed this PPPoE session in a private/CGNAT pool", ip, cls)
+			if rec := publicState[w.Name]; rec.Risk {
+				f.Sev = "risk"
+				f.Detail += "; automatic public-IP redial stopped after repeated private addresses"
+			}
 			if w.RequirePublicIP {
 				f.Fix = restart + fmt.Sprintf("; automatic public-IP redial stops after %d private addresses; ask the ISP for a public IPv4 address", requirePublicMax)
 			} else {
@@ -353,6 +466,9 @@ func docWAN(c *Config, e *docEnv) []docFinding {
 			}
 		}
 		out = append(out, f)
+	}
+	if publicStateChanged {
+		writeRequirePublic(publicState)
 	}
 	if usable == 0 { // no internet at all
 		for i := range out {
