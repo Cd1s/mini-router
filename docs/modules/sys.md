@@ -634,7 +634,8 @@ load; output and exit code go to `/run/mini-router/fw-run.{log,rc}`.
    directories) rejects the whole archive.
 2. Secrets: the backup's are laid over the current ones; `webui_password` always stays the current one.
 3. List files that differ are saved first as `<time>-restore-lists.tar.gz` in the snapshot history (the
-   core snapshot format, so 变更历史 can also roll back to it), then written.
+   core snapshot format, so 变更历史 can also roll back to it), and a durable pending marker is written
+   before they are replaced; then the files are written.
 4. The candidate config is validated and rendered; on any error the list files go back and nothing else
    has changed.
 5. The candidate is written where the web UI's apply writes it and the core `apply-job` runs:

@@ -704,16 +704,17 @@ func apiValidate(r apiReq) apiResp {
 }
 
 type jobState struct {
-	State   string `json:"state"` // running | ok | failed
-	Started int64  `json:"started"`
-	Ended   int64  `json:"ended,omitempty"`
-	Output  string `json:"output"`
-	Confirm int    `json:"confirm"`
-	Via     string `json:"via,omitempty"` // origin recorded in the pending marker (web UI | restore | rollback)
-	From    string `json:"from,omitempty"`
-	Comment string `json:"comment,omitempty"`
-	BaseRev string `json:"base_rev,omitempty"` // the router.yaml the candidate was built from (#68)
-	Pid     int    `json:"pid,omitempty"`      // the apply-job process (written when it starts)
+	State        string `json:"state"` // running | ok | failed
+	Started      int64  `json:"started"`
+	Ended        int64  `json:"ended,omitempty"`
+	Output       string `json:"output"`
+	Confirm      int    `json:"confirm"`
+	Via          string `json:"via,omitempty"` // origin recorded in the pending marker (web UI | restore | rollback)
+	From         string `json:"from,omitempty"`
+	Comment      string `json:"comment,omitempty"`
+	BaseRev      string `json:"base_rev,omitempty"` // the router.yaml the candidate was built from (#68)
+	Pid          int    `json:"pid,omitempty"`      // the apply-job process (written when it starts)
+	ListSnapshot string `json:"list_snapshot,omitempty"`
 }
 
 func apiApply(r apiReq) apiResp {
@@ -795,7 +796,7 @@ func runApplyJob(confirmSecs int) error {
 		token = strings.TrimSpace(string(tokenBytes))
 	}
 	os.Remove(confirmTokenFile)
-	o := applyOpts{Via: j0.Via, From: j0.From, Comment: j0.Comment, BaseRev: j0.BaseRev, ConfirmToken: token}
+	o := applyOpts{Via: j0.Via, From: j0.From, Comment: j0.Comment, BaseRev: j0.BaseRev, ConfirmToken: token, ListSnapshot: j0.ListSnapshot}
 	if o.Via == "" {
 		o.Via = "web UI"
 	}

@@ -119,7 +119,10 @@ the bridge has (`constructor:`), i.e. the prefix dhcpcd delegated.
 The home config (`ipv6_ra: true`, no `ipv6` block) renders
 `dhcp-range=::,constructor:br-lan,ra-only,45m` + `ra-param=br-lan,60,1800`.
 An extra network with `ipv6_ra: true` now gets RA even when its DHCPv4 pool is off (before, RA was
-only emitted together with a pool).
+only emitted together with a pool). When a WAN requests `ipv6_pd`, dhcpcd assigns the delegated
+prefix to every RA-enabled LAN bridge with unique SLA IDs (in configuration order; `br-lan` is 0
+when it has RA enabled, followed by extra networks); the ISP delegation must be large enough for
+those /64 subnets.
 
 ### `dns`
 

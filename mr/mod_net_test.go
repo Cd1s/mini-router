@@ -109,6 +109,28 @@ func TestNetHomeConfig(t *testing.T) {
 	}
 }
 
+func TestRenderDhcpcdAllocatesIPv6PDToRAEnabledNetworks(t *testing.T) {
+	c := testConfig(t)
+	c.Networks = []Network{
+		{Name: "iot", IPv4: "192.168.30.1/24", IPv6RA: true},
+		{Name: "guest", IPv4: "192.168.40.1/24", IPv6RA: false},
+	}
+	got := renderDhcpcd(c)
+	wantSubs(t, "dhcpcd.conf", got, "ia_pd 1 br-lan/0/64/1 br-iot/1/64/1\n")
+	wantNone(t, "dhcpcd.conf", got, "br-guest/2/64/1")
+}
+
+func TestRenderDhcpcdKeepsPDWhenMainRAIsOff(t *testing.T) {
+	c := testConfig(t)
+	c.LAN.IPv6RA = false
+	c.Networks = []Network{
+		{Name: "guest", IPv4: "192.168.30.1/24", IPv6RA: false},
+		{Name: "iot", IPv4: "192.168.40.1/24", IPv6RA: true},
+	}
+	got := renderDhcpcd(c)
+	wantSubs(t, "dhcpcd.conf", got, "ia_pd 1 br-lan/0/64/1 br-iot/2/64/1\n")
+}
+
 func TestNetGeneratedLinkCleanupOnce(t *testing.T) {
 	c := testConfig(t)
 	for i := range c.WAN {

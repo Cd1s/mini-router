@@ -489,6 +489,9 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 func restartAll(svcs []string) []string {
 	var failed []string
 	for _, s := range svcs {
+		if strings.HasPrefix(s, "mr-pppoe.") {
+			markDialStart(strings.TrimPrefix(s, "mr-pppoe."), time.Now().Unix())
+		}
 		if s == "mr-network" {
 			// re-run in place: restarting the service would restart everything that needs net (PPPoE redial)
 			if out, err := run("sh", GenDir+"/network.sh"); err != nil {
@@ -589,9 +592,12 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 	// on disk before the first new file: if the router goes down from here until the change is
 	// accepted, the next boot rolls it back. Claimed atomically: of two applies started at once, one
 	// is refused here.
-	if err := claimPending(pendingApply{Snapshot: snap, State: stateApplying, Via: o.Via, Pid: os.Getpid()}); err != nil {
+	if err := claimPending(pendingApply{Snapshot: snap, ListSnapshot: o.ListSnapshot, State: stateApplying, Via: o.Via, Pid: os.Getpid()}); err != nil {
 		os.Remove(snap)
 		return err
+	}
+	if o.ListSnapshot != "" {
+		clearRestoreListMarker()
 	}
 	if o.BaseRev != "" && configRev() != o.BaseRev {
 		// router.yaml changed between the request and now (mr set, an editor, another client):
@@ -729,12 +735,17 @@ func generatedByMR(path string) bool {
 // old files are back, so a crash in the middle of it rolls back again at boot.
 func rollback(snap string, cause error) error {
 	logf("apply failed, rolling back to %s: %v", filepath.Base(snap), cause)
+	listSnap := ""
+	if p, err := readPending(); err == nil && p.Snapshot == snap {
+		listSnap = p.ListSnapshot
+	}
 	keepRejected(snap)
 	svcs, err := restore(snap)
 	if err != nil {
 		return fmt.Errorf("%v\nROLLBACK FAILED: %v", cause, err)
 	}
 	dropStaged()
+	undoLists(listSnap)
 	restartAll(svcs)
 	if c, err := loadConfig(cfgFile, secFile); err == nil {
 		reconcileRunlevel(c)
@@ -854,12 +865,13 @@ func appendChangeLogAt(t time.Time, line string) {
 
 // pendingApply is the content of ConfirmFile.
 type pendingApply struct {
-	Snapshot    string `json:"snapshot"`               // history snapshot taken before the change
-	State       string `json:"state"`                  // stateApplying | statePending | stateReverting
-	Deadline    int64  `json:"deadline,omitempty"`     // unix time the confirm timer rolls back at (statePending)
-	Via         string `json:"via"`                    // origin: mr apply | web UI | restore
-	Pid         int    `json:"pid,omitempty"`          // the applying process (stateApplying)
-	ConfirmHash string `json:"confirm_hash,omitempty"` // sha256 of the one-time LAN handoff token
+	Snapshot     string `json:"snapshot"`                // history snapshot taken before the change
+	ListSnapshot string `json:"list_snapshot,omitempty"` // restore backup's list files, if any
+	State        string `json:"state"`                   // stateApplying | statePending | stateReverting
+	Deadline     int64  `json:"deadline,omitempty"`      // unix time the confirm timer rolls back at (statePending)
+	Via          string `json:"via"`                     // origin: mr apply | web UI | restore
+	Pid          int    `json:"pid,omitempty"`           // the applying process (stateApplying)
+	ConfirmHash  string `json:"confirm_hash,omitempty"`  // sha256 of the one-time LAN handoff token
 }
 
 // interrupted: an apply whose process is gone (killed, out of memory). Nothing finishes or undoes it
@@ -1028,6 +1040,9 @@ func startRevert(snap string) (*pendingApply, bool) {
 
 func armConfirm(snap string, secs int, via, token string) {
 	p := pendingApply{Snapshot: snap, State: statePending, Deadline: time.Now().Unix() + int64(secs), Via: via}
+	if old, err := readPending(); err == nil && old.Snapshot == snap {
+		p.ListSnapshot = old.ListSnapshot
+	}
 	if token != "" {
 		h := sha256.Sum256([]byte(token))
 		p.ConfirmHash = hex.EncodeToString(h[:])
@@ -1084,6 +1099,7 @@ func confirmTransition() confirmResult {
 		commitCfg, _ = loadConfig(cfgPath, secPath)
 	}
 	clearPending("") // an unreadable marker too: `mr confirm` is the way out
+	clearRestoreListMarker()
 	acceptStaged()
 	return confirmResult{ok: true, commitCfg: commitCfg, snapshot: func() string {
 		if p != nil {
@@ -1159,6 +1175,9 @@ func rollbackCommand(args []string, cfgPath, secPath string) error {
 		}
 		return err
 	}
+	if reverting {
+		undoLists(p.ListSnapshot)
+	}
 	restartAll(svcs)
 	if c, err := loadConfig(cfgPath, secPath); err == nil {
 		reconcileRunlevel(c)
@@ -1181,6 +1200,10 @@ func rollbackCommand(args []string, cfgPath, secPath string) error {
 func rollbackAtBoot(cfgPath, secPath string) error {
 	p, err := readPending()
 	if errors.Is(err, fs.ErrNotExist) {
+		if snap := readRestoreListMarker(); snap != "" {
+			undoLists(snap)
+			appendChangeLog("boot: restore list files rolled back before apply marker was written")
+		}
 		return nil
 	}
 	at := bootClock()
@@ -1201,6 +1224,7 @@ func rollbackAtBoot(cfgPath, secPath string) error {
 		return fmt.Errorf("rolling back the %s to %s: %w", what, filepath.Base(snap), err)
 	}
 	dropStaged()
+	undoLists(p.ListSnapshot)
 	if c, err := loadConfig(cfgPath, secPath); err == nil {
 		linkRunlevel(c)
 	}
@@ -1295,17 +1319,23 @@ func verify(c *Config, restarted []string) []string {
 }
 
 // verifyDeadline is shared by module Verify funcs that wait for something to come up.
-func verifyDeadline() time.Time { return time.Now().Add(90 * time.Second) }
+var (
+	verifyNow      = time.Now
+	verifySleep    = time.Sleep
+	verifyDeadline = func(cs ...*Config) time.Time {
+		return verifyNow().Add(90 * time.Second)
+	}
+)
 
 func waitFor(deadline time.Time, ok func() bool) bool {
 	for {
 		if ok() {
 			return true
 		}
-		if time.Now().After(deadline) {
+		if !verifyNow().Before(deadline) {
 			return false
 		}
-		time.Sleep(2 * time.Second)
+		verifySleep(2 * time.Second)
 	}
 }
 

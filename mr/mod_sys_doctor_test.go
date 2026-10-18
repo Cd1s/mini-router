@@ -110,6 +110,23 @@ func TestDoctorHealthy(t *testing.T) {
 	}
 }
 
+func TestDoctorWarnsExtraRANetworkWithoutGlobalPrefix(t *testing.T) {
+	eventEnv(t)
+	c := testConfig(t)
+	c.Networks = []Network{{Name: "iot", IPv4: "192.168.30.1/24", IPv6RA: true}}
+	e := fakeDocEnv()
+	e.global6 = func(dev string) []net.IP {
+		if dev == "br-iot" {
+			return nil
+		}
+		return []net.IP{net.ParseIP("2001:db8:1::1")}
+	}
+	r := runDoctor(c, e)
+	if f := docFind(r, "ipv6.iot"); f.Sev != "warn" || !strings.Contains(f.Detail, "br-iot") {
+		t.Fatalf("extra RA network was not diagnosed: %+v", f)
+	}
+}
+
 // Every check's bad paths, with the severity each deserves.
 func TestDoctorFindings(t *testing.T) {
 	eventEnv(t)
@@ -231,7 +248,7 @@ func TestDoctorFindings(t *testing.T) {
 	c.Firewall.Offload, c.Services.SSH.PasswordLogin = "hardware", false
 	// unknown NTP state (an image without the marker directory), early after boot
 	r = run(func(e *docEnv) { e.ntp = func() (bool, bool, time.Duration) { return false, false, 0 } })
-	if f := docFind(r, "clock"); f.Sev != "skip" {
+	if f := docFind(r, "clock"); f.Sev != "skip" || !strings.Contains(f.Detail, "mr-clock of an older image") {
 		t.Errorf("clock unknown: %+v", f)
 	}
 	r = run(func(e *docEnv) { e.uptime = 100; e.ntp = func() (bool, bool, time.Duration) { return false, true, 0 } })
