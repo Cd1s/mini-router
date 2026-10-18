@@ -298,7 +298,6 @@ func TestWifiValidateRejects(t *testing.T) {
 		{func(c *Config) { c.WiFi.Radios[1].Band = "2g" }, "only one radio per band"},
 		{func(c *Config) { c.secrets["wifi_guest_key"] = "short" }, "8-63 char"},
 		{func(c *Config) { c.secrets["wifi_guest_key"] = "tab\there-long" }, "printable ASCII"},
-		{func(c *Config) { c.WiFi.Country = "" }, "wifi.country: required when WiFi radios are enabled"},
 	}
 	for _, tc := range cases {
 		c := wifiLabConfig(t)
@@ -322,12 +321,11 @@ func TestWifiNoCountryNo80211h(t *testing.T) {
 	}
 }
 
-func TestWifiRequiresCountryWhenRadiosEnabled(t *testing.T) {
+func TestWifiAllowsMissingCountryForLegacyConfig(t *testing.T) {
 	c := wifiLabConfig(t)
 	c.WiFi.Country = ""
-	errs := strings.Join(c.Validate(), "\n")
-	if !strings.Contains(errs, "wifi.country: required when WiFi radios are enabled") {
-		t.Fatalf("empty country with enabled radios was accepted: %s", errs)
+	if errs := c.Validate(); len(errs) != 0 {
+		t.Fatalf("legacy config with empty country was rejected: %s", strings.Join(errs, "\n"))
 	}
 }
 

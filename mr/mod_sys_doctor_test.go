@@ -127,6 +127,17 @@ func TestDoctorWarnsExtraRANetworkWithoutGlobalPrefix(t *testing.T) {
 	}
 }
 
+func TestDoctorWarnsMissingWiFiCountry(t *testing.T) {
+	eventEnv(t)
+	c := testConfig(t)
+	c.WiFi.Country = ""
+	r := runDoctor(c, fakeDocEnv())
+	f := docFind(r, "wifi.country")
+	if f.Sev != "warn" || !strings.Contains(f.Detail, "5 GHz available channels are restricted") {
+		t.Fatalf("missing WiFi country was not diagnosed: %+v", f)
+	}
+}
+
 // Every check's bad paths, with the severity each deserves.
 func TestDoctorFindings(t *testing.T) {
 	eventEnv(t)

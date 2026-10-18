@@ -682,6 +682,10 @@ func docWiFi(c *Config, e *docEnv) []docFinding {
 		return []docFinding{{Sev: "skip", Title: "WiFi", Detail: "no radios configured"}}
 	}
 	var out []docFinding
+	if c.WiFi.Country == "" {
+		out = append(out, docFinding{ID: "wifi.country", Sev: "warn", Title: "WiFi", Detail: "country code is not set: 5 GHz available channels are restricted; set it in the WiFi page",
+			Fix: "open the WiFi page and set the country code; then mr plan; mr apply --confirm 120"})
+	}
 	for _, b := range e.wifi(c) {
 		out = append(out, docFinding{ID: "wifi." + strings.SplitN(b, ":", 2)[0], Sev: "risk", Title: "WiFi", Detail: eventClean(b, 160),
 			Fix: "mr wifi status; rc-service mr-hostapd restart; grep hostapd /var/log/messages | tail"})
