@@ -109,13 +109,14 @@ func TestSetupReportsInvalidConfigSeparatelyFromLANAccess(t *testing.T) {
 
 func TestFirstRunWizardAPISequence(t *testing.T) {
 	d := t.TempDir()
-	oldMarker, oldSecrets, oldSession, oldRead, oldLAN := firstRunMarker, apiSecretsPath, sessionDir, apiReadSecrets, loadLANConfig
+	oldMarker, oldSecrets, oldSession, oldRead, oldLAN, oldLog := firstRunMarker, apiSecretsPath, sessionDir, apiReadSecrets, loadLANConfig, ChangeLog
 	t.Cleanup(func() {
-		firstRunMarker, apiSecretsPath, sessionDir, apiReadSecrets, loadLANConfig = oldMarker, oldSecrets, oldSession, oldRead, oldLAN
+		firstRunMarker, apiSecretsPath, sessionDir, apiReadSecrets, loadLANConfig, ChangeLog = oldMarker, oldSecrets, oldSession, oldRead, oldLAN, oldLog
 	})
 	firstRunMarker = filepath.Join(d, "state", "first-run")
 	apiSecretsPath = filepath.Join(d, "secrets.yaml")
 	sessionDir = filepath.Join(d, "sessions")
+	ChangeLog = filepath.Join(d, "changes.log")
 	apiReadSecrets = func() map[string]string {
 		m := map[string]string{}
 		b, _ := os.ReadFile(apiSecretsPath)
