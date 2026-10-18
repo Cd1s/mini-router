@@ -31,6 +31,8 @@
 整台路由器就是一个 `router.yaml`。`mr`（静态 Go 程序，不常驻）负责校验、生成所有配置、应用并自检，出问题**自动回滚**。
 网页、命令行和 AI agent 走的是同一条路。
 
+当前稳定版本：**v0.4.0** / Current stable release: **v0.4.0**.
+
 ## 亮点 / Highlights
 
 - 🛡️ **改不坏**：每次改动先预览、分级；倒计时内不确认就自动回滚，断电也会回滚；完整历史，随时退回。
@@ -51,7 +53,9 @@
 
 | 模块 | 功能 |
 |---|---|
-| **网络** | PPPoE（1500 MTU）/ DHCP / 静态；**多拨**（单口多拨每条会话独立 MAC、多口多拨、拨号顺序），多线故障切换与负载均衡；策略路由（按设备 / 网段 / **域名**，设备的 IPv4 + IPv6 都能固定到一条线）；双线 IPv6，运营商换前缀自动恢复；访客 / IoT 网络、VLAN；**主路由 / 旁路由 / 纯 AP** 三种模式 |
+| **网络** | PPPoE（1500 MTU）/ DHCP / 静态；**多拨**（单口多拨每条会话独立 MAC、多口多拨、拨号顺序），多线故障切换与负载均衡；策略路由（按设备 / 网段 / **域名**，设备的 IPv4 + IPv6 都能固定到一条线）；双线 IPv6，运营商换前缀自动恢复；访客 / IoT 网络、VLAN；**主路由 / 旁路由 / 纯 AP** 三种模式；`require_public_ip` 在 PPPoE 得到私网 / CGNAT 时限次重拨；可选 `ipv6_relay` SLAAC 中继 |
+| **首次设置** | 新环境首次打开面板进入向导：管理员密码、时区、**检测上网方式**（`mr wan detect`）、上游 / LAN 冲突检查、WiFi 和带确认窗口的应用；First-run wizard for password, time zone, connection detection, upstream/LAN conflict check, WiFi and confirm-window apply |
+| **换环境** | 光猫与 LAN 同网段时仍可上网、解析和访问光猫管理页；ISP DNS 按线路健康状态合并，`dns.fallback` 兜底；网页改 LAN 网段会平移相关地址、清旧网桥地址并在新地址一次性确认，不失联；Changing ISP or LAN networks keeps internet, ISP DNS and modem access working, and confirms a LAN renumber on the new address |
 | **WiFi** | 多 SSID、WPA2/3、访客隔离；组播转单播、802.11v 频段引导、射频健康与自愈；定时开关 |
 | **DNS / DHCP** | 静态分配、本地记录、DNS 分流、DoT；**去广告**；DNS 主导权（拦截设备私自 DoH / DoT） |
 | **防火墙** | 端口转发、IPv6 入站、通信规则（含时间段）、硬件 / 软件卸载；默认拒绝公网入站 |
@@ -69,13 +73,15 @@
 **任意架构的 Alpine Linux**（x86 小主机、虚拟机、树莓派、ARM 板）——装好 Alpine（磁盘模式 `sys`）后：
 
 ```sh
-wget -O install.sh https://github.com/Cd1s/mini-router/releases/latest/download/install.sh && sh install.sh
+wget -O install.sh https://github.com/Cd1s/mini-router/releases/download/v0.4.0/install.sh && MR_VERSION=v0.4.0 sh install.sh
 ```
 
-按提示选模式、网口、WAN 类型和密码，完成后打开 `http://路由器IP/`。只有一个网口？选旁路由（`bypass`）。
+安装脚本会安装包括 `ethtool` 在内的依赖。按提示选模式、网口、WAN 类型和密码；AX6000 刷 v0.4.0 后，或 Alpine 使用
+`MR_APPLY=0` 安装后，**第一次打开面板会进入首次设置向导**，其中有“检测上网方式”。旧用户升级不会弹向导。
+只有一个网口？选旁路由（`bypass`）。首次向导和升级说明见下方文档。
 详细步骤、单网口、无人值守和卸载：[docs/install-alpine.md](docs/install-alpine.md)。
 
-**Redmi AX6000 固件**——OpenWrt 6.18 内核 + mt76 + WED/PPE 硬件加速，可先在内存里试运行再写入闪存，
+**Redmi AX6000 固件**——v0.4.0 的 OpenWrt 6.18 内核 + mt76 + WED/PPE 硬件加速，可先在内存里试运行再写入闪存，
 之后在网页里升级，失败自动回到旧系统：[docs/flash.md](docs/flash.md)。
 
 ## 使用 / Usage
@@ -107,7 +113,9 @@ mkdir -p ~/.claude/skills && cp -r skills/mini-router ~/.claude/skills/
 - `sudo ./tools/ci.sh`（Linux）：单元测试，用真实的 `nft` / `dnsmasq` / `hostapd` / `sing-box` 校验生成的配置，
   并在网络命名空间里跑防火墙、多线、代理、反向代理的端到端测试。
 - 网页本地调试：`python3 tools/mock/mockapi.py 8088`
-- 从源码构建：`./tools/release.sh v0.3.1 out/release`；AX6000 固件：`build/m3/`。
+- 从源码构建：`./tools/release.sh v0.4.0 out/release`；AX6000 固件：`build/m3/`。
+- 全新环境实验室：[tools/lab/](tools/lab/) 在全新 Alpine 虚拟机中运行真实 `install.sh`，模拟 DHCP、PPPoE、DHCPv6-PD、CGNAT、光猫同网段和 LAN 客户端，场景 01–07；只在构建机运行，不进 GitHub Actions。
+  Fresh-environment lab: [tools/lab/](tools/lab/) runs the real installer in fresh Alpine VMs with simulated DHCP, PPPoE, DHCPv6-PD, CGNAT, modem-overlapping-LAN and a LAN client (scenarios 01–07); it runs on the build host, outside GitHub Actions.
 
 ## License
 

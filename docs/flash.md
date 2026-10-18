@@ -1,10 +1,17 @@
-# mini-router 上闪存：内存测试 → 刷机 → 首次启动 → 回滚 → U-Boot 救援
+# mini-router v0.4.0 上闪存：内存测试 → 刷机 → 首次启动 → 回滚 → U-Boot 救援
 
 对象：Redmi AX6000（hanwckf 110M U-Boot，UBI 在 `0x600000`/`0x6e00000`，卷 `kernel` / `rootfs` / `rootfs_data`），
 现在闪存里是 OpenWrt main 6.18（r36531），路由器 `192.168.1.6`，SSH 别名 `router`。
 M3 的设计和校验细节见 [modules/platform.md](modules/platform.md)。**全家断网的时间窗口：刷机约 5 分钟；准备好网线和一台电脑。**
 
 规则：每一步先读、后写；任何一步和预期不符，停下来，不要"修一修继续"。
+
+本文对应发布版 **v0.4.0**。AX6000 镜像的 rootfs 已包含 `ethtool`（v0.4.0 用它读取永久 MAC，换 WAN / 多拨时
+恢复硬件地址），不需要在路由器上另装；如果在 Alpine 构建机或旁路环境里运行同一套工具，先 `apk add ethtool`。
+
+This page describes **v0.4.0**. The AX6000 rootfs already ships `ethtool`, used to read the permanent MAC when a WAN
+or multi-dial setup changes; no package installation is needed on the flashed router. Install `ethtool` in an Alpine
+build or side environment that runs the same tools.
 
 ## 0. 刷机前
 
@@ -104,7 +111,50 @@ cat /etc/router-changes.log | tail -3
 
 重复第 1 节的检查清单，再 `reboot` 一次，确认配置和状态（tailscale 登录、ddns / edge 证书）都保留。
 
-以后的升级：`sysupgrade -T` 校验后 `setsid /usr/libexec/mr/sysupgrade -y --sha256 … /tmp/<镜像> > /tmp/su.log 2>&1 &`。
+### 首次设置向导 / First-run setup wizard
+
+全新或擦除后的 `rootfs_data` 会由 `mr-preinit` 写入 `/etc/mini-router/state/first-run`。因此 v0.4.0 刷机后，
+第一次从 LAN 打开面板会进入向导；已经有配置的升级只保留原设置，不会弹向导。出厂机若还没有管理员密码，
+先在当前 LAN 的首次设密页设置密码，再进入向导。
+
+The marker `/etc/mini-router/state/first-run` is created by `mr-preinit` on a new or erased `rootfs_data`. After a
+v0.4.0 flash, the first panel visit from the LAN opens the wizard; an upgrade with existing settings keeps them and does
+not show it. A factory image without an administrator password first shows the LAN-only password setup page, then opens
+the wizard.
+
+向导依次提供管理员密码、时区、“检测上网方式”、上游 / LAN 网段冲突提示、WiFi 和应用预览。“检测上网方式”
+调用 `mr wan detect <物理网口>`，只做 PPPoE discovery 和一次性 DHCP DISCOVER，不拿租约、不写路由。应用沿用
+validate → plan → apply → confirm 的安全流程；未在确认窗口内保留会自动回滚。向导只建议 LAN 网段，不会自动改
+LAN 地址。
+
+The wizard covers the password, time zone, “Detect connection type”, upstream/LAN conflict advice, WiFi and a preview.
+`mr wan detect <physical-port>` performs stateless PPPoE discovery and DHCP DISCOVER without taking a lease or adding a
+route. Apply uses validate → plan → apply → confirm and rolls back when it is not confirmed. The wizard suggests a LAN
+range but never changes it automatically.
+
+### v0.4.0 升级 / v0.4.0 upgrade
+
+以后的升级（包括从 v0.3.x 升到 v0.4.0）：先用发布页 `SHA256SUMS` 校验对应的
+`mini-router-ax6000-v0.4.0-sysupgrade.tar`，再执行：
+
+```sh
+/usr/libexec/mr/sysupgrade -T --sha256 <SHA256SUMS 里的值> /tmp/mini-router-ax6000-v0.4.0-sysupgrade.tar
+setsid /usr/libexec/mr/sysupgrade -y --sha256 <同上> /tmp/mini-router-ax6000-v0.4.0-sysupgrade.tar > /tmp/su.log 2>&1 &
+```
+
+For an upgrade (including v0.3.x → v0.4.0), verify the v0.4.0 sysupgrade tarball against `SHA256SUMS`, then run the
+same two commands above. Do not erase `rootfs_data`: settings stay in place and an existing installation will not enter
+the first-run wizard.
+
+升级后第一次 `mr apply` 会重载防火墙、重启 `mr-panel` 并原地重跑 `network.sh`；面板监听所有地址，但防火墙的
+input 链只放行 LAN 网桥和 Tailscale，WAN 连接仍被拒绝。DHCPv6 客户端回包规则按 WAN 接口和源端口 547 匹配，
+多个 LAN 网络也会获得委派前缀（主 LAN 的前缀保持不变）。先用 `mr plan` 查看这些动作。
+
+After upgrading, the first `mr apply` reloads the firewall, restarts `mr-panel` and reruns `network.sh` in place. The
+panel binds all addresses, while the firewall input chain still accepts only LAN bridges and Tailscale. DHCPv6 client
+replies are matched by WAN interface and source port 547, and delegated prefixes are also assigned to extra LAN networks
+(the main LAN prefix stays unchanged). Inspect these actions with `mr plan` first.
+
 从闪存运行时它会 kexec 进新内核里的安装程序，路由器断网约 2 分钟；kexec 之前失败不会改动闪存，新内核卡住看门狗会
 30 秒后回到旧系统。设置（rootfs_data）保留；新镜像第一次启动时，`mr-preinit` 删掉 overlay 里那些新镜像自带的程序文件
 （`/bin /sbin /lib /usr /www /etc/init.d` 下、镜像里也有的路径，比如手工部署的 `mr` 或旧版脚本），让新版本生效；
