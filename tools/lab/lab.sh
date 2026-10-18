@@ -422,7 +422,8 @@ isp_cmd(){
       if [ "$v6" != none ]; then
         # DHCP modem mode can also advertise a single on-link /64.  It deliberately has
         # no DHCPv6-PD service, which is the IPv6 relay scenario.
-        run_ns "$n" ip -6 addr add "2001:db8:$id:$wan::1/64" dev "$dev"
+        run_ns "$n" ip -6 addr add "2001:db8:$id:$wan::2/64" dev "$dev"
+        run_ns "$n" ip -6 addr add "2001:db8:$id:99::2/64" dev "$dev"
         run_ns "$n" ip -6 addr add "fe80::1/64" dev "$dev"
         printf 'interface %s { AdvSendAdvert on; MinRtrAdvInterval 3; MaxRtrAdvInterval 10; AdvManagedFlag off; AdvOtherConfigFlag off; prefix 2001:db8:%s:%s::/64 { AdvOnLink on; AdvAutonomous on; }; };\n' \
           "$dev" "$id" "$wan" > "$d/radvd.conf"

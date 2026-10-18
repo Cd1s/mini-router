@@ -8,21 +8,17 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"sort"
-	"strings"
 )
 
-const ipv6RelaySet = "ipv6_relay6"
-
 var (
-	ipv6RelayStateFile = RunDir + "/ipv6-relay.json"
-	ipv6RelayLockFile  = RunDir + "/ipv6-relay.lock"
-	ipv6RelayRun       = func(name string, args ...string) (string, error) { return run(name, args...) }
-	ipv6RelayRunStdin  = func(input string, name string, args ...string) (string, error) {
-		return runStdin(input, name, args...)
-	}
+	ipv6RelayStateFile   = RunDir + "/ipv6-relay.json"
+	ipv6RelayLockFile    = RunDir + "/ipv6-relay.lock"
+	ipv6RelayRun         = func(name string, args ...string) (string, error) { return run(name, args...) }
+	ipv6RelaySetProxyNDP = ipv6RelayProxyNDP
 )
 
 type ipv6RelayPrefix struct {
@@ -40,8 +36,12 @@ type ipv6RelayProxy struct {
 type ipv6RelayState struct {
 	Prefixes []ipv6RelayPrefix `json:"prefixes"`
 	Proxies  []ipv6RelayProxy  `json:"proxies"`
+	Misses   map[string]int    `json:"misses,omitempty"`
 	LANAddrs []string          `json:"lan_addrs"`
 }
+
+const ipv6RelayMaxProxies = 64
+const ipv6RelayProxyGrace = 3
 
 func ipv6RelayEnabled(c *Config) bool {
 	if c == nil || !c.LAN.IPv6RA {
@@ -141,7 +141,7 @@ func ipv6RelayPrefixes(c *Config) []ipv6RelayPrefix {
 				continue
 			}
 			seen[key] = true
-			addr := p.Addr().Next()
+			addr := netip.MustParseAddr(ipv6RelayLANAddr(p, c.LAN.Bridge))
 			out = append(out, ipv6RelayPrefix{WAN: w.Name, Dev: w.Ifname(), Prefix: p.String(), Addr: addr.String()})
 		}
 	}
@@ -149,8 +149,8 @@ func ipv6RelayPrefixes(c *Config) []ipv6RelayPrefix {
 	return out
 }
 
-func ipv6RelayNeighbours(bridge string) []netip.Addr {
-	out, err := ipv6RelayRun("ip", "-6", "-j", "neigh", "show", "dev", bridge)
+func ipv6RelayNeighbours(dev string) []netip.Addr {
+	out, err := ipv6RelayRun("ip", "-6", "-j", "neigh", "show", "dev", dev)
 	if err != nil {
 		return nil
 	}
@@ -167,7 +167,7 @@ func ipv6RelayNeighbours(bridge string) []netip.Addr {
 		if err != nil || !ip.IsGlobalUnicast() {
 			continue
 		}
-		good := len(n.State) == 0
+		good := false
 		for _, st := range n.State {
 			if st == "REACHABLE" || st == "STALE" || st == "DELAY" || st == "PROBE" || st == "PERMANENT" {
 				good = true
@@ -180,26 +180,80 @@ func ipv6RelayNeighbours(bridge string) []netip.Addr {
 	return addrs
 }
 
-func ipv6RelaySetScript(prefixes []ipv6RelayPrefix) string {
-	var elems []string
-	for _, p := range prefixes {
-		elems = append(elems, p.Prefix)
+func ipv6RelayLocalAddrs(dev string) []netip.Addr {
+	out, err := ipv6RelayRun("ip", "-6", "-j", "addr", "show", "dev", dev, "scope", "global")
+	if err != nil {
+		return nil
 	}
-	s := "flush set inet mr " + ipv6RelaySet + "\n"
-	if len(elems) > 0 {
-		s += "add element inet mr " + ipv6RelaySet + " { " + strings.Join(elems, ", ") + " }\n"
+	var links []struct {
+		AddrInfo []struct {
+			Family string `json:"family"`
+			Local  string `json:"local"`
+		} `json:"addr_info"`
 	}
-	return s
+	if json.Unmarshal([]byte(out), &links) != nil {
+		return nil
+	}
+	var outAddrs []netip.Addr
+	for _, l := range links {
+		for _, a := range l.AddrInfo {
+			ip, err := netip.ParseAddr(a.Local)
+			if err == nil && a.Family == "inet6" && ip.IsGlobalUnicast() {
+				outAddrs = append(outAddrs, ip)
+			}
+		}
+	}
+	return outAddrs
+}
+
+func ipv6RelayLANAddr(prefix netip.Prefix, bridge string) string {
+	out, err := ipv6RelayRun("ip", "-j", "link", "show", "dev", bridge)
+	var links []struct {
+		Address string `json:"address"`
+	}
+	if err == nil && json.Unmarshal([]byte(out), &links) == nil && len(links) > 0 {
+		if mac, err := net.ParseMAC(links[0].Address); err == nil && len(mac) == 6 {
+			b := prefix.Addr().As16()
+			b[8] = mac[0] ^ 2
+			copy(b[9:11], mac[1:3])
+			b[11], b[12] = 0xff, 0xfe
+			copy(b[13:], mac[3:])
+			return netip.AddrFrom16(b).String()
+		}
+	}
+	// A bridge without a readable MAC is unusual, but ::2 avoids the common upstream ::1.
+	return prefix.Addr().Next().Next().String()
+}
+
+func ipv6RelayProxyNDP(dev string, enabled bool) error {
+	value := "0\n"
+	if enabled {
+		value = "1\n"
+	}
+	path := "/proc/sys/net/ipv6/conf/" + dev + "/proxy_ndp"
+	return os.WriteFile(path, []byte(value), 0644)
 }
 
 func ipv6RelaySync(c *Config) error {
-	lk := flock(ipv6RelayLockFile, true)
+	if !ipv6RelayEnabled(c) {
+		if _, err := os.Stat(ipv6RelayStateFile); os.IsNotExist(err) {
+			return nil
+		}
+	}
+	wait := true
+	if !ipv6RelayEnabled(c) {
+		wait = false
+	}
+	lk := flock(ipv6RelayLockFile, wait)
 	if lk == nil {
+		if !ipv6RelayEnabled(c) {
+			return nil
+		}
 		return fmt.Errorf("IPv6 relay: cannot lock state")
 	}
 	defer lk.Close()
 	old := readIPv6RelayState()
-	cur := ipv6RelayState{Prefixes: ipv6RelayPrefixes(c)}
+	cur := ipv6RelayState{Prefixes: ipv6RelayPrefixes(c), Misses: map[string]int{}}
 	prefixesChanged := len(old.Prefixes) != len(cur.Prefixes)
 	if !prefixesChanged {
 		for i := range old.Prefixes {
@@ -215,6 +269,7 @@ func ipv6RelaySync(c *Config) error {
 				return fmt.Errorf("IPv6 relay LAN address %s: %v", p.Addr, err)
 			}
 		}
+		ipv6RelayRun("ip", "-6", "route", "replace", p.Addr+"/128", "dev", c.LAN.Bridge, "proto", "static", "metric", "50")
 		cur.LANAddrs = append(cur.LANAddrs, p.Addr+"/64")
 	}
 	for _, a := range old.LANAddrs {
@@ -225,19 +280,57 @@ func ipv6RelaySync(c *Config) error {
 			}
 		}
 		if !keep {
-			ipv6RelayRun("ip", "-6", "addr", "del", a, "dev", c.LAN.Bridge)
+			if ip, err := netip.ParsePrefix(a); err == nil {
+				ipv6RelayRun("ip", "-6", "route", "del", ip.Addr().String()+"/128", "dev", c.LAN.Bridge, "proto", "static", "metric", "50")
+			}
+			ipv6RelayRun("ip", "-6", "addr", "replace", a, "dev", c.LAN.Bridge, "preferred_lft", "0", "valid_lft", "2700")
 		}
 	}
 
 	for _, p := range cur.Prefixes {
+		// The same /64 is connected on br-lan and the WAN. Prefer the WAN for
+		// destinations that are not known LAN neighbours; install /128 LAN host
+		// routes below to keep local traffic on the bridge.
+		ipv6RelayRun("ip", "-6", "route", "replace", p.Prefix, "dev", p.Dev, "proto", "static", "metric", "100")
 		// Linux only answers proxy-NDP requests on an interface whose per-device
 		// proxy_ndp switch is enabled. The interface can be created after network.sh.
-		ipv6RelayRun("sysctl", "-q", "-w", "net.ipv6.conf."+p.Dev+".proxy_ndp=1")
-		for _, ip := range ipv6RelayNeighbours(c.LAN.Bridge) {
+		if err := ipv6RelaySetProxyNDP(p.Dev, true); err != nil {
+			return fmt.Errorf("IPv6 relay proxy_ndp %s: %v", p.Dev, err)
+		}
+		lanNeigh := ipv6RelayNeighbours(c.LAN.Bridge)
+		wanNeigh := ipv6RelayNeighbours(p.Dev)
+		local := append(ipv6RelayLocalAddrs(c.LAN.Bridge), ipv6RelayLocalAddrs(p.Dev)...)
+		for _, ip := range lanNeigh {
+			ipv6RelayRun("ip", "-6", "route", "replace", ip.String()+"/128", "dev", c.LAN.Bridge, "proto", "static", "metric", "50")
 			if !netip.MustParsePrefix(p.Prefix).Contains(ip) || ip.String() == p.Addr {
 				continue
 			}
+			blocked := false
+			for _, own := range local {
+				if own == ip {
+					blocked = true
+				}
+			}
+			for _, own := range wanNeigh {
+				if own == ip {
+					blocked = true
+				}
+			}
+			if blocked || len(cur.Proxies) >= ipv6RelayMaxProxies {
+				continue
+			}
 			cur.Proxies = append(cur.Proxies, ipv6RelayProxy{Addr: ip.String(), Dev: p.Dev})
+		}
+	}
+	for _, p := range old.Prefixes {
+		found := false
+		for _, now := range cur.Prefixes {
+			if p == now {
+				found = true
+			}
+		}
+		if !found {
+			ipv6RelayRun("ip", "-6", "route", "del", p.Prefix, "dev", p.Dev, "proto", "static", "metric", "100")
 		}
 	}
 	sort.Slice(cur.Proxies, func(i, j int) bool {
@@ -251,10 +344,28 @@ func ipv6RelaySync(c *Config) error {
 		}
 		return false
 	}
-	for _, p := range old.Proxies {
-		if !has(cur.Proxies, p) {
-			ipv6RelayRun("ip", "-6", "neigh", "del", "proxy", p.Addr, "dev", p.Dev)
+	activePrefix := func(dev, addr string) bool {
+		ip, err := netip.ParseAddr(addr)
+		if err != nil {
+			return false
 		}
+		for _, p := range cur.Prefixes {
+			if p.Dev == dev && netip.MustParsePrefix(p.Prefix).Contains(ip) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, p := range old.Proxies {
+		if has(cur.Proxies, p) {
+			continue
+		}
+		if activePrefix(p.Dev, p.Addr) && old.Misses[p.Dev+"\x00"+p.Addr] < ipv6RelayProxyGrace {
+			cur.Proxies = append(cur.Proxies, p)
+			cur.Misses[p.Dev+"\x00"+p.Addr] = old.Misses[p.Dev+"\x00"+p.Addr] + 1
+			continue
+		}
+		ipv6RelayRun("ip", "-6", "neigh", "del", "proxy", p.Addr, "dev", p.Dev)
 	}
 	activeDevs := map[string]bool{}
 	for _, p := range cur.Prefixes {
@@ -262,7 +373,7 @@ func ipv6RelaySync(c *Config) error {
 	}
 	for _, p := range old.Prefixes {
 		if !activeDevs[p.Dev] {
-			ipv6RelayRun("sysctl", "-q", "-w", "net.ipv6.conf."+p.Dev+".proxy_ndp=0")
+			ipv6RelaySetProxyNDP(p.Dev, false)
 		}
 	}
 	for _, p := range cur.Proxies {
@@ -274,11 +385,6 @@ func ipv6RelaySync(c *Config) error {
 		// dnsmasq's constructor: range notices the new address, but a reload makes the
 		// first RA immediate and emits a zero-lifetime RA when a prefix is removed.
 		ipv6RelayRun("rc-service", "dnsmasq", "reload")
-	}
-	if ipv6RelayEnabled(c) {
-		if _, err := ipv6RelayRunStdin(ipv6RelaySetScript(cur.Prefixes), "nft", "-f", "-"); err != nil {
-			return err
-		}
 	}
 	return writeIPv6RelayState(cur)
 }

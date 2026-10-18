@@ -44,7 +44,7 @@ ip -br link | grep -c mrlab                     # must print 0
 
 Scenarios (TAP output, log in `/tmp/mrlab<ID>-<name>.log`): `$L run $ID 01-fresh-dhcp`,
 `02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`,
-`06-dhcp-slaac-relay` (DHCP WAN with `v6=slaac`, no PD, then relay enabled and disabled).
+`08-dhcp-slaac-relay` (DHCP WAN with `v6=slaac`, no PD, then relay enabled and disabled).
 Each starts with `reset` and removes its lab when it ends (passed, failed or interrupted;
 `MRLAB_KEEP=1` leaves it up for inspection), so give every parallel scenario its own ID. A failed
 setup step prints `Bail out!` and stops the scenario.

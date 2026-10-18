@@ -148,7 +148,7 @@ func renderDhcpcd(c *Config) string {
 		fmt.Fprintf(&b, "\ninterface %s\n  ipv6only\n  ipv6rs\n  metric %d\n", w.Ifname(), 1024+w.Metric)
 		// not a dhcpcd option: recorded so that toggling it restarts dhcpcd, whose events then add or
 		// remove the IPv6 source route (hookDhcpcd)
-		fmt.Fprintf(&b, "  # mr: ipv6_srcroute=%t ipv6_relay=%t\n", w.SrcRoute, w.IPv6Relay)
+		fmt.Fprintf(&b, "  # mr: ipv6_srcroute=%t\n", w.SrcRoute)
 		if w.IPv6PD {
 			fmt.Fprintf(&b, "  ia_pd %d %s/0/64/1\n", i+1, c.LAN.Bridge)
 		}
@@ -780,9 +780,6 @@ func netNft(c *Config, hook string, n *Nft) {
 	switch hook {
 	case "defs":
 		policyDomainDefs(c, n)
-		if ipv6RelayEnabled(c) {
-			n.W("set %s { type ipv6_addr; flags interval; auto-merge; comment \"SLAAC relay prefixes\"; }", ipv6RelaySet)
-		}
 		for _, name := range pd6WANs(c) {
 			n.W("set %s { type ipv6_addr; flags interval; auto-merge; comment \"prefixes delegated by wan %s\"; }", pd6Set(c, name), name)
 		}
@@ -831,9 +828,6 @@ func netNft(c *Config, hook string, n *Nft) {
 			n.W("%s", balanceRule(c, m))
 		}
 	case "forward":
-		if ipv6RelayEnabled(c) {
-			n.W("iifname %s oifname %q ip6 daddr @%s accept comment \"ipv6-relay\"", nftIfnames(c.WANIfnames()), c.LAN.Bridge, ipv6RelaySet)
-		}
 		if c.Mcast.IGMPProxy {
 			if up := c.WANByName(c.Mcast.Upstream); up != nil {
 				n.W("iifname %q ip daddr 224.0.0.0/4 accept comment \"igmpproxy\"", up.Ifname())

@@ -187,10 +187,12 @@ LAN bridge 设置 proxy ARP；LAN 到这个单一网关地址做 masquerade。`m
 dhcpcd 事件和 crond 每分钟扫描 WAN 的全局 `/64`，给 `br-lan` 放一个稳定的 `::1` 地址，让现有 dnsmasq
 `constructor:br-lan` RA 渲染通告该前缀；同时按 LAN 邻居表逐地址维护 `ip -6 neigh ... proxy`。PD 文件出现时
 relay 立即让位，PD 消失后下一次事件恢复。WAN 变化、关闭开关或删除 WAN 会删除代理项和 LAN relay 地址。
-这不是 NAT66，LAN 主机仍使用运营商的全局地址；防火墙只放行动态 relay 前缀从 relay WAN 到 LAN 的转发。
+这不是 NAT66，LAN 主机仍使用运营商的全局地址；入站仍遵守默认拒绝和现有 `firewall.ipv6_allow` 显式规则。
+桥地址使用 `br-lan` 的 EUI-64 作为接口标识符，避免与上游常用的 `::1` 冲突；邻居扫描排除路由器自身和 WAN 邻居，
+最多维护 64 个 proxy 条目。邻居短暂从缓存消失时保留三个扫描周期，避免回包空窗；新主机首次出现后最迟一个扫描周期（约 60 秒）建立代理。
+撤销前缀会先以 preferred lifetime 0 的地址触发 dnsmasq 发弃用 RA，再等待 valid lifetime 到期。
 
-实现方案比较：Linux `proxy_ndp` 本身只提供逐地址的邻居代理，需要持续跟踪动态主机；`ndppd` 可以常驻并按前缀响应，Alpine
-community 在部分 Alpine 版本有包（当前 v3.24 索引未提供；安装包体积随版本变化，需以目标索引为准），并会给默认镜像增加一个常驻进程和运行时内存。这里采用现有 dhcpcd 钩子加 crond 的扫描，
+实现方案比较：Linux `proxy_ndp` 本身只提供逐地址的邻居代理，需要持续跟踪动态主机；按前缀响应的常驻代理会增加进程和运行时内存。这里采用现有 dhcpcd 钩子加 crond 的扫描，
 没有空闲常驻进程，默认也不启用 crond relay 行；这是小内存路由器的优先方案。扫描只在配置开启时生成 `mr net ipv6-relay --cron`。
 
 没有任何开了 `ipv6` 的 DHCP / 静态 WAN 落在其上的 WAN 接口（`ipv6: false`，或只跑 PPPoE）不收 RA：`network.sh` 把它的

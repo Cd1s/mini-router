@@ -61,7 +61,6 @@ wan:
     metric: 80
     peerdns: true
     ipv6: true
-    ipv6_relay: true            # lab: SLAAC /64 without PD is relayed to br-lan
   - name: office                # static address on VLAN 30
     device: wan
     vlan: 30
