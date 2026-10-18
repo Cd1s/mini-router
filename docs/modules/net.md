@@ -184,12 +184,14 @@ LAN bridge 设置 proxy ARP；LAN 到这个单一网关地址做 masquerade。`m
 （仅支持 PPPoE，地址必须是私网 IPv4）；
 例如 `192.168.1.1` 会在物理口加 `192.168.1.2/32` 和主机路由，LAN 可访问光猫管理页（面板入口留待后续）。
 `ipv6_relay` 默认关闭，且需要 `ipv6: true` 与 `lan.ipv6_ra: true`。它适用于上游只有 SLAAC `/64`、没有 DHCPv6-PD 的线路：
-dhcpcd 事件和 crond 每分钟扫描 WAN 的全局 `/64`，给 `br-lan` 放一个稳定的 `::1` 地址，让现有 dnsmasq
+dhcpcd 事件和 crond 每分钟扫描 WAN 的全局 `/64`，给 `br-lan` 放一个基于桥 MAC 的稳定 EUI-64 地址，让现有 dnsmasq
 `constructor:br-lan` RA 渲染通告该前缀；同时按 LAN 邻居表逐地址维护 `ip -6 neigh ... proxy`。PD 文件出现时
 relay 立即让位，PD 消失后下一次事件恢复。WAN 变化、关闭开关或删除 WAN 会删除代理项和 LAN relay 地址。
 这不是 NAT66，LAN 主机仍使用运营商的全局地址；入站仍遵守默认拒绝和现有 `firewall.ipv6_allow` 显式规则。
 桥地址使用 `br-lan` 的 EUI-64 作为接口标识符，避免与上游常用的 `::1` 冲突；邻居扫描排除路由器自身和 WAN 邻居，
-最多维护 64 个 proxy 条目。邻居短暂从缓存消失时保留三个扫描周期，避免回包空窗；新主机首次出现后最迟一个扫描周期（约 60 秒）建立代理。
+最多维护 64 个 proxy 条目，并为通过筛选的 LAN 地址维护临时 `/128` bridge 路由；邻居短暂从缓存消失时保留三个扫描周期，避免回包空窗；扫描只能代理已经出现在
+`br-lan` 邻居表中的全局地址，静默且从未以全局源地址发包的主机无法被被动发现，需先产生一次 IPv6 流量；出现后最迟一个扫描周期（约 60 秒）建立代理。
+每轮最多检查 64 个候选地址，主动探测到 WAN 上已有应答的地址会被排除；关闭 relay、前缀变化或主机消失时会清理这些 `/128` 路由。
 撤销前缀会先以 preferred lifetime 0 的地址触发 dnsmasq 发弃用 RA，再等待 valid lifetime 到期。
 
 实现方案比较：Linux `proxy_ndp` 本身只提供逐地址的邻居代理，需要持续跟踪动态主机；按前缀响应的常驻代理会增加进程和运行时内存。这里采用现有 dhcpcd 钩子加 crond 的扫描，

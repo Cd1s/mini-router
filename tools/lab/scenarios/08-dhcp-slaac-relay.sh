@@ -13,8 +13,8 @@ check "relay puts the SLAAC prefix on br-lan" retry 60 lab console "$ID" 'ip -6 
 step lab lan "$ID" dhcp
 check "LAN client gets the relayed global IPv6 address" retry 30 lab lan "$ID" exec 'ip -6 addr show scope global | grep -q "2001:db8:'"$ID"':1"'
 client_v6=$(lab lan "$ID" exec "ip -6 -o addr show scope global | awk 'NR==1{print \$4}' | cut -d/ -f1")
-client_mac=$(lab lan "$ID" exec "cat /sys/class/net/mrlab${ID}slp/address")
-step lab console "$ID" "ip -6 neigh replace $client_v6 lladdr $client_mac dev br-lan"
+relay_addr=$(lab console "$ID" "ip -6 -o addr show dev br-lan scope global | awk 'NR==1{print \$4}' | cut -d/ -f1")
+info lab lan "$ID" exec "ping6 -I \"$client_v6\" -c 1 -W 3 $relay_addr || true"
 step lab console "$ID" 'mr net ipv6-relay --cron'
 step lab console "$ID" 'mr net ipv6-relay --cron'
 info lab console "$ID" 'ip -6 route; ip -6 neigh show proxy; cat /run/mini-router/ipv6-relay.json'

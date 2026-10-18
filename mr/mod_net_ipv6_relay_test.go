@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -109,6 +110,9 @@ func TestIPv6RelaySyncTracksNeighboursAndCleansOnDisable(t *testing.T) {
 	ipv6RelayRun = func(name string, args ...string) (string, error) {
 		line := name + " " + strings.Join(args, " ")
 		calls = append(calls, line)
+		if name == "ping6" {
+			return "", errors.New("no reply")
+		}
 		if strings.Contains(line, "addr show dev wan") {
 			return `[{"addr_info":[{"family":"inet6","local":"2001:db8:1::2","prefixlen":64}]}]`, nil
 		}
@@ -199,5 +203,51 @@ func TestIPv6RelayPDTransitionCleansActiveRelay(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("PD transition missing %q:\n%s", want, joined)
 		}
+	}
+}
+
+func TestIPv6RelayRoutesStayInsidePrefixAndAreCleaned(t *testing.T) {
+	d := t.TempDir()
+	oldState, oldLock, oldRun, oldSet, oldWan := ipv6RelayStateFile, ipv6RelayLockFile, ipv6RelayRun, ipv6RelaySetProxyNDP, wanRunDir
+	ipv6RelayStateFile, ipv6RelayLockFile, wanRunDir = filepath.Join(d, "state.json"), filepath.Join(d, "lock"), filepath.Join(d, "wan")
+	os.MkdirAll(wanRunDir, 0755)
+	writeIPv6RelayState(ipv6RelayState{Prefixes: []ipv6RelayPrefix{{WAN: "wan", Dev: "wan", Prefix: "2001:db8:1::/64", Addr: "2001:db8:1::2"}}, Routes: []ipv6RelayRoute{{Addr: "2001:4860:4860::8888", Dev: "br-lan"}}})
+	var calls []string
+	ipv6RelayRun = func(name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		calls = append(calls, line)
+		switch {
+		case name == "ping6":
+			return "", errors.New("no reply")
+		case strings.Contains(line, "addr show dev wan"):
+			return `[{"addr_info":[{"family":"inet6","local":"2001:db8:1::2","prefixlen":64}]}]`, nil
+		case strings.Contains(line, "neigh show dev br-lan"):
+			return `[{"dst":"2001:db8:1::20","state":["STALE"]},{"dst":"2001:4860:4860::8888","state":["STALE"]}]`, nil
+		default:
+			return "", nil
+		}
+	}
+	ipv6RelaySetProxyNDP = func(string, bool) error { return nil }
+	t.Cleanup(func() {
+		ipv6RelayStateFile, ipv6RelayLockFile, ipv6RelayRun, ipv6RelaySetProxyNDP, wanRunDir = oldState, oldLock, oldRun, oldSet, oldWan
+	})
+	c := &Config{LAN: LAN{Bridge: "br-lan", IPv6RA: true}, WAN: []WAN{{Name: "wan", Device: "wan", Proto: "dhcp", IPv6: true, IPv6Relay: true}}}
+	if err := ipv6RelaySync(c); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	if strings.Contains(joined, "route replace 2001:4860:4860::8888/128") {
+		t.Fatalf("out-of-prefix neighbour received a host route:\n%s", joined)
+	}
+	if !strings.Contains(joined, "route replace 2001:db8:1::20/128") {
+		t.Fatalf("in-prefix neighbour did not receive a host route:\n%s", joined)
+	}
+	c.WAN[0].IPv6Relay = false
+	calls = nil
+	if err := ipv6RelaySync(c); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(calls, "\n"), "route del 2001:db8:1::20/128") {
+		t.Fatalf("relay host route was not cleaned:\n%s", strings.Join(calls, "\n"))
 	}
 }

@@ -33,15 +33,22 @@ type ipv6RelayProxy struct {
 	Dev  string `json:"dev"`
 }
 
+type ipv6RelayRoute struct {
+	Addr string `json:"addr"`
+	Dev  string `json:"dev"`
+}
+
 type ipv6RelayState struct {
 	Prefixes []ipv6RelayPrefix `json:"prefixes"`
 	Proxies  []ipv6RelayProxy  `json:"proxies"`
+	Routes   []ipv6RelayRoute  `json:"routes,omitempty"`
 	Misses   map[string]int    `json:"misses,omitempty"`
 	LANAddrs []string          `json:"lan_addrs"`
 }
 
 const ipv6RelayMaxProxies = 64
 const ipv6RelayProxyGrace = 3
+const ipv6RelayProbeMax = 64
 
 func ipv6RelayEnabled(c *Config) bool {
 	if c == nil || !c.LAN.IPv6RA {
@@ -77,7 +84,7 @@ func readIPv6RelayState() ipv6RelayState {
 }
 
 func writeIPv6RelayState(s ipv6RelayState) error {
-	if len(s.Prefixes) == 0 && len(s.Proxies) == 0 && len(s.LANAddrs) == 0 {
+	if len(s.Prefixes) == 0 && len(s.Proxies) == 0 && len(s.Routes) == 0 && len(s.LANAddrs) == 0 {
 		err := os.Remove(ipv6RelayStateFile)
 		if os.IsNotExist(err) {
 			return nil
@@ -234,6 +241,15 @@ func ipv6RelayProxyNDP(dev string, enabled bool) error {
 	return os.WriteFile(path, []byte(value), 0644)
 }
 
+// ipv6RelayProbe asks the WAN whether an address is already occupied upstream.
+// A reply means the address must never be proxied from LAN. The caller bounds
+// the number of probes per scan so a hostile neighbour table cannot create
+// unbounded work.
+func ipv6RelayProbe(dev, addr string) bool {
+	_, err := ipv6RelayRun("ping6", "-c", "1", "-W", "1", "-I", dev, addr)
+	return err == nil
+}
+
 func ipv6RelaySync(c *Config) error {
 	if !ipv6RelayEnabled(c) {
 		if _, err := os.Stat(ipv6RelayStateFile); os.IsNotExist(err) {
@@ -287,40 +303,47 @@ func ipv6RelaySync(c *Config) error {
 		}
 	}
 
+	lanNeigh := ipv6RelayNeighbours(c.LAN.Bridge)
+	local := ipv6RelayLocalAddrs(c.LAN.Bridge)
+	localSet := map[string]bool{}
+	for _, ip := range local {
+		localSet[ip.String()] = true
+	}
+	probeCount := 0
 	for _, p := range cur.Prefixes {
 		// The same /64 is connected on br-lan and the WAN. Prefer the WAN for
 		// destinations that are not known LAN neighbours; install /128 LAN host
 		// routes below to keep local traffic on the bridge.
 		ipv6RelayRun("ip", "-6", "route", "replace", p.Prefix, "dev", p.Dev, "proto", "static", "metric", "100")
-		// Linux only answers proxy-NDP requests on an interface whose per-device
-		// proxy_ndp switch is enabled. The interface can be created after network.sh.
 		if err := ipv6RelaySetProxyNDP(p.Dev, true); err != nil {
 			return fmt.Errorf("IPv6 relay proxy_ndp %s: %v", p.Dev, err)
 		}
-		lanNeigh := ipv6RelayNeighbours(c.LAN.Bridge)
 		wanNeigh := ipv6RelayNeighbours(p.Dev)
-		local := append(ipv6RelayLocalAddrs(c.LAN.Bridge), ipv6RelayLocalAddrs(p.Dev)...)
-		for _, ip := range lanNeigh {
-			ipv6RelayRun("ip", "-6", "route", "replace", ip.String()+"/128", "dev", c.LAN.Bridge, "proto", "static", "metric", "50")
-			if !netip.MustParsePrefix(p.Prefix).Contains(ip) || ip.String() == p.Addr {
-				continue
-			}
-			blocked := false
-			for _, own := range local {
-				if own == ip {
-					blocked = true
-				}
-			}
-			for _, own := range wanNeigh {
-				if own == ip {
-					blocked = true
-				}
-			}
-			if blocked || len(cur.Proxies) >= ipv6RelayMaxProxies {
-				continue
-			}
-			cur.Proxies = append(cur.Proxies, ipv6RelayProxy{Addr: ip.String(), Dev: p.Dev})
+		wanSet := map[string]bool{}
+		for _, ip := range append(wanNeigh, ipv6RelayLocalAddrs(p.Dev)...) {
+			wanSet[ip.String()] = true
 		}
+		prefix := netip.MustParsePrefix(p.Prefix)
+		for _, ip := range lanNeigh {
+			addr := ip.String()
+			if !prefix.Contains(ip) || addr == p.Addr || localSet[addr] || wanSet[addr] || len(cur.Proxies) >= ipv6RelayMaxProxies {
+				continue
+			}
+			if probeCount >= ipv6RelayProbeMax {
+				continue
+			}
+			probeCount++
+			if ipv6RelayProbe(p.Dev, addr) {
+				continue
+			}
+			proxy := ipv6RelayProxy{Addr: addr, Dev: p.Dev}
+			cur.Proxies = append(cur.Proxies, proxy)
+			cur.Routes = append(cur.Routes, ipv6RelayRoute{Addr: addr, Dev: c.LAN.Bridge})
+		}
+	}
+	// The router's own relay address is a local LAN route; it is never a proxy.
+	for _, p := range cur.Prefixes {
+		cur.Routes = append(cur.Routes, ipv6RelayRoute{Addr: p.Addr, Dev: c.LAN.Bridge})
 	}
 	for _, p := range old.Prefixes {
 		found := false
@@ -362,10 +385,41 @@ func ipv6RelaySync(c *Config) error {
 		}
 		if activePrefix(p.Dev, p.Addr) && old.Misses[p.Dev+"\x00"+p.Addr] < ipv6RelayProxyGrace {
 			cur.Proxies = append(cur.Proxies, p)
+			cur.Routes = append(cur.Routes, ipv6RelayRoute{Addr: p.Addr, Dev: c.LAN.Bridge})
 			cur.Misses[p.Dev+"\x00"+p.Addr] = old.Misses[p.Dev+"\x00"+p.Addr] + 1
 			continue
 		}
 		ipv6RelayRun("ip", "-6", "neigh", "del", "proxy", p.Addr, "dev", p.Dev)
+	}
+	legacyRoutes := append([]ipv6RelayRoute{}, old.Routes...)
+	if len(legacyRoutes) == 0 {
+		for _, a := range old.LANAddrs {
+			if ip, err := netip.ParsePrefix(a); err == nil {
+				legacyRoutes = append(legacyRoutes, ipv6RelayRoute{Addr: ip.Addr().String(), Dev: c.LAN.Bridge})
+			}
+		}
+		for _, p := range old.Proxies {
+			legacyRoutes = append(legacyRoutes, ipv6RelayRoute{Addr: p.Addr, Dev: c.LAN.Bridge})
+		}
+	}
+	routeKey := func(r ipv6RelayRoute) string { return r.Dev + "\x00" + r.Addr }
+	routeHas := func(rs []ipv6RelayRoute, want ipv6RelayRoute) bool {
+		for _, r := range rs {
+			if routeKey(r) == routeKey(want) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, r := range legacyRoutes {
+		if !routeHas(cur.Routes, r) {
+			ipv6RelayRun("ip", "-6", "route", "del", r.Addr+"/128", "dev", r.Dev, "proto", "static", "metric", "50")
+		}
+	}
+	for _, r := range cur.Routes {
+		if !routeHas(legacyRoutes, r) {
+			ipv6RelayRun("ip", "-6", "route", "replace", r.Addr+"/128", "dev", r.Dev, "proto", "static", "metric", "50")
+		}
 	}
 	activeDevs := map[string]bool{}
 	for _, p := range cur.Prefixes {
