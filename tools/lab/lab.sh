@@ -760,9 +760,9 @@ change_cmd(){
     # the change moves the router's LAN address (#153): like the web UI, follow it — the client
     # renews (a wired PC's port flaps), then the one-time token confirms on the new address. The lab
     # switches to the new address only once that worked (--no-confirm: once the router answers there).
-    d=$(state "$id"); old_ip=$(router_ip "$id"); i=0; moved=
-    while [ "$i" -lt 100 ]; do
-      sleep 4; i=$((i + 4))
+    d=$(state "$id"); old_ip=$(router_ip "$id"); moved=; end=$(($(date +%s) + 100))
+    while [ "$(date +%s)" -lt "$end" ]; do
+      sleep 4
       lan_cmd "$id" dhcp >/dev/null 2>&1 || continue
       if [ "$confirm" = 1 ]; then
         out=$(run_ns "$(lan "$id")" curl -sS --max-time 8 -H X-MR:1 -H 'Content-Type: application/json' \
