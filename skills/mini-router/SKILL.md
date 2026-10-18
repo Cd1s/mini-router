@@ -16,6 +16,18 @@ Access: `ssh root@<router-ip>` (LAN only; the web UI at `http://<router-ip>/` us
 Tools on the router: busybox (sh, sed, awk, grep, wget), `mr`, `nft`, `ip`, `iw`, `rc-service`, `rc-status`.
 No python/jq there: edit YAML with care, or edit a copy on your side and send it back.
 
+## First-run wizard / 首次设置向导
+
+On a factory AX6000 image, a new or erased `rootfs_data`, or an Alpine install with `MR_APPLY=0`, the first panel
+visit has a wizard. It covers the password (factory image), time zone, WAN detection, upstream/LAN conflict advice,
+WiFi and a normal validate → plan → apply → confirm apply. Existing installations upgraded in place do not show it.
+“Detect connection type” is the same stateless probe as `mr wan detect <physical-port>`: PPPoE discovery and one DHCP
+DISCOVER, no lease and no route. The wizard only suggests a LAN renumber; it does not change `lan.ipv4` automatically.
+
+AX6000 出厂镜像、新建或擦除的 `rootfs_data`，以及 Alpine 的 `MR_APPLY=0` 安装，第一次打开面板会进入向导；
+旧安装升级不会弹出。向导会检测 WAN、提示上游与 LAN 冲突，并在确认窗口内应用。改 LAN 网段请按
+下面的跨地址确认流程操作。
+
 ## The safe change workflow (every change)
 
 1. **Read first**: `mr status` and the part you will touch: `mr get firewall.forwards` (effective values, defaults
@@ -64,7 +76,18 @@ lan: {bridge: br-lan, ports: [lan1, lan2], ipv4: 192.168.1.1/24, ipv6_ra: true}
 # side router / AP (no wan, no ipv6_ra): mode: bypass | ap, lan.gateway: <main router>,
 #   bypass: {clients: route-only | all | selected, macs: [...]}; route-only: `mr proxy routes` = the main router's static routes
 wan:
-  - {name: wan, device: wan, proto: pppoe, username: "…", password_secret: pppoe_password, ipv6: true, ipv6_pd: true}  # mtu: 1500 = RFC 4638 (falls back to 1492)
+  - name: wan
+    device: wan
+    proto: pppoe
+    username: "…"
+    password_secret: pppoe_password
+    mtu: 1500                         # RFC 4638; falls back to 1492
+    modem: {address: 192.168.1.1}     # optional bridged-modem management address
+    ipv6: true
+    ipv6_pd: true
+    ipv6_relay: false                 # next release: optional SLAAC /64 relay when ISP has no PD
+    require_public_ip: true           # bounded redials for private / CGNAT PPPoE addresses
+    require_public_ip_gap: 180        # seconds; 0 uses the 180-second default
   - {name: wan2, device: eth2, proto: dhcp}           # proto: pppoe | dhcp | static (ipv4:, gateway:, dns:)
 devices:                                              # inventory: other sections use the name (docs/modules/dev.md)
   - {name: nas, macs: ["aa:bb:cc:dd:ee:02"], ip: 192.168.1.20, type: server}  # ip = static lease; a MAC not also in dhcp.hosts
@@ -79,6 +102,9 @@ dhcp:
   end: 249
   hosts:                                              # static leases (IP outside start..end)
     - {name: printer, mac: "aa:bb:cc:dd:ee:ff", ip: 192.168.1.30}   # older form of a device with ip
+dns:
+  upstream: isp
+  fallback: [1.1.1.1, 9.9.9.9]                     # up to three IPs when ISP sources are unavailable
 firewall:
   offload: hardware                                   # hardware | software | off
   forwards:                                           # WAN → LAN port forwards
@@ -127,11 +153,25 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
   mr-hostapd restart, then only a `wifi` event — never a reboot. Check: `mr wifi steer --dry-run` (who would be asked and
   why not), `mr wifi health` (temperature, throttling, airtime fairness `vow_atf`, firmware restarts, stall / heal stage,
   steering counts), `grep 'wifi steer\|wifi self-heal' /var/log/messages`, `mr event list`.
-- **WAN**: `mr wan status`; redial one line at a time: `rc-service mr-pppoe.<name> restart`. With `multiwan.dial_order`
+- **WAN**: `mr wan status`; detect a changed upstream without taking a lease or installing a route:
+  `mr wan detect <physical-port> [--timeout SECONDS]` (1–8 seconds; PPPoE discovery plus one DHCP DISCOVER). Redial one line at a time:
+  `rc-service mr-pppoe.<name> restart`. With `multiwan.dial_order`
   (several PPPoE sessions on one account, the ISP follows the newest), redial in that order; `dial_order_ok` in
   `mr wan status` says whether it holds, `dial_restore` (off | now | HH:MM) repairs it (docs/modules/net.md).
   Several PPPoE WANs on one port: give each later one its own `mac` (`mr wan mac <name>` prints a stable one); it
   dials on macvlan `mv-<name>` (the ISP keys sessions by MAC). `mr doctor` warns about WANs sharing a MAC.
+  For a bridged modem page, set `wan[].modem.address` (PPPoE only); mini-router adds a host route, gateway-only proxy
+  ARP and masquerade. `wan[].require_public_ip: true` redials a PPPoE line that receives RFC1918, 100.64.0.0/10 or
+  169.254.0.0/16, waits `require_public_ip_gap` (default 180 s), and stops after five attempts. `wan[].ipv6_relay: true`
+  is a next-release option on main, requires WAN IPv6 plus LAN RA, and relays an upstream SLAAC /64 when no PD exists.
+
+- **LAN renumber / 改 LAN 网段**: changing `lan.ipv4` in the web UI can shift matching DHCP leases, device addresses,
+  forwards, policy/static routes, DNS/DHCP options, edge routes and API source ranges. Review the list and select only
+  entries that should move. The panel binds all addresses during the transition; after apply it returns a one-time
+  confirmation token and target address. Open the panel at the new address and confirm within 120 seconds. The token is
+  accepted only once and only from a LAN source; if it expires, let the pending apply roll back.
+  网页改 LAN 网段时，先审核要平移的地址；应用后到新地址，用一次性令牌确认。令牌只接受 LAN 来源且只能用一次，
+  120 秒内未确认就回滚。
 - **A website via another WAN**: `policy_routes: [{name: …, domains: [site.example], via: wan2}]` (or `domains_file:`).
   Connections stay hardware-offloaded. Check: `mr dns query site.example`, then `nft list set inet mr pr_<index>_4`
   lists the learned addresses. Devices using DoH / their own DNS are not covered (`dns.redirect` catches plain DNS).
@@ -189,6 +229,11 @@ tail -n 100 /var/log/messages  # system log (logread is not used)
 dmesg | tail -n 50
 ```
 
+The v0.4 doctor has specific guidance for a PPPoE line that appears to have changed to DHCP (it throttles the DHCP
+probe and suggests `mr wan detect`), for a WAN address overlapping a LAN subnet (change `lan.ipv4` or the upstream), and
+for `require_public_ip` after five private-address attempts (a risk finding). It also reports when ISP DNS sources are
+gone and `dns.fallback` is missing. Treat these as actionable findings; do not paper over them by editing generated files.
+
 ## Without SSH: the HTTP API with a token
 
 Scripts, Home Assistant or an agent without root access use the web UI's API with a scoped token
@@ -208,9 +253,12 @@ the user to do those. Never print or store a token in files, logs or chat.
 /usr/libexec/mr/sysupgrade -T --sha256 <SHA> /tmp/<image>-sysupgrade.tar      # verify only
 setsid /usr/libexec/mr/sysupgrade -y --sha256 <SHA> /tmp/<image> > /tmp/su.log 2>&1 &
 ```
-The router kexecs an installer, writes flash and reboots (≈2 min offline); settings are kept. A failure before the
-write reboots the old system. Afterwards: `cat /etc/mini-router-release`, `rc-status -c`, `mr plan` (a new version
-may render files differently) and `mr apply --confirm 120` + `mr confirm` if it shows changes.
+Use the latest release's `mini-router-ax6000-<VERSION>-sysupgrade.tar` and matching `SHA256SUMS` entry. The AX6000 image
+includes `ethtool`; plain Alpine upgrades need `apk add ethtool` before replacing `/usr/sbin/mr` and unpacking the
+matching rootfs tarball. The router kexecs an installer, writes flash and reboots (≈2 min offline); settings are kept. A failure
+before the write reboots the old system. Afterwards: `cat /etc/mini-router-release`, `rc-status -c`, `mr plan` (a new
+version may render files differently) and `mr apply --confirm 120` + `mr confirm` if it shows changes. An existing
+installation does not show the first-run wizard after upgrade.
 On plain Alpine installs, update with `install.sh` from the latest release instead.
 
 ## Never
