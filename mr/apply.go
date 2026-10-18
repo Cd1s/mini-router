@@ -745,13 +745,13 @@ func rollback(snap string, cause error) error {
 		return fmt.Errorf("%v\nROLLBACK FAILED: %v", cause, err)
 	}
 	dropStaged()
+	undoLists(listSnap)
 	restartAll(svcs)
 	if c, err := loadConfig(cfgFile, secFile); err == nil {
 		reconcileRunlevel(c)
 		refreshRoutes(c)
 		fwLoad(c)
 	}
-	undoLists(listSnap)
 	clearPending(snap)
 	setResult(snap, "rolled back: "+firstLine(cause.Error()))
 	appendChangeLog("mr apply: failed and rolled back — " + firstLine(cause.Error()))

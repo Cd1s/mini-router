@@ -340,6 +340,16 @@ func undoLists(snap string) {
 	clearRestoreListMarker()
 }
 
+// undoRestoreLists is used by the legacy watcher. Once the durable rollback path
+// has restored the lists and cleared the marker, the watcher must not overwrite
+// files that the user may have edited afterward.
+func undoRestoreLists(snap string) {
+	if readRestoreListMarker() == "" {
+		return
+	}
+	undoLists(snap)
+}
+
 // restoreStage installs the list files of rs (after snapshotting the current ones) and validates +
 // renders the candidate config. On success it returns the candidate router.yaml, the merged secrets
 // and the list snapshot name ("" if no list file changed). On failure the list files are back as
@@ -472,7 +482,7 @@ func sysRestoreWatch(secs int, snap string, logStart int64) error {
 	}
 	switch readJob().State {
 	case "failed":
-		undoLists(snap)
+		undoRestoreLists(snap)
 		appendChangeLog("restore failed: list files put back from " + snap)
 		return nil
 	case "ok":
@@ -494,7 +504,7 @@ func sysRestoreWatch(secs int, snap string, logStart int64) error {
 	tail, _ := io.ReadAll(io.LimitReader(f, 1<<20))
 	for _, l := range strings.Split(string(tail), "\n") {
 		if strings.Contains(l, "failed and rolled back") || strings.Contains(l, "mr rollback: ") {
-			undoLists(snap)
+			undoRestoreLists(snap)
 			appendChangeLog("restore rolled back: list files put back from " + snap)
 			break
 		}
