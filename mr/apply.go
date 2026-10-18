@@ -1319,19 +1319,23 @@ func verify(c *Config, restarted []string) []string {
 }
 
 // verifyDeadline is shared by module Verify funcs that wait for something to come up.
-var verifyDeadline = func(cs ...*Config) time.Time {
-	return time.Now().Add(90 * time.Second)
-}
+var (
+	verifyNow      = time.Now
+	verifySleep    = time.Sleep
+	verifyDeadline = func(cs ...*Config) time.Time {
+		return verifyNow().Add(90 * time.Second)
+	}
+)
 
 func waitFor(deadline time.Time, ok func() bool) bool {
 	for {
 		if ok() {
 			return true
 		}
-		if time.Now().After(deadline) {
+		if !verifyNow().Before(deadline) {
 			return false
 		}
-		time.Sleep(2 * time.Second)
+		verifySleep(2 * time.Second)
 	}
 }
 

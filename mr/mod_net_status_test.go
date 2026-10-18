@@ -89,3 +89,41 @@ func TestNetVerifyUnchangedPPPoENoCarrierIsExempt(t *testing.T) {
 		t.Fatalf("unchanged PPPoE without carrier was not exempted: %v", errs)
 	}
 }
+
+func TestNetVerifyAllDialOrderWANsShareCappedDeadline(t *testing.T) {
+	c := testConfig(t)
+	c.WAN = []WAN{
+		{Name: "wan1", Device: "wan1", Proto: "pppoe"},
+		{Name: "wan2", Device: "wan2", Proto: "pppoe"},
+		{Name: "wan3", Device: "wan3", Proto: "pppoe"},
+		{Name: "wan4", Device: "wan4", Proto: "pppoe"},
+	}
+	c.MultiWAN.DialOrder = []string{"wan1", "wan2", "wan3", "wan4"}
+	c.MultiWAN.DialWait = 120
+	d := t.TempDir()
+	oldNet, oldAddrs, oldAccepted, oldNow, oldSleep := sysNet, ipv4AddrsForVerify, acceptedWANConfigForVerify, verifyNow, verifySleep
+	sysNet = d
+	ipv4AddrsForVerify = func(string) []string { return nil }
+	acceptedWANConfigForVerify = func() (*Config, bool) { return c, true }
+	now := time.Unix(1_800_000_000, 0)
+	verifyNow = func() time.Time { return now }
+	verifySleep = func(d time.Duration) { now = now.Add(d) }
+	t.Cleanup(func() {
+		sysNet, ipv4AddrsForVerify, acceptedWANConfigForVerify, verifyNow, verifySleep = oldNet, oldAddrs, oldAccepted, oldNow, oldSleep
+	})
+	for _, w := range c.WAN {
+		if err := os.MkdirAll(filepath.Join(d, w.LinkDev()), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, w.LinkDev(), "carrier"), []byte("1"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restarted := []string{"mr-pppoe.wan1", "mr-pppoe.wan2", "mr-pppoe.wan3", "mr-pppoe.wan4"}
+	if errs := netVerify(c, restarted); len(errs) != len(restarted) {
+		t.Fatalf("verification errors = %v, want one per failed WAN", errs)
+	}
+	if elapsed := now.Sub(time.Unix(1_800_000_000, 0)); elapsed > 300*time.Second {
+		t.Fatalf("shared verification budget exceeded: %v", elapsed)
+	}
+}

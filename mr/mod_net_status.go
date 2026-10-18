@@ -95,6 +95,7 @@ func netStatus(c *Config, st map[string]any) {
 
 func netVerify(c *Config, restarted []string) []string {
 	var errs []string
+	start := verifyNow()
 	for _, s := range restarted {
 		if s == "mr-network" { // network.sh ran again: did every link take its MTU?
 			errs = append(errs, linkMTUErrors(c)...)
@@ -124,17 +125,27 @@ func netVerify(c *Config, restarted []string) []string {
 				continue
 			}
 		}
-		if w != nil && !waitFor(netVerifyDeadline(c, w), func() bool { return hasIPv4(w.Ifname()) }) {
+		if w != nil && !waitFor(netVerifyDeadline(c, w, start), func() bool { return hasIPv4(w.Ifname()) }) {
 			errs = append(errs, w.Name+": "+what+" before verification deadline")
 		}
 	}
 	return errs
 }
 
-func netVerifyDeadline(c *Config, w *WAN) time.Time {
+func netVerifyDeadline(c *Config, w *WAN, starts ...time.Time) time.Time {
+	now := verifyNow()
+	start := now
+	if len(starts) > 0 {
+		start = starts[0]
+	}
 	base := verifyDeadline()
+	budget := base.Sub(now)
+	if budget <= 0 {
+		return start.Add(budget)
+	}
+	deadline := start.Add(budget)
 	if w == nil {
-		return base
+		return deadline
 	}
 	idx := -1
 	for i, name := range c.MultiWAN.DialOrder {
@@ -144,10 +155,10 @@ func netVerifyDeadline(c *Config, w *WAN) time.Time {
 		}
 	}
 	if idx <= 0 {
-		return base
+		return deadline
 	}
-	d := base.Add(time.Duration(idx)*c.MultiWAN.dialWait() + dialSettle)
-	cap := time.Now().Add(300 * time.Second)
+	d := deadline.Add(time.Duration(idx)*c.MultiWAN.dialWait() + dialSettle)
+	cap := start.Add(300 * time.Second)
 	if d.After(cap) {
 		return cap
 	}
