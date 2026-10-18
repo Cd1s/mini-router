@@ -532,6 +532,9 @@ var (
 var saeSuffixes = []string{"|mac=", "|vlanid=", "|pk=", "|id="}
 
 func wifiValidate(c *Config, v *Validator) {
+	if len(c.WiFi.Radios) > 0 && c.WiFi.Country == "" {
+		v.Add("wifi.country: required when WiFi radios are enabled")
+	}
 	if c.WiFi.Country != "" && !reCC.MatchString(c.WiFi.Country) {
 		v.Add("wifi.country: two upper-case letters, got %q", c.WiFi.Country)
 	}
