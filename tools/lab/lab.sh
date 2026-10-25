@@ -491,7 +491,8 @@ isp_cmd(){
     v6=*) v6=${1#v6=};; --cgnat) cgnat=1;; --badpass) badpass=1;; nopado|--nopado) nopado=1;;
     --subnet) shift; subnet=${1%.*}; subnet=${subnet%/*}; subnet=${subnet%.0};;
     --gw) shift; gw=$1;;
-    --address) shift; dns_extra="$dns_extra --address=/${1%%=*}/${1#*=}";;
+    --address) shift; a=${1#*=}   # NAME=IP, or NAME=IP,TTL: an answer with a real TTL (dnsmasq caches it)
+      case $a in *,*) dns_extra="$dns_extra --host-record=${1%%=*},$a";; *) dns_extra="$dns_extra --address=/${1%%=*}/$a";; esac;;
     --nxdomain) shift; dns_extra="$dns_extra --local=/$1/";;
     --trusted) shift; trusted_extra="$trusted_extra --address=/${1%%=*}/${1#*=}";;
     --hijack53) hijack53=1;;
@@ -503,6 +504,8 @@ isp_cmd(){
   run_ns "$n" ip link set "$dev" up
   slirp_start "$id" "$wan"
   # --conf-file=/dev/null: never the host's /etc/dnsmasq.conf or /etc/dnsmasq.d
+  # Keep isp.test locally authoritative but return NOERROR/NODATA for AAAA. DNS64 must see an
+  # empty AAAA answer to synthesize from the A record; dnsmasq's address= alone returns REFUSED.
   dns="--conf-file=/dev/null --no-resolv --no-hosts --server=10.0.2.3 --address=/isp.test/203.0.113.7 --local=/isp.test/ --pid-file=$d/dnsmasq.pid --log-facility=$d/dnsmasq.log --dhcp-leasefile=$d/dnsmasq.leases $dns_extra"
   case $mode in
     dhcp)

@@ -9,6 +9,7 @@ agents). The only resident piece is a busybox-sh loop that writes one line per m
 | Go | `mr/mod_mon.go` (module, `mon.now`, CLI), `mod_mon_hist.go` (history), `mod_mon_ct.go` (conntrack: devices, connections), `mod_mon_sys.go` (processes, dmesg), `mod_mon_linux.go` / `mod_mon_other.go` (rtnetlink neighbour dump, `syslog(2)`) |
 | UI | `rootfs/www/ui/mon.js` — group 状态: 实时监控, 流量统计, 连接, 进程与内核日志 |
 | Service | `mr-mon` (`rootfs/etc/init.d/mr-mon`, supervise-daemon) → `rootfs/usr/libexec/mr/mon-collect` |
+| dns.unblock | with `dns.unblock` on, `conf.d/mr-mon` gets `MON_DNS_UNBLOCK=1` (rendered by `monRender`) and the sampler starts with `--dns-unblock`: a second loop runs `mr dns unblock-health` every 5 s while `gen/dns-unblock.json` exists (docs/modules/dns.md). Without the flag nothing of it exists; with it, every wait is `cmd & wait $!` so TERM ends the loop and its children at once. `tools/ci.d/mon.sh` checks both, in dash and busybox ash |
 | Checks | `mr/mod_mon_test.go`, `tools/ci.d/mon.sh` (runs the sampler for real, checks rendered files and `mr mon`) |
 | Mock | `tools/mock/fixtures/mon.*.json` (synthetic; dmesg lines from `docs/tests/m1-alpine-boot-dmesg.txt`) |
 

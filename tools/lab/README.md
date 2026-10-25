@@ -135,6 +135,11 @@ namespace replaces with lab directories. Go comes from `/etc/profile.d/buildtool
 | `pppoe [v6=slaac\|pd] [--badpass] [nopado] [--cgnat]` | pppoe-server, CHAP `lab`/`labpass` (`--badpass`: the server expects another password; `nopado`: no server at all; `--cgnat`: 100.64.<id>.x). After IPv6CP the ISP end is `2001:db8:<id>:<wan>::1/64`; `v6=slaac` adds RAs for that /64, `v6=pd` also kea DHCPv6 delegating /60s from `2001:db8:<id>:<wan>00::/56` | PPPoE |
 | `down` | link down | — |
 
+DNS options for `dhcp` / `static` / `pppoe` (scenario `11-dns-unblock`): `--address NAME=IP[,TTL]` makes the ISP resolver answer NAME
+(with a TTL the answer has a real lifetime, so the router's dnsmasq caches it; without one the TTL is 0), `--nxdomain NAME`,
+`--trusted NAME=IP` starts a second resolver on `10.<id>.<wan>.2` (the trusted DNS of `dns.unblock`) and `--hijack53` redirects
+the ISP's UDP port 53 to its own resolver.
+
 The ISP's own resolver files (`/etc/resolv.conf`, `/etc/ppp`) are per-namespace copies under
 `/etc/netns/mrlab<ID>-*`; kea runs under the host's AppArmor profile in a private mount namespace
 whose `/etc/kea`, `/run/kea`, `/run/lock/kea` and `/var/lib/kea` are lab directories. Its NAT

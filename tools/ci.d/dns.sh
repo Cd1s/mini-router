@@ -31,12 +31,29 @@ grep -q 'redirect to :5356 comment "parental-dns"' "$OUT/lab/etc/mini-router/gen
 [ ! -e "$OUT/home/etc/mini-router/gen/parental-dns.conf" ] || { echo "home rendered parental-dns.conf"; exit 1; }
 echo "ok: parental-dns.conf"
 
+# dns.unblock: the lab fragments keep dns.upstream: dot (that coverage stays as it is), so the feature is
+# checked on a copy of the lab config with the unblock settings switched on. The helper config must pass
+# sing-box, dnsmasq must accept the rendered config, and only this variant starts mr-mon's health loop.
 sb=${SING_BOX:-/opt/sing-box/${SB_VERSION:-1.14.1}/sing-box}
-ub=$OUT/lab/etc/mini-router/gen/dns-unblock.json
+UB=$OUT/lab-unblock
+rm -rf "$UB" && mkdir -p "$UB"
+cp "$OUT/lab.yaml" "$UB/router.yaml"
+"$OUT/mr-host" -c "$UB/router.yaml" -s "$OUT/lab-secrets.yaml" set dns.upstream=isp 'dns.fallback=[9.9.9.9]' \
+	dns.rebind_protection=false dns.unblock.enabled=true 'dns.unblock.block_ips=[125.26.170.3]' > /dev/null
+"$OUT/mr-host" -c "$UB/router.yaml" -s "$OUT/lab-secrets.yaml" validate
+"$OUT/mr-host" -c "$UB/router.yaml" -s "$OUT/lab-secrets.yaml" render "$UB/root" > /dev/null
+ub=$UB/root/etc/mini-router/gen/dns-unblock.json
 [ -e "$ub" ] || { echo "$ub: lab unblock config missing"; exit 1; }
 [ -x "$sb" ] || { echo "$sb: sing-box is required to check dns-unblock.json"; exit 1; }
 "$sb" check -c "$ub"
-echo "ok: dns-unblock.json passes sing-box check"
+grep -qx 'resolv-file=/run/mini-router/resolv-lan.conf' "$UB/root/etc/dnsmasq.conf" || { echo "unblock: dnsmasq does not use resolv-lan.conf"; exit 1; }
+dnsmasq --test --conf-file="$UB/root/etc/dnsmasq.conf"
+grep -qx 'MON_DNS_UNBLOCK=1' "$UB/root/etc/conf.d/mr-mon" || { echo "unblock: mr-mon is not told to probe"; exit 1; }
+for t in home lab; do
+	! grep -q 'DNS_UNBLOCK' "$OUT/$t/etc/conf.d/mr-mon" || { echo "$t: mr-mon would run the unblock loop without the feature"; exit 1; }
+	[ ! -e "$OUT/$t/etc/mini-router/gen/dns-unblock.json" ] || { echo "$t: dns-unblock.json rendered without the feature"; exit 1; }
+done
+echo "ok: dns-unblock.json passes sing-box check, only the unblock config starts the mr-mon loop"
 
 conf=$OUT/lab/etc/dnsmasq.conf
 # main LAN = first interface= line; its router address, pool start and netmask from the tagged pool

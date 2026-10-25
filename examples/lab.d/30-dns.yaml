@@ -38,15 +38,8 @@ dns:
   use_stale_cache: 3600
   no_negcache: true
   edns_packet_max: 1232
-  upstream: isp                       # lab also exercises the ISP unblock helper
-  fallback: [9.9.9.9]                 # deterministic bootstrap resolver for the rendered helper
-  unblock:
-    enabled: true
-    block_ips: [125.26.170.3]
-    retry_private: true
-    retry_empty: true
-    fallback: cloudflare
-    protocol: tls
+  upstream: dot                       # everything over DoT via stubby (services.stubby in 70-sys.yaml)
+  # fallback: [9.9.9.9]               # used when upstream is isp and every WAN lost DNS
   dot:
     port: 5453
     servers:
@@ -54,7 +47,7 @@ dns:
       - {address: "2606:4700:4700::1111", name: cloudflare-dns.com}
       - {address: 9.9.9.9, name: dns.quad9.net, port: 853}
     bootstrap: [223.5.5.5]            # NTP names resolve here (plain DNS) until the clock is right
-  rebind_protection: false             # lab ISP answers use the private test subnet
+  rebind_protection: true
   local_service: true
   redirect: true
   addn_hosts: [/etc/mini-router/dns/extra.hosts]

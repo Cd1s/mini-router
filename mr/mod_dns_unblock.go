@@ -24,7 +24,6 @@ type DNSUnblock struct {
 	Fallback     string   `yaml:"fallback,omitempty"` // cloudflare | google | quad9 | custom
 	Protocol     string   `yaml:"protocol,omitempty"` // udp | tls | https
 	Server       string   `yaml:"server,omitempty"`   // custom: ip[#port]
-	Port         int      `yaml:"port,omitempty"`     // loopback listener
 }
 
 const (
@@ -37,12 +36,10 @@ var (
 	dnsUnblockConfigPath    = dnsUnblockConf
 	dnsUnblockRuntimeResolv = RunDir + "/resolv-lan.conf"
 	dnsUnblockHealthState   = RunDir + "/dns-unblock-health"
+	dnsUnblockRunConf       = "/run/mr-dns-unblock/config.json" // the copy the service runs (init script start_pre)
 )
 
 func dnsUnblockDefaults(u *DNSUnblock) {
-	if u.Port == 0 {
-		u.Port = dnsUnblockPort
-	}
 	if u.Fallback == "" {
 		u.Fallback = "cloudflare"
 	}
@@ -91,9 +88,6 @@ func dnsUnblockValidate(c *Config, v *Validator) {
 		}
 		seen[key] = true
 	}
-	if u.Port != dnsUnblockPort {
-		v.Add("dns.unblock.port: helper must listen on 127.0.0.2:53, got %d", u.Port)
-	}
 	switch u.Fallback {
 	case "cloudflare", "google", "quad9":
 		if u.Server != "" {
@@ -114,7 +108,7 @@ func dnsUnblockValidate(c *Config, v *Validator) {
 	if c.DNS.Upstream == "manual" {
 		for _, s := range c.DNS.Servers {
 			host, port := splitServer(s)
-			if (host == "127.0.0.1" || host == "::1") && port == u.Port {
+			if (host == "127.0.0.1" || host == "::1") && port == dnsUnblockPort {
 				v.Add("dns.servers: %s is dns.unblock itself", s)
 			}
 		}
@@ -309,6 +303,21 @@ func dnsUnblockWriteUpstream(c *Config, servers []string, healthy bool) {
 	if err := writeAtomic(path, []byte(data), 0644); err != nil {
 		logf("dns-unblock upstream: %v", err)
 		return
+	}
+	if healthy {
+		dnsUnblockFlushCaches()
+	}
+}
+
+// dnsUnblockFlushCaches clears the answers dnsmasq cached while it forwarded to the ISP directly
+// (cache-size / min-cache-ttl keep a block page for up to an hour): `reload` of the init scripts is SIGHUP,
+// which drops the cache and rereads the hosts files, no restart and no DHCP impact. (supervise-daemon only
+// takes a signal command from inside the service's own script, so it cannot be called from here.) Both
+// dnsmasq instances read the runtime resolv file; the proxy one only runs with the proxy on, so a failure
+// here is normal. Going to the ISP does not flush.
+func dnsUnblockFlushCaches() {
+	for _, svc := range []string{"dnsmasq", "mr-proxy-dns"} {
+		_, _ = dnsUnblockRun("rc-service", svc, "reload")
 	}
 }
 
@@ -507,12 +516,19 @@ func dnsUnblockHealth(c *Config) {
 	if b, err := os.ReadFile(dnsUnblockHealthState); err == nil {
 		_ = json.Unmarshal(b, &st)
 	}
-	if st.Mode == "" {
-		st.Mode = "direct"
-		st.Since = time.Now().Unix()
-	}
 	oldMode, _ := dnsUnblockCurrentMode()
 	_, runtimeErr := os.Stat(dnsUnblockRuntimeResolv)
+	if st.Mode != oldMode {
+		// The file is what dnsmasq uses, so it is where the state machine starts: after a boot there is no
+		// state yet but the init script has seeded the helper, and after a helper restart the state may still
+		// say direct. Starting from "direct" would rewrite a good file to the ISP resolvers for one interval.
+		// The probe counters start over; two results in a row still decide a switch. A helper found in the
+		// file may follow a period of direct forwarding that this monitor did not see, so drop the cache.
+		if oldMode == "helper" {
+			dnsUnblockFlushCaches()
+		}
+		st.Mode, st.Since, st.Good, st.Bad = oldMode, time.Now().Unix(), 0, 0
+	}
 	if dnsUnblockProbe(c) {
 		st.Good++
 		st.Bad = 0
@@ -526,14 +542,35 @@ func dnsUnblockHealth(c *Config) {
 			st.Mode = "direct"
 		}
 	}
-	if st.Mode != "helper" && st.Mode != "direct" {
-		st.Mode = "direct"
-	}
 	if oldMode != st.Mode || (os.IsNotExist(runtimeErr) && st.Mode == "direct" && st.Bad >= 2) {
 		servers := dnsUnblockDirectServers(c)
 		dnsUnblockWriteUpstream(c, servers, st.Mode == "helper")
 		st.Since = time.Now().Unix()
+		if oldMode != st.Mode {
+			logf("dns-unblock: monitor switched dnsmasq upstream %s -> %s", oldMode, st.Mode)
+		}
 	}
 	b, _ := json.Marshal(st)
 	_ = writeAtomic(dnsUnblockHealthState, append(b, '\n'), 0644)
+}
+
+// dnsUnblockActive: the feature is on and its upstream mode can use it (what Render / Refresh test).
+func dnsUnblockActive(c *Config) bool {
+	return c != nil && c.DNS.Unblock != nil && c.DNS.Unblock.Enabled && (c.DNS.Upstream == "isp" || c.DNS.Upstream == "manual")
+}
+
+// dnsUnblockOrphans: with the feature off, the helper config and the runtime files it left behind go
+// (the core removes them in the apply transaction; the service is stopped by then). Only files that exist
+// are listed, so a router that never used the feature keeps an empty plan.
+func dnsUnblockOrphans(c *Config) []string {
+	if dnsUnblockActive(c) {
+		return nil
+	}
+	var out []string
+	for _, p := range []string{dnsUnblockConfigPath, dnsUnblockRuntimeResolv, dnsUnblockHealthState, dnsUnblockRunConf} {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }

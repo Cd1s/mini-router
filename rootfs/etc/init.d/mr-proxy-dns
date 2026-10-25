@@ -4,6 +4,8 @@
 # forwarded to sing-box (fake-ip); everything else resolves like the main dnsmasq.
 description="proxy DNS (dnsmasq for proxied LAN clients)"
 supervisor=supervise-daemon
+extra_started_commands="reload"
+description_reload="Clear cache and reload hosts files"
 cfg=/etc/mini-router/gen/proxy-dns.conf
 command=/usr/sbin/dnsmasq
 command_args="--keep-in-foreground --pid-file= --user=dnsmasq --group=dnsmasq --conf-file=$cfg"
@@ -25,4 +27,12 @@ start_pre() {
 		eerror "$cfg: dnsmasq --test failed"
 		return 1
 	}
+}
+
+# SIGHUP: dnsmasq drops its cache and rereads the hosts files (dns.unblock does this when dnsmasq goes back to
+# the helper, so answers cached from the ISP's resolvers do not outlive the switch)
+reload() {
+	ebegin "Reloading $RC_SVCNAME"
+	supervise-daemon "$RC_SVCNAME" --signal HUP
+	eend $?
 }

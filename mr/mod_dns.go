@@ -802,6 +802,7 @@ func init() {
 			return s
 		},
 		Managed: []string{"mr-parental-dns", "mr-dns-unblock"},
+		Orphans: dnsUnblockOrphans,
 		Restart: func(path string) string {
 			switch path {
 			case dnsUnblockConf:
