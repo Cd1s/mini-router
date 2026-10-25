@@ -31,6 +31,12 @@ var unboundBinaryExists = func() bool { _, err := os.Stat("/usr/sbin/unbound"); 
 var runUnboundCheckconf = func(path string) error {
 	return exec.Command("/usr/sbin/unbound-checkconf", path).Run()
 }
+var nat46DNS64ServiceRunning = func() bool {
+	return exec.Command("rc-service", "mr-dns64", "status").Run() == nil
+}
+var nat46DNS64ServiceAction = func(action string) error {
+	return exec.Command("rc-service", "mr-dns64", action).Run()
+}
 
 func (n *ProxyNat46) listen() string {
 	if n.Listen == "" {
@@ -67,18 +73,30 @@ func proxyNat46Defaults(c *Config) {
 	}
 }
 
-func proxyNat46Validate(c *Config, v *Validator) {
+func proxyNat46Validate(c *Config, v *Validator, used map[int]string) {
 	n := &c.Proxy.Nat46
+	if !c.Proxy.Enabled || !n.Enabled {
+		return
+	}
 	listen := n.listen()
-	if ap, err := netip.ParseAddrPort(listen); err != nil {
+	ap, err := netip.ParseAddrPort(listen)
+	if err != nil {
 		v.Add("proxy.nat46.listen: loopback address required, got %q", listen)
-	} else if !ap.Addr().IsLoopback() {
+	} else if !ap.Addr().Is4() || !ap.Addr().IsLoopback() {
 		v.Add("proxy.nat46.listen: loopback address required, got %q", listen)
+	} else if ap.Port() < 1024 || ap.Port() > 65535 {
+		v.Add("proxy.nat46.listen: port 1024-65535 required, got %d", ap.Port())
+	} else if owner, ok := used[int(ap.Port())]; ok {
+		v.Add("proxy.nat46.listen: port %d already used by %s", ap.Port(), owner)
+	} else {
+		used[int(ap.Port())] = "proxy.nat46.listen"
 	}
 	prefix := n.prefix()
 	p, err := netip.ParsePrefix(prefix)
 	if err != nil || !p.Addr().Is6() || p.Bits() != 96 {
 		v.Add("proxy.nat46.prefix: IPv6 /96 required, got %q", prefix)
+	} else if p != p.Masked() {
+		v.Add("proxy.nat46.prefix: network address required, got %q", prefix)
 	}
 	if n.SourcesFile != "" && !rePath.MatchString(n.SourcesFile) {
 		v.Add("proxy.nat46.sources_file: absolute path required, got %q", n.SourcesFile)
@@ -90,13 +108,23 @@ func proxyNat46Validate(c *Config, v *Validator) {
 	if c.Proxy.Nat46.DNS64.Enabled {
 		d := &c.Proxy.Nat46.DNS64
 		listen := d.listen()
-		if ap, err := netip.ParseAddrPort(listen); err != nil {
+		ap, err := netip.ParseAddrPort(listen)
+		if err != nil {
 			v.Add("proxy.nat46.dns64.listen: loopback address required, got %q", listen)
-		} else if !ap.Addr().IsLoopback() {
+		} else if !ap.Addr().Is4() || !ap.Addr().IsLoopback() {
 			v.Add("proxy.nat46.dns64.listen: loopback address required, got %q", listen)
+		} else if ap.Port() < 1024 || ap.Port() > 65535 {
+			v.Add("proxy.nat46.dns64.listen: port 1024-65535 required, got %d", ap.Port())
+		} else if owner, ok := used[int(ap.Port())]; ok {
+			v.Add("proxy.nat46.dns64.listen: port %d already used by %s", ap.Port(), owner)
+		} else {
+			used[int(ap.Port())] = "proxy.nat46.dns64.listen"
 		}
 		if !unboundBinaryExists() {
 			v.Add("proxy.nat46.dns64: /usr/sbin/unbound is not installed; apk add unbound")
+		}
+		if c.DNS.Upstream != "isp" && len(c.DNS.Servers) == 0 && len(c.DNS.Fallback) == 0 {
+			v.Add("proxy.nat46.dns64: dns.upstream %q needs dns.servers or dns.fallback", c.DNS.Upstream)
 		}
 	}
 }
@@ -119,6 +147,23 @@ func proxyNat46Render(c *Config, out *Out) error {
 		out.Add(proxyNat46DNS64Gen, 0644, proxyNat46DNS64Config(c))
 	}
 	return nil
+}
+
+func proxyNat46Orphans(c *Config) []string {
+	var paths []string
+	add := func(path string) {
+		if _, err := os.Stat(path); err == nil {
+			paths = append(paths, path)
+		}
+	}
+	if !c.Proxy.Enabled || !c.Proxy.Nat46.Enabled {
+		add(proxyNat46Gen)
+	}
+	if !c.Proxy.Enabled || !c.Proxy.Nat46.Enabled || !c.Proxy.Nat46.DNS64.Enabled {
+		add(proxyNat46DNS64Gen)
+		add(proxyNat46DNS64Run)
+	}
+	return paths
 }
 
 func proxyNat46DNS64Config(c *Config) string {
@@ -156,6 +201,7 @@ func proxyNat46DNS64Sync(c *Config) error {
 	data := []byte(b.String())
 	old, _ := os.ReadFile(proxyNat46DNS64Run)
 	if string(old) == string(data) {
+		proxyNat46DNS64EnsureStarted()
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(proxyNat46DNS64Run), 0755); err != nil {
@@ -172,12 +218,33 @@ func proxyNat46DNS64Sync(c *Config) error {
 	if err := writeAtomic(proxyNat46DNS64Run, data, 0644); err != nil {
 		return err
 	}
-	if pidBytes, err := os.ReadFile("/run/mr-dns64.pid"); err == nil {
-		if pid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes))); err == nil && pid > 1 {
-			_ = syscall.Kill(pid, syscall.SIGHUP)
-		}
-	}
+	proxyNat46DNS64Reload()
 	return nil
+}
+
+func proxyNat46DNS64EnsureStarted() {
+	if os.Getenv("MR_DNS64_START_PRE") != "" {
+		return
+	}
+	if nat46DNS64ServiceRunning() {
+		return
+	}
+	if err := nat46DNS64ServiceAction("start"); err != nil {
+		log.Printf("mr-dns64 start: %v", err)
+	}
+}
+
+func proxyNat46DNS64Reload() {
+	if os.Getenv("MR_DNS64_START_PRE") != "" {
+		return
+	}
+	action := "start"
+	if nat46DNS64ServiceRunning() {
+		action = "reload"
+	}
+	if err := nat46DNS64ServiceAction(action); err != nil {
+		log.Printf("mr-dns64 %s: %v", action, err)
+	}
 }
 
 func proxyNat46DNS64Servers(c *Config) []string {
@@ -191,22 +258,30 @@ func proxyNat46DNS64Servers(c *Config) []string {
 		if ip != nil && ip.To4() != nil && !seen[host] {
 			seen[host] = true
 			if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
-				s = host + "#" + strings.TrimSpace(parts[1])
+				s = host + "@" + strings.TrimSpace(parts[1])
 			} else {
 				s = host
 			}
 			out = append(out, s)
 		}
 	}
-	if b, err := os.ReadFile(resolvConf); err == nil {
-		for _, line := range strings.Split(string(b), "\n") {
-			f := strings.Fields(line)
-			if len(f) == 2 && f[0] == "nameserver" {
-				add(f[1])
+	if c.DNS.Upstream == "isp" {
+		if b, err := os.ReadFile(resolvConf); err == nil {
+			for _, line := range strings.Split(string(b), "\n") {
+				f := strings.Fields(line)
+				if len(f) == 2 && f[0] == "nameserver" {
+					add(f[1])
+				}
+				if len(out) >= 2 {
+					return out
+				}
 			}
-			if len(out) >= 2 {
-				return out
-			}
+		}
+	}
+	for _, s := range c.DNS.Servers {
+		add(s)
+		if len(out) >= 2 {
+			return out
 		}
 	}
 	for _, s := range c.DNS.Fallback {
@@ -221,6 +296,8 @@ func proxyNat46DNS64Servers(c *Config) []string {
 // localSourceTable resolves suffixes from current global IPv6 addresses when no table is configured.
 type localSourceTable struct{}
 
+var localIPv6ForLookup = localIPv6
+
 func (localSourceTable) Lookup(id string) (netip.Addr, bool) {
 	if addr, ok := parseLocalIPv6(id); ok {
 		return addr, true
@@ -231,9 +308,9 @@ func (localSourceTable) Lookup(id string) (netip.Addr, bool) {
 	}
 	var found netip.Addr
 	count := 0
-	for _, addr := range localIPv6() {
+	for _, addr := range localIPv6ForLookup() {
 		b := addr.As16()
-		if binary.BigEndian.Uint16(b[14:]) == uint16(want) {
+		if id, ok := sourceInterfaceID(b); ok && id == uint16(want) {
 			found, count = addr, count+1
 		}
 	}
@@ -245,12 +322,21 @@ func parseLocalIPv6(s string) (netip.Addr, bool) {
 	if err != nil || !a.Is6() || a.Is4In6() || !a.IsGlobalUnicast() {
 		return netip.Addr{}, false
 	}
-	for _, x := range localIPv6() {
+	for _, x := range localIPv6ForLookup() {
 		if x == a {
 			return a, true
 		}
 	}
 	return netip.Addr{}, false
+}
+
+func sourceInterfaceID(b [16]byte) (uint16, bool) {
+	for _, x := range b[8:14] {
+		if x != 0 {
+			return 0, false
+		}
+	}
+	return binary.BigEndian.Uint16(b[14:]), true
 }
 
 func localIPv6() []netip.Addr {
@@ -753,17 +839,13 @@ func nat46ServeConfigFromProxy(c *Config) nat46ServeConfig {
 }
 
 func nat46ServeConfigFromFile() (nat46ServeConfig, error) {
-	path := proxyNat46Gen
-	if override := os.Getenv("MR_NAT46_CONFIG"); override != "" {
-		path = override
-	}
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(proxyNat46Gen)
 	if err != nil {
 		return nat46ServeConfig{}, err
 	}
 	var cfg nat46ServeConfig
 	if err := json.Unmarshal(b, &cfg); err != nil {
-		return nat46ServeConfig{}, fmt.Errorf("%s: %w", path, err)
+		return nat46ServeConfig{}, fmt.Errorf("%s: %w", proxyNat46Gen, err)
 	}
 	return cfg, nil
 }
@@ -777,6 +859,10 @@ func serveNat46(cfg nat46ServeConfig) error {
 	}
 	if cfg.MaxConns == 0 {
 		cfg.MaxConns = 4096
+	}
+	listen, err := netip.ParseAddrPort(cfg.Listen)
+	if err != nil || !listen.Addr().Is4() || !listen.Addr().IsLoopback() || listen.Port() < 1024 || listen.Port() > 65535 {
+		return fmt.Errorf("NAT46 listen must be an IPv4 loopback address on port 1024-65535: %q", cfg.Listen)
 	}
 	prefix, err := netip.ParsePrefix(cfg.Prefix)
 	if err != nil || !prefix.Addr().Is6() || prefix.Bits() != 96 {

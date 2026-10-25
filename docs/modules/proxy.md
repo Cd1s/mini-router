@@ -107,7 +107,9 @@ IPv6 地址中查找接口标识，只有唯一匹配才接受。
 ```
 
 规则顺序保持为：先把 DNS64 的 `64:ff9b::/96` 交给 `nat64-13001`；IPv6 其它目标拒绝；IPv4 字面量交给
-`nat46-13001`；最后以 `nat64-13001` 兜底。`mr-nat46` 与 `mr-proxy` 都以 `sing-box` 用户运行，且服务在 `mr-proxy` 前启动。
+`nat46-13001`；最后以 `nat64-13001` 兜底。`mr-nat46` 与 `mr-proxy` 在存在 `sing-box` 系统用户时以该用户运行；由
+`install.sh` 安装、没有该用户的 Alpine 环境会回退为 root 运行以保持功能可用（建议在固件中创建 `sing-box` 用户）。
+两个服务都在 `mr-proxy` 前启动。
 关闭 `proxy.enabled` 或 `proxy.nat46.enabled` 时不会生成服务或监听端口。
 
 ### 内置 DNS64

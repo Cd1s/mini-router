@@ -947,6 +947,9 @@ func netCommit(c *Config) error {
 // writeResolv rewrites resolvConf from the WANs that are up (healthy first, then by metric).
 func writeResolv(c *Config) {
 	if c.DNS.Upstream != "isp" || !wanDNSFromPeers(c) {
+		if err := proxyNat46DNS64Sync(c); err != nil {
+			logf("dns64: %v", err)
+		}
 		return
 	}
 	var b strings.Builder

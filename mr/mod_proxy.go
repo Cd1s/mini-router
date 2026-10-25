@@ -277,6 +277,7 @@ func init() {
 			return ""
 		},
 		RestartOrder: []string{"mr-dns64", "mr-nat46", "mr-proxy", "mr-proxy-dns"},
+		Orphans:      func(c *Config) []string { return proxyNat46Orphans(c) },
 		Verify:       proxyVerify,
 		TokenScope:   map[string]string{"proxy.status": "read", "proxy.routes": "read", "proxy.delay": "operate", "proxy.select": "operate", "proxy.check": "operate"},
 		API: map[string]func(r apiReq) apiResp{
@@ -352,7 +353,6 @@ func proxyCIDRProblem(c *Config, p netip.Prefix) string {
 
 func proxyValidate(c *Config, v *Validator) {
 	p := &c.Proxy
-	proxyNat46Validate(c, v)
 	switch p.LogLevel {
 	case "", "error", "warn", "info", "debug":
 	default:
@@ -374,6 +374,7 @@ func proxyValidate(c *Config, v *Validator) {
 		}
 		used[x.eff] = "proxy." + x.key
 	}
+	proxyNat46Validate(c, v, used)
 	used[7894] = "the notify inbound"
 	if len(p.Global) > 32 {
 		v.Add("proxy.global: at most 32 devices")

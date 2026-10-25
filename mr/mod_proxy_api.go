@@ -20,6 +20,15 @@ import (
 	"time"
 )
 
+var proxyNat46ListenCheck = func(addr string) bool {
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // ---- verification ----
 
 func proxyVerify(c *Config, restarted []string) []string {
@@ -51,6 +60,14 @@ func proxyVerify(c *Config, restarted []string) []string {
 			})
 			if !ok {
 				errs = append(errs, "mr-proxy-dns: not answering")
+			}
+		case "mr-nat46":
+			if p.Nat46.Enabled && !waitFor(deadline, func() bool { return proxyNat46ListenCheck(p.Nat46.listen()) }) {
+				errs = append(errs, "mr-nat46: SOCKS5 listener not answering")
+			}
+		case "mr-dns64":
+			if p.Nat46.DNS64.Enabled && !waitFor(deadline, func() bool { return proxyNat46ListenCheck(p.Nat46.DNS64.listen()) }) {
+				errs = append(errs, "mr-dns64: DNS64 listener not answering")
 			}
 		}
 	}

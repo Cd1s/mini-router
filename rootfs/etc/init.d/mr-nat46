@@ -5,11 +5,16 @@ description="NAT64 for IPv4-literal proxy destinations"
 supervisor=supervise-daemon
 command=/usr/sbin/mr
 command_args="proxy nat46 serve"
-command_user="sing-box:sing-box"
 respawn_delay=2
 respawn_max=0
 output_logger="logger -t mr-nat46 -p daemon.info"
 error_logger="logger -t mr-nat46 -p daemon.notice"
+
+# The firmware image normally has this unprivileged account. Alpine installs made by install.sh
+# may not; in that case OpenRC keeps the service functional as root rather than failing at startup.
+if id -u sing-box >/dev/null 2>&1; then
+	command_user="sing-box:sing-box"
+fi
 
 depend() {
 	need net
