@@ -110,6 +110,18 @@ IPv6 地址中查找接口标识，只有唯一匹配才接受。
 `nat46-13001`；最后以 `nat64-13001` 兜底。`mr-nat46` 与 `mr-proxy` 都以 `sing-box` 用户运行，且服务在 `mr-proxy` 前启动。
 关闭 `proxy.enabled` 或 `proxy.nat46.enabled` 时不会生成服务或监听端口。
 
+### 内置 DNS64
+
+`proxy.nat46.dns64` 会启动一个独立的 unbound（默认 `127.0.0.1:1153`），不修改系统的
+`/etc/unbound/unbound.conf`，也不需要系统 `unbound` 服务。它使用和 NAT46 相同的前缀，配置为单线程、30–300 秒缓存，
+并把健康 WAN 提供的前两个 IPv4 DNS（没有 WAN DNS 时使用 `dns.fallback`）写入 forward-zone；WAN DNS 变化时只在内容改变后
+执行 `unbound-checkconf` 并向该实例发送 SIGHUP。`synth_all: true` 同时生成 `dns64-synthall` 和 `dns64-ignore-aaaa`，
+以保证节点得到的 AAAA 全部是 `64:ff9b::/96` 合成地址；设为 `false` 时省略这两项。
+
+启用前请把系统手工 unbound 服务停掉，并确保固件里安装 `/usr/sbin/unbound`（缺少时校验会提示 `apk add unbound`）。
+原有 `proxy.extra_config` 中把 `dns64` 指向 `127.0.0.1:1153` 的配置可以原样保留；`mr-dns64` 会在 `mr-nat46` 和
+`mr-proxy` 之前启动，`proxy.nat46.dns64.enabled: false`（默认）时不生成配置、不启用服务。
+
 ## 安全
 
 - sing-box 的 tproxy、DNS、clash API 端口只监听 127.0.0.1 / ::1，LAN 和 WAN 都访问不到；clash API 每次启动生成

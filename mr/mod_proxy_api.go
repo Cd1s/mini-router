@@ -444,6 +444,8 @@ func proxyCmd(c *Config, args []string) error {
 		switch args[1] {
 		case "serve":
 			return proxyNat46Serve(c, nil)
+		case "dns64-sync":
+			return proxyNat46DNS64Sync(c)
 		default:
 			return usage
 		}

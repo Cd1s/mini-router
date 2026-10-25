@@ -982,6 +982,9 @@ func writeResolv(c *Config) {
 	if err := writeAtomic(resolvConf, []byte(b.String()), 0644); err != nil {
 		logf("resolv: %v", err)
 	}
+	if err := proxyNat46DNS64Sync(c); err != nil {
+		logf("dns64: %v", err)
+	}
 }
 
 // hookDhcpcd is called from /etc/dhcpcd.exit-hook with dhcpcd's environment.

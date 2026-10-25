@@ -11,7 +11,9 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +23,13 @@ import (
 )
 
 const proxyNat46Gen = GenDir + "/nat46.json"
+
+var proxyNat46DNS64Gen = GenDir + "/dns64.conf"
+var proxyNat46DNS64Run = RunDir + "/dns64.conf"
+var unboundBinaryExists = func() bool { _, err := os.Stat("/usr/sbin/unbound"); return err == nil }
+var runUnboundCheckconf = func(path string) error {
+	return exec.Command("/usr/sbin/unbound-checkconf", path).Run()
+}
 
 func (n *ProxyNat46) listen() string {
 	if n.Listen == "" {
@@ -51,6 +60,10 @@ func proxyNat46Defaults(c *Config) {
 	if c.Proxy.Nat46.MaxConns == 0 {
 		c.Proxy.Nat46.MaxConns = 4096
 	}
+	if c.Proxy.Nat46.DNS64.SynthAll == nil {
+		v := true
+		c.Proxy.Nat46.DNS64.SynthAll = &v
+	}
 }
 
 func proxyNat46Validate(c *Config, v *Validator) {
@@ -73,7 +86,27 @@ func proxyNat46Validate(c *Config, v *Validator) {
 	if maxConns < 1 || maxConns > 65535 {
 		v.Add("proxy.nat46.max_conns: 1-65535, got %d", maxConns)
 	}
+	if c.Proxy.Nat46.DNS64.Enabled {
+		d := &c.Proxy.Nat46.DNS64
+		listen := d.listen()
+		if ap, err := netip.ParseAddrPort(listen); err != nil {
+			v.Add("proxy.nat46.dns64.listen: loopback address required, got %q", listen)
+		} else if !ap.Addr().IsLoopback() {
+			v.Add("proxy.nat46.dns64.listen: loopback address required, got %q", listen)
+		}
+		if !unboundBinaryExists() {
+			v.Add("proxy.nat46.dns64: /usr/sbin/unbound is not installed; apk add unbound")
+		}
+	}
 }
+
+func (d *ProxyDNS64) listen() string {
+	if d.Listen == "" {
+		return "127.0.0.1:1153"
+	}
+	return d.Listen
+}
+func (d *ProxyDNS64) synthAll() bool { return d.SynthAll == nil || *d.SynthAll }
 
 func proxyNat46Render(c *Config, out *Out) error {
 	if !c.Proxy.Enabled || !c.Proxy.Nat46.Enabled {
@@ -81,7 +114,107 @@ func proxyNat46Render(c *Config, out *Out) error {
 	}
 	n := c.Proxy.Nat46
 	out.Add(proxyNat46Gen, 0644, fmt.Sprintf("{\"listen\":%q,\"prefix\":%q,\"sources_file\":%q,\"max_conns\":%d}\n", n.listen(), n.prefix(), n.SourcesFile, n.maxConns()))
+	if n.DNS64.Enabled {
+		out.Add(proxyNat46DNS64Gen, 0644, proxyNat46DNS64Config(c))
+	}
 	return nil
+}
+
+func proxyNat46DNS64Config(c *Config) string {
+	d, n := c.Proxy.Nat46.DNS64, c.Proxy.Nat46
+	var b strings.Builder
+	fmt.Fprintf(&b, "server:\n    interface: %s\n    port: %s\n    access-control: 127.0.0.0/8 allow\n    do-ip6: no\n    module-config: \"dns64 iterator\"\n    dns64-prefix: %s\n", d.listenAddr(), d.port(), n.prefix())
+	if d.synthAll() {
+		b.WriteString("    dns64-synthall: yes\n    dns64-ignore-aaaa: ::/0\n")
+	}
+	b.WriteString("    cache-min-ttl: 30\n    cache-max-ttl: 300\n    num-threads: 1\n    msg-cache-size: 2m\n    rrset-cache-size: 4m\n    username: \"unbound\"\n")
+	return b.String()
+}
+
+func (d *ProxyDNS64) listenAddr() string { a, _, _ := net.SplitHostPort(d.listen()); return a }
+func (d *ProxyDNS64) port() string       { _, p, _ := net.SplitHostPort(d.listen()); return p }
+
+func proxyNat46DNS64Sync(c *Config) error {
+	if !c.Proxy.Enabled || !c.Proxy.Nat46.Enabled || !c.Proxy.Nat46.DNS64.Enabled {
+		return nil
+	}
+	base, err := os.ReadFile(proxyNat46DNS64Gen)
+	if err != nil {
+		return err
+	}
+	servers := proxyNat46DNS64Servers(c)
+	if len(servers) == 0 {
+		return nil // retain the previous runtime config until a usable DNS appears
+	}
+	var b strings.Builder
+	b.Write(base)
+	b.WriteString("forward-zone:\n    name: \".\"\n")
+	for _, s := range servers {
+		fmt.Fprintf(&b, "    forward-addr: %s\n", s)
+	}
+	data := []byte(b.String())
+	old, _ := os.ReadFile(proxyNat46DNS64Run)
+	if string(old) == string(data) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(proxyNat46DNS64Run), 0755); err != nil {
+		return err
+	}
+	tmp := proxyNat46DNS64Run + ".check"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	if err := runUnboundCheckconf(tmp); err != nil {
+		return fmt.Errorf("unbound-checkconf: %w", err)
+	}
+	if err := writeAtomic(proxyNat46DNS64Run, data, 0644); err != nil {
+		return err
+	}
+	if pidBytes, err := os.ReadFile("/run/mr-dns64.pid"); err == nil {
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes))); err == nil && pid > 1 {
+			_ = syscall.Kill(pid, syscall.SIGHUP)
+		}
+	}
+	return nil
+}
+
+func proxyNat46DNS64Servers(c *Config) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		parts := strings.SplitN(s, "#", 2)
+		host := strings.TrimSpace(parts[0])
+		ip := net.ParseIP(host)
+		if ip != nil && ip.To4() != nil && !seen[host] {
+			seen[host] = true
+			if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
+				s = host + "#" + strings.TrimSpace(parts[1])
+			} else {
+				s = host
+			}
+			out = append(out, s)
+		}
+	}
+	if b, err := os.ReadFile(resolvConf); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			f := strings.Fields(line)
+			if len(f) == 2 && f[0] == "nameserver" {
+				add(f[1])
+			}
+			if len(out) >= 2 {
+				return out
+			}
+		}
+	}
+	for _, s := range c.DNS.Fallback {
+		add(s)
+		if len(out) >= 2 {
+			break
+		}
+	}
+	return out
 }
 
 // localSourceTable resolves suffixes from current global IPv6 addresses when no table is configured.

@@ -52,12 +52,21 @@ type Proxy struct {
 }
 
 // ProxyNat46 converts IPv4-literal SOCKS5 destinations to NAT64 IPv6 addresses.
+// It is intentionally separate from sing-box: proxy.extra_config can keep using the
+// user's existing per-port SOCKS nodes unchanged.
 type ProxyNat46 struct {
-	Enabled     bool   `yaml:"enabled,omitempty"`
-	Listen      string `yaml:"listen,omitempty"`
-	Prefix      string `yaml:"prefix,omitempty"`
-	SourcesFile string `yaml:"sources_file,omitempty"`
-	MaxConns    int    `yaml:"max_conns,omitempty"`
+	Enabled     bool       `yaml:"enabled,omitempty"`
+	Listen      string     `yaml:"listen,omitempty"`
+	Prefix      string     `yaml:"prefix,omitempty"`
+	SourcesFile string     `yaml:"sources_file,omitempty"`
+	MaxConns    int        `yaml:"max_conns,omitempty"`
+	DNS64       ProxyDNS64 `yaml:"dns64,omitempty"`
+}
+
+type ProxyDNS64 struct {
+	Enabled  bool   `yaml:"enabled,omitempty"`
+	Listen   string `yaml:"listen,omitempty"`
+	SynthAll *bool  `yaml:"synth_all,omitempty"`
 }
 
 // ProxyNode is one proxy server (one sing-box outbound). Types and their keys: mod_proxy_node.go,
@@ -247,10 +256,13 @@ func init() {
 			out := []string{"mr-proxy", "mr-proxy-dns"}
 			if c.Proxy.Nat46.Enabled {
 				out = append(out, "mr-nat46")
+				if c.Proxy.Nat46.DNS64.Enabled {
+					out = append(out, "mr-dns64")
+				}
 			}
 			return out
 		},
-		Managed: []string{"mr-proxy", "mr-proxy-dns", "mr-nat46"},
+		Managed: []string{"mr-proxy", "mr-proxy-dns", "mr-nat46", "mr-dns64"},
 		Restart: func(path string) string {
 			switch path {
 			case proxyGenJSON:
@@ -259,10 +271,12 @@ func init() {
 				return "mr-proxy-dns"
 			case proxyNat46Gen:
 				return "mr-nat46"
+			case proxyNat46DNS64Gen:
+				return "mr-dns64"
 			}
 			return ""
 		},
-		RestartOrder: []string{"mr-nat46", "mr-proxy", "mr-proxy-dns"},
+		RestartOrder: []string{"mr-dns64", "mr-nat46", "mr-proxy", "mr-proxy-dns"},
 		Verify:       proxyVerify,
 		TokenScope:   map[string]string{"proxy.status": "read", "proxy.routes": "read", "proxy.delay": "operate", "proxy.select": "operate", "proxy.check": "operate"},
 		API: map[string]func(r apiReq) apiResp{
