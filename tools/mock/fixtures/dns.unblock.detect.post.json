@@ -1,0 +1,13 @@
+{
+  "blocked": [
+    {"domain": "blocked.test", "upstream": ["125.26.170.3"], "trusted": ["1.1.1.53"], "verdict": "屏蔽", "reason": "命中配置的屏蔽页地址"}
+  ],
+  "block_ips": ["125.26.170.3"],
+  "intercepted": false,
+  "latency": {"upstream_ms": 12, "trusted_ms": 18, "plain_cf_ms": 9},
+  "recommend": {"enable": true, "block_ips": ["125.26.170.3"], "protocol": "udp"},
+  "results": [
+    {"domain": "blocked.test", "upstream": ["125.26.170.3"], "trusted": ["1.1.1.53"], "verdict": "屏蔽"},
+    {"domain": "isp.test", "upstream": ["203.0.113.7"], "trusted": ["203.0.113.7"], "verdict": "正常或需人工确认"}
+  ]
+}

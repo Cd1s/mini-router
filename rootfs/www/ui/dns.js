@@ -220,6 +220,31 @@ const basicTab = async ()=>{
   const c = S.cfg, d = c.dns; const box = h("div");
   const ub = lazy(d, "unblock", ()=>({enabled:false, block_ips:[], retry_private:true, retry_empty:true, fallback:"cloudflare", protocol:"tls", server:""}));
   const ubEdit = el=>onEdit(el,()=>ub.attach());
+  let detectReport = null;
+  const detectNames = {v:""};
+  const detectBox = h("div");
+  const renderDetect = ()=>{
+    if (!detectReport) { detectBox.replaceChildren(); return; }
+    const rows = (detectReport.results||[]).map(r=>h("tr",{},
+      h("td",{},r.domain), h("td",{},(r.upstream||[]).join(", ")||"（空）"),
+      h("td",{},(r.trusted||[]).join(", ")||"（空）"), h("td",{},r.verdict||"正常或需人工确认")));
+    detectBox.replaceChildren(
+      h("div",{class:"dns-note"},"屏蔽域名 "+((detectReport.blocked||[]).length)+" 个；明文 1.1.1.1 劫持："+(detectReport.intercepted?"是":"否")),
+      h("div",{class:"tw"},h("table",{},h("thead",{},h("tr",{},["域名","运营商答案","可信答案","判定"].map(x=>h("th",{},x)))),h("tbody",{},rows))),
+      h("div",{class:"row",style:"margin-top:8px"},h("span",{class:"mut"},"建议："+(detectReport.recommend&&detectReport.recommend.protocol||"udp")+"；屏蔽页地址 "+((detectReport.block_ips||[]).join(", ")||"（未发现）")),
+        h("button",{class:"btn sm p",onclick:()=>{
+          const r=detectReport.recommend||{}; ub.o.enabled=!!r.enable; ub.o.block_ips=(r.block_ips||[]).slice();
+          if(r.protocol) ub.o.protocol=r.protocol; ub.attach(); draw();
+        }},"按检测结果填入")));
+  };
+  const runDetect = async()=>{
+    detectBox.replaceChildren(h("div",{class:"mut"},"检测中，请等待约 10 秒…"));
+    try { detectReport=await api("dns.unblock.detect",{domains:String(detectNames.v||"").split(/\s+/).filter(Boolean)},{timeout:15000}); renderDetect(); }
+    catch(e){ detectBox.replaceChildren(h("div",{class:"err"},"检测失败："+e.message)); }
+  };
+  const detectPanel = h("div",{style:"margin-top:10px"},
+    h("div",{class:"dns-note"},"可选：填写打不开的网站（空格或换行分隔），会与内置探测域名一起检测。检测只读，不会自动修改配置。"),
+    h("div",{class:"row"},inText(detectNames,"v",{placeholder:"例如 example.com blocked.test"}),h("button",{class:"btn sm p",onclick:runDetect},"检测")), detectBox);
   let files = await dnsFiles();
   const fileEd = h("div");
   const refreshFiles = async()=>{ files.splice(0,files.length,...await dnsFiles()); draw(); };
@@ -242,7 +267,7 @@ const basicTab = async ()=>{
         ...(ub.o.fallback==="custom" ? [...field("自定义服务器", ubEdit(inText(ub.o,"server",{placeholder:"1.1.1.1 或 2001:4860:4860::8888#53"})))] : []),
         ...field("查询方式", ubEdit(inSel(ub.o,"protocol",[["tls","TLS 加密（推荐）"],["https","HTTPS 加密"],["udp","UDP 明文（较快）"]])), "运营商劫持 53 端口时请选择 TLS 或 HTTPS"),
         ...field("私网假地址也改问", ubEdit(inBool(ub.o,"retry_private")), "例如 10.x、127.0.0.1、0.0.0.0"),
-        ...field("空结果也改问", ubEdit(inBool(ub.o,"retry_empty")), "NXDOMAIN、REFUSED、SERVFAIL 或 A/AAAA/HTTPS 无地址") )])]),
+        ...field("空结果也改问", ubEdit(inBool(ub.o,"retry_empty")), "NXDOMAIN、REFUSED、SERVFAIL 或 A/AAAA/HTTPS 无地址") ), detectPanel])]),
       card("DoT 加密 DNS（stubby）", [form(
         ...field("启用 stubby", inBool(stub.o,"enabled",()=>{ stub.attach(); draw(); }), "与 服务 页的开关相同；分流到 127.0.0.1#"+dotPort+" 或上游选 DoT 时必须开启"),
         ...field("监听端口", inNum(d.dot,"port"), "只监听 127.0.0.1，不对局域网开放"),

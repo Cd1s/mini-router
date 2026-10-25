@@ -351,6 +351,7 @@ func apiDNSQueryLog(r apiReq) apiResp {
 
 const dnsUsage = `mr dns stats                         dnsmasq cache / upstream statistics (JSON)
 mr dns query NAME [TYPE] [SERVER]    ask dnsmasq (or SERVER ip[#port]); TYPE A AAAA CNAME PTR SRV TXT
+mr dns unblock detect [--json] [DOMAIN ...]  compare ISP, trusted, and plain Cloudflare DNS (read-only)
 mr dns unblock-health                probe the built-in DNS unblock helper (internal monitor tick)
 mr dns leases                        DHCP leases (JSON)
 mr dns release IP [MAC]              make dnsmasq drop a DHCPv4 lease
@@ -367,6 +368,30 @@ func dnsCommand(c *Config, args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "unblock":
+		if len(args) < 2 || args[1] != "detect" {
+			return fmt.Errorf("usage: mr dns unblock detect [--json] [DOMAIN ...]")
+		}
+		jsonOut := false
+		var domains []string
+		for _, arg := range args[2:] {
+			if arg == "--json" {
+				jsonOut = true
+			} else {
+				domains = append(domains, arg)
+			}
+		}
+		report, err := dnsUnblockDetect(c, domains)
+		if err != nil {
+			return err
+		}
+		if jsonOut {
+			return pj(report)
+		}
+		for _, line := range dnsUnblockDetectText(report) {
+			fmt.Println(line)
+		}
+		return nil
 	case "unblock-health":
 		dnsUnblockHealth(c)
 		return nil
