@@ -49,6 +49,9 @@ type wanStatus struct {
 	Health  string   `json:"health,omitempty"` // up | down (multiwan health checker)
 	RTT     *float64 `json:"rtt_ms,omitempty"`
 	Overlap string   `json:"overlap,omitempty"`
+
+	// PublicWait: require_public_ip holds this line out of routing while the redials go on
+	PublicWait *publicWait `json:"public_wait,omitempty"`
 }
 
 func netStatus(c *Config, st map[string]any) {
@@ -61,12 +64,14 @@ func netStatus(c *Config, st map[string]any) {
 		}
 	}
 	var wans []wanStatus
+	waits := readRequirePublic()
 	for _, w := range c.WAN {
 		dev := w.Ifname()
 		ws := wanStatus{Name: w.Name, Proto: w.Proto, Dev: dev}
 		if a := ipv4Addrs(dev); len(a) > 0 {
 			ws.Up = true
 			ws.IP = strings.SplitN(a[0], "/", 2)[0]
+			ws.PublicWait = publicWaitOf(&w, ws.IP, waits[w.Name])
 		}
 		ws.RX = uint64(atoi(sysRead(dev, "statistics/rx_bytes")))
 		ws.TX = uint64(atoi(sysRead(dev, "statistics/tx_bytes")))
@@ -457,6 +462,8 @@ type wanRT struct {
 	Fails       int      `json:"fails,omitempty"`
 	HealthSince int64    `json:"health_since,omitempty"`
 	Overlap     string   `json:"overlap,omitempty"`
+
+	PublicWait *publicWait `json:"public_wait,omitempty"` // require_public_ip: held out, redials go on
 }
 
 type wanRuntimeView struct {
@@ -484,6 +491,7 @@ func wanRuntime(c *Config) wanRuntimeView {
 			}
 		}
 	}
+	waits := readRequirePublic()
 	for _, w := range c.WAN {
 		t, m := c.WANTable(w.Name)
 		r := wanRT{Name: w.Name, Proto: w.Proto, Dev: w.Ifname(), Service: netService(w), Table: t, Mark: m, Metric: w.Metric}
@@ -498,6 +506,7 @@ func wanRuntime(c *Config) wanRuntimeView {
 			if ms := mainDefaultMetrics(r.Dev); len(ms) > 0 {
 				r.RouteMetric = &ms[0]
 			}
+			r.PublicWait = publicWaitOf(&w, r.IP, waits[w.Name])
 		}
 		if c.MultiWAN.Mode == "balance" {
 			r.Weight = c.MultiWAN.Weight(w.Name)

@@ -410,12 +410,27 @@ func docDHCPHint(w WAN, e *docEnv, now int64, up bool) bool {
 	return r.Offer
 }
 
+// docPublicWait: where the redials of a WAN stand ("redial 5 done, next in 6 min").
+func docPublicWait(pw *publicWait, now time.Time) string {
+	if pw.Redials == 0 {
+		return "no redial yet, the next check (within a minute) starts it"
+	}
+	left := pw.NextAt - now.Unix()
+	switch {
+	case left <= 0:
+		return fmt.Sprintf("redial %d done, the next one is due now", pw.Redials)
+	case left < 60:
+		return fmt.Sprintf("redial %d done, next in %d s", pw.Redials, left)
+	}
+	return fmt.Sprintf("redial %d done, next in %d min", pw.Redials, (left+59)/60)
+}
+
 func docWAN(c *Config, e *docEnv) []docFinding {
 	if len(c.WAN) == 0 {
 		return []docFinding{{Sev: "skip", Title: "WAN", Detail: "no WAN configured"}}
 	}
 	up, health := docWANsUp(c, e), e.health(c)
-	publicState := readRequirePublic()
+	waits := readRequirePublic()
 	var out []docFinding
 	usable := 0
 	for _, w := range c.WAN {
@@ -434,12 +449,11 @@ func docWAN(c *Config, e *docEnv) []docFinding {
 			out = append(out, f)
 			continue
 		}
-		publicRisk := w.Proto == "pppoe" && w.RequirePublicIP && publicState[w.Name].Risk
-		if isUp && publicRisk && addrClass(ip) != "" {
-			cls := addrClass(ip)
-			f.Sev = "risk"
-			f.Detail = fmt.Sprintf("has %s (%s); automatic public-IP redial stopped after repeated private addresses", ip, cls)
-			f.Fix = restart + "; ask the ISP for a public IPv4 address"
+		if pw := publicWaitOf(&w, ip, waits[w.Name]); isUp && pw != nil {
+			// require_public_ip: not a failure, the redials go on until the ISP gives a public address
+			f.Sev = "warn"
+			f.Detail = fmt.Sprintf("has %s (%s); waiting for the ISP to release a session slot (a session over its concurrent limit sits in a walled garden): %s", ip, pw.Class, docPublicWait(pw, e.now))
+			f.Fix = fmt.Sprintf("nothing to do: only this line is redialed, at growing intervals (at most %d min apart), until it gets a public address; its routes are treated as down meanwhile (policy routes with fallback: main use the main route). Now: %s", requirePublicCap/60, restart)
 			usable++
 			out = append(out, f)
 			continue
@@ -448,30 +462,14 @@ func docWAN(c *Config, e *docEnv) []docFinding {
 		case !isUp && w.Proto == "pppoe" && !e.exists("/proc/net/pppoe"):
 			k := strings.TrimSpace(e.read("/proc/sys/kernel/osrelease"))
 			f.Sev, f.Detail = "warn", fmt.Sprintf("no IPv4 address on %s: the kernel %s has no PPPoE (the pppoe module is not loaded)", w.Ifname(), k)
-			if publicRisk {
-				f.Sev = "risk"
-				f.Detail += "; automatic public-IP redial stopped after repeated private addresses"
-			}
 			f.Fix = "modprobe pppoe; a kernel without it (Alpine's linux-virt): apk add linux-lts, reboot"
 		case !isUp:
 			f.Sev, f.Detail = "warn", fmt.Sprintf("no IPv4 address on %s (%s)", w.Ifname(), w.Proto)
-			if publicRisk {
-				f.Sev = "risk"
-				f.Detail += "; automatic public-IP redial stopped after repeated private addresses"
-			}
 			f.Fix = restart + "; grep -E 'pppd|udhcpc' /var/log/messages | tail (cable, account, ISP)"
 		case w.Proto == "pppoe" && health[w.Name] == "down" && addrClass(ip) != "":
 			cls := addrClass(ip)
 			f.Sev, f.Detail = "warn", fmt.Sprintf("has %s (%s) and fails the health check; the ISP likely placed this PPPoE session in a private/CGNAT pool", ip, cls)
-			if publicRisk {
-				f.Sev = "risk"
-				f.Detail += "; automatic public-IP redial stopped after repeated private addresses"
-			}
-			if w.RequirePublicIP {
-				f.Fix = restart + fmt.Sprintf("; automatic public-IP redial stops after %d private addresses; ask the ISP for a public IPv4 address", requirePublicMax)
-			} else {
-				f.Fix = restart + "; enable wan.require_public_ip for bounded automatic redials, or ask the ISP for a public IPv4 address"
-			}
+			f.Fix = restart + "; enable wan.require_public_ip to redial it at growing intervals until the ISP gives a public address, or ask the ISP for one"
 		case health[w.Name] == "down":
 			f.Sev, f.Detail = "warn", fmt.Sprintf("has %s but fails the health check (no reply from the multiwan targets)", ip)
 			f.Fix = "mr wan health; ping -I " + w.Ifname() + " <target>; " + strings.TrimPrefix(restart, "mr wan status; ")

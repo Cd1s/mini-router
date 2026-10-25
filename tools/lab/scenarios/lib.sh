@@ -64,3 +64,22 @@ finish() {
 	printf '1..%s\n# log: %s\n' "$n" "$LOG"
 	[ "$fail" -eq 0 ]
 }
+
+# ---- shared by the two-line scenarios (07, 12, 13): wan on the port's own MAC, wan2 a second PPPoE session
+# on the same port (own MAC, macvlan), both dialled at the ISP simulator's isp1 (state/mrlab<ID>/isp1)
+WAN2_MAC=02:00:00:$(printf '%02x' "$ID"):00:02
+LAN_DEV=mrlab${ID}slp
+ISP_DIR=$(dirname "$LAB_SH")/state/mrlab$ID/isp1
+# wan2_json <gap>: the wan2 entry; gap > 0 turns require_public_ip on with that require_public_ip_gap
+wan2_json() {
+	_g=''
+	[ "${1:-0}" -le 0 ] || _g=",\"require_public_ip\":true,\"require_public_ip_gap\":$1"
+	printf '{"name":"wan2","device":"eth0","proto":"pppoe","username":"lab","password_secret":"pppoe_password","mac":"%s","metric":20,"peerdns":true%s}' "$WAN2_MAC" "$_g"
+}
+# wan_addr <ifname>: the router's IPv4 address on it
+wan_addr() { lab console "$ID" "ip -4 -o addr show $1" 2> /dev/null | sed -n 's/.* inet \([0-9.]*\).*/\1/p' | head -n 1; }
+# exit_addr <client source address>: the address the ISP's echo server (192.0.2.99) saw for a request from the LAN client
+exit_addr() { lab lan "$ID" exec "curl -4 -fsS --max-time 5 --interface $1 http://192.0.2.99/" 2> /dev/null | tr -d '\r\n '; }
+# exits_via <client source address> <wan ifname>: the request left through that WAN
+exits_via() { [ "$(exit_addr "$1")" = "$(wan_addr "$2")" ] && [ -n "$(wan_addr "$2")" ]; }
+wire() { cat "$ISP_DIR/pppoe-wire.log" 2> /dev/null; }

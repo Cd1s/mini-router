@@ -54,16 +54,23 @@ MRLAB_FORCE=1 $L reset $ID                      # only after checking that nobod
 
 Scenarios (TAP output, log in `/tmp/mrlab<ID>-<name>.log`): `$L run $ID 01-fresh-dhcp`,
 `02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`,
-`06-lan-renumber`, `07-require-public-ip`, `08-dhcp-slaac-relay`, `09-first-run-wizard`, `11-dns-unblock`, `12-dns-unblock-detect`.
+`06-lan-renumber`, `07-require-public-ip`, `08-dhcp-slaac-relay`, `09-first-run-wizard`, `11-dns-unblock`,
+`12-dns-unblock-detect`, `14-policy-fallback-walled`.
 The longer scenarios have these purposes and waits:
 
 - `05-isp-switch-live` changes a live PPPoE line to down, back to PPPoE, then DHCP and back; it
   waits 25 s for the outage diagnosis and up to 90 s for each redial.
 - `06-lan-renumber` confirms 192.168.1.1 → .6 → 192.168.2.1 through the API and waits 130 s after
   each change for the 120 s confirmation window to prove there is no rollback.
-- `07-require-public-ip` exercises PPPoE CGNAT redial and recovery; it can wait 150 s for a new
-  session, up to 420 s for the five-redial stop, another 90 s to prove it stays stopped, then up to
-  120 s for a public address and 60 s for LAN traffic.
+- `07-require-public-ip` runs two PPPoE lines (`wan`, and `wan2` on the same port with its own MAC), both with
+  `require_public_ip` (gap 2 s, plus a guest ticker that runs the cron check every 4 s). The ISP walls the first 7
+  dials of wan2 (100.64.x, up but dead): the redials go on past the fast phase with growing waits, wan2 ends up
+  with a public address (about 90 s), `mr doctor` warns "waiting for the ISP to release a session slot", and the ISP's
+  wire log shows that nothing was ever sent from wan's MAC.
+- `14-policy-fallback-walled` pins two LAN addresses to the walled wan2 (`fallback: main` / `fallback: drop`): the
+  first stays online through wan within a minute, the second stays cut off, both go back to wan2 when the ISP
+  releases a slot; then the same with `require_public_ip` off and the multiwan health check as the only detector
+  (about 90 s).
 - `08-dhcp-slaac-relay` enables and disables IPv6 relay on a DHCP-only SLAAC upstream; probe and
   proxy checks retry for up to 70 s.
 - `09-first-run-wizard` checks deferred install discovery and the session/plan/apply/confirm/
@@ -141,8 +148,16 @@ namespace replaces with lab directories. Go comes from `/etc/profile.d/buildtool
 | --- | --- | --- |
 | `dhcp [v6=slaac] [--subnet 192.168.1.0/24]` | dnsmasq DHCP + DNS on `10.<id>.<wan>.1/24`; `v6=slaac` additionally advertises `2001:db8:<id>:<wan>::/64` with radvd and provides no PD; with `--subnet 192.168.1.0/24` it also serves a modem page on 192.168.1.1 | DHCP |
 | `static` | `10.<id>.<wan>.1/24` + DNS; `install --wan-proto static` uses `.2/24` | static |
-| `pppoe [v6=slaac\|pd] [--badpass] [nopado] [--cgnat]` | pppoe-server, CHAP `lab`/`labpass` (`--badpass`: the server expects another password; `nopado`: no server at all; `--cgnat`: 100.64.<id>.x). After IPv6CP the ISP end is `2001:db8:<id>:<wan>::1/64`; `v6=slaac` adds RAs for that /64, `v6=pd` also kea DHCPv6 delegating /60s from `2001:db8:<id>:<wan>00::/56` | PPPoE |
+| `pppoe [v6=slaac\|pd] [--badpass] [nopado] [--cgnat] [--cgnat-dials N [--cgnat-mac MAC]] [--echo]` | pppoe-server, CHAP `lab`/`labpass` (`--badpass`: the server expects another password; `nopado`: no server at all; `--cgnat`: 100.64.<id>.x). After IPv6CP the ISP end is `2001:db8:<id>:<wan>::1/64`; `v6=slaac` adds RAs for that /64, `v6=pd` also kea DHCPv6 delegating /60s from `2001:db8:<id>:<wan>00::/56` | PPPoE |
 | `down` | link down | — |
+
+PPPoE extras (scenarios `07`, `12`): `--cgnat-dials N` is an ISP with a concurrent-session limit (AIS): the first N dials of
+a client (all of them, or only those from `--cgnat-mac`) land in the walled garden — 100.64.<id>.x, PPP up, nothing forwarded —
+and later dials get a public address; `lab.sh isp-walled <id> <wan> <N>` changes N while it runs (0 = the ISP released its
+slots). `--echo` serves 192.0.2.99:80 in the ISP namespace, which answers with the address the request came from: through
+which WAN did a LAN client leave? Every PPPoE ISP also records `state/mrlab<ID>/isp<wan>/pppoe-wire.log` (a small
+`pppoe-watch.py` in the namespace: PADI / PADO / PADR / PADS / PADT and LCP Terminate-Request / -Ack with the MACs and the
+session id) and, with `--cgnat-dials`, `dials.log` (one line per dial: time, client MAC, dial number, address).
 
 DNS options for `dhcp` / `static` / `pppoe` (scenario `11-dns-unblock`): `--address NAME=IP[,TTL]` makes the ISP resolver answer NAME
 (with a TTL the answer has a real lifetime, so the router's dnsmasq caches it; without one the TTL is 0), `--nxdomain NAME`,
@@ -160,6 +175,7 @@ is an nftables table inside the ISP namespace only.
 ```text
 up|down|reset|status <id>          lab lifecycle (down removes only mrlab<ID>* objects and state)
 isp <id> <wan> <mode> [opts]       ISP simulator (table above)
+isp-walled <id> <wan> <N>          dials 1..N per client are walled (isp ... --cgnat-dials)
 install <id> [opts]                fresh disk + real install.sh; exit 1 with the installer's last lines
 lan <id> dhcp|static [a/len [gw]]|check|exec <cmd>
 console <id> <cmd>                 MRLAB_TIMEOUT=<s> (default 60)

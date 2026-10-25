@@ -46,8 +46,8 @@ type WAN struct {
 	IPv6PD             bool     `yaml:"ipv6_pd"`                         // request a delegated prefix and put it on the LAN
 	IPv6Relay          bool     `yaml:"ipv6_relay,omitempty"`            // relay a SLAAC /64 to the LAN when no PD exists
 	SrcRoute           bool     `yaml:"ipv6_srcroute"`                   // IPv6 traffic sourced from this WAN's prefix leaves via this WAN
-	RequirePublicIP    bool     `yaml:"require_public_ip,omitempty"`     // PPPoE: redial while the assigned IPv4 is private/CGNAT
-	RequirePublicIPGap int      `yaml:"require_public_ip_gap,omitempty"` // seconds between automatic redials (default 180)
+	RequirePublicIP    bool     `yaml:"require_public_ip,omitempty"`     // PPPoE: redial (only this line, backing off, never giving up) while the assigned IPv4 is private/CGNAT; the line counts as down meanwhile
+	RequirePublicIPGap int      `yaml:"require_public_ip_gap,omitempty"` // seconds between the first 4 redials (default 180), then 2x, 4x ... up to 15 min
 	Modem              Modem    `yaml:"modem,omitempty"`                 // optional modem management address on the physical WAN link
 }
 

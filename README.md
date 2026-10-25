@@ -54,7 +54,7 @@ Current stable release: **v0.4.0** (see [Releases](https://github.com/Cd1s/mini-
 
 | 模块 | 功能 |
 |---|---|
-| **网络** | PPPoE（1500 MTU）/ DHCP / 静态；**多拨**（单口多拨每条会话独立 MAC、多口多拨、拨号顺序），多线故障切换与负载均衡；策略路由（按设备 / 网段 / **域名**，设备的 IPv4 + IPv6 都能固定到一条线）；双线 IPv6，运营商换前缀自动恢复；访客 / IoT 网络、VLAN；**主路由 / 旁路由 / 纯 AP** 三种模式；`require_public_ip` 在 PPPoE 得到私网 / CGNAT 时限次重拨；可选 `ipv6_relay` SLAAC 中继（下一版 / next release） |
+| **网络** | PPPoE（1500 MTU）/ DHCP / 静态；**多拨**（单口多拨每条会话独立 MAC、多口多拨、拨号顺序），多线故障切换与负载均衡；策略路由（按设备 / 网段 / **域名**，设备的 IPv4 + IPv6 都能固定到一条线）；双线 IPv6，运营商换前缀自动恢复；访客 / IoT 网络、VLAN；**主路由 / 旁路由 / 纯 AP** 三种模式；`require_public_ip` 在 PPPoE 得到私网 / CGNAT 时只重拨这一条线、逐步退避到 15 分钟、不放弃，期间策略路由回落到主路由；可选 `ipv6_relay` SLAAC 中继（下一版 / next release） |
 | **首次设置** | 新环境首次打开面板进入向导：管理员密码、时区、**检测上网方式**（`mr wan detect`）、上游 / LAN 冲突检查、WiFi 和带确认窗口的应用；First-run wizard for password, time zone, connection detection, upstream/LAN conflict check, WiFi and confirm-window apply |
 | **换环境** | 光猫与 LAN 同网段时仍可上网、解析和访问光猫管理页；合并 PPPoE / DHCP / DHCPv6 提供的 DNS，按 WAN 健康状态排序，全部失效时由 `dns.fallback` 兜底；网页改 LAN 网段会平移相关地址、清旧网桥地址并在新地址一次性确认，不失联；Changing ISP or LAN networks keeps internet and modem access working with DNS from PPPoE/DHCP/DHCPv6 sources ordered by WAN health; `dns.fallback` is used when all sources are unavailable, and a LAN renumber confirms on the new address |
 | **WiFi** | 多 SSID、WPA2/3、访客隔离；组播转单播、802.11v 频段引导、射频健康与自愈；定时开关 |
