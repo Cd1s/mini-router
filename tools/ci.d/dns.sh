@@ -69,6 +69,8 @@ MR=$1 CFG=$2 SEC=$3 CONF=$4 BR=$5 ADDR=$6 LEASEIP=$7
 mr() { "$MR" -c "$CFG" -s "$SEC" "$@"; }
 mount -t tmpfs tmpfs /tmp
 ip link set lo up
+# ss-nodes keeps hundreds of /128 source addresses on lo; dnsmasq must not open a listener on each of them
+seq 1 1000 | awk '{printf "addr add 2001:db8:77::%x/128 dev lo nodad\n", $1}' | ip -batch -
 for d in $(sed -n 's/^interface=//p' "$CONF"); do
 	ip link add "$d" type dummy
 	ip link set "$d" up
@@ -120,6 +122,10 @@ until mr dns query localhost A >/dev/null 2>&1; do
 	sleep 0.1
 done
 echo "adblock: dnsmasq answered $((($(date +%s%N) - t0) / 1000000)) ms after start; $(grep VmRSS /proc/$pid/status | tr -s ' \t' ' ') with 150006 blocked names"
+nfd=$(find /proc/$pid/fd -type l | wc -l)
+[ "$nfd" -lt 100 ] || fail "dnsmasq holds $nfd descriptors with 1000 extra addresses on lo (want < 100: it listens on the LAN bridges and 127.0.0.1 / ::1 only)"
+ss -lnu | grep -q '127.0.0.1:53 ' || fail "dnsmasq does not listen on 127.0.0.1:53"
+echo "ok: dnsmasq holds $nfd descriptors with 1000 extra /128 addresses on lo"
 check() {
 	out=$(mr dns query "$1" "$2") || fail "query $1 $2"
 	echo "$out" | grep -qF "$3" || fail "$1 $2: want $3, got: $out"

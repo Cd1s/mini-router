@@ -63,7 +63,7 @@ func TestIPv6RelayDisabledMatchesMainBaselineFiles(t *testing.T) {
 	f[GenDir+"/nftables.nft"] = renderNft(c, allExist)
 	want := map[string]string{
 		"/etc/dhcpcd.conf":       "ca2e991b988fdd8c82cc389013c705ba6a2fc125788865d7bafb8b79095d36ed",
-		"/etc/dnsmasq.conf":      "286d28a6beefba0d494d500300fa1ff3d5b00cb186cd00dabd823a21f9175c46",
+		"/etc/dnsmasq.conf":      "93642b4e1281a21f08d8d13c3e937829c4b5a07c303d161faec543ae1b66ace4",
 		GenDir + "/nftables.nft": "60965cd020469cc242e089d8fe0286ec86dbe6a24447d88c25079a4f1aeb6d3b",
 		"/etc/crontabs/root":     "e16a0402de64658fe2c028a2520a3460bd87a8394977ff5c9333df4cd47a4895",
 	}

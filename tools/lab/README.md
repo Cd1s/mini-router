@@ -55,7 +55,7 @@ MRLAB_FORCE=1 $L reset $ID                      # only after checking that nobod
 Scenarios (TAP output, log in `/tmp/mrlab<ID>-<name>.log`): `$L run $ID 01-fresh-dhcp`,
 `02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`,
 `06-lan-renumber`, `07-require-public-ip`, `08-dhcp-slaac-relay`, `09-first-run-wizard`, `11-dns-unblock`,
-`12-dns-unblock-detect`, `14-policy-fallback-walled`, `15-pppoe-reboot-padt`.
+`12-dns-unblock-detect`, `14-policy-fallback-walled`, `15-pppoe-reboot-padt`, `16-dnsmasq-listen-scope`.
 The longer scenarios have these purposes and waits:
 
 - `05-isp-switch-live` changes a live PPPoE line to down, back to PPPoE, then DHCP and back; it
@@ -74,6 +74,13 @@ The longer scenarios have these purposes and waits:
 - `15-pppoe-reboot-padt` reboots a router with two PPPoE sessions (own MACs on one port) and reads the ISP's wire log: both
   sessions must end with LCP Terminate-Request + PADT, with `mr-pppoe.*` stopped before the firewall unloads; then again with
   the ISP's pppd frozen (it never answers the Terminate-Request). About 2 minutes.
+- `16-dnsmasq-listen-scope` puts 1000 /128 addresses on the router's `lo` (what ss-nodes keeps there; they used to cost
+  dnsmasq a UDP + TCP listener each and its 1024 descriptors) and takes them off again. The descriptors of the three
+  dnsmasq instances (main, mr-proxy-dns, mr-parental-dns) must stay below 100, with the processes running and after a
+  restart; a parental device, a proxied device and a bypass device (three LAN clients on one port) keep IPv4 / IPv6 DNS,
+  the redirect of port 53, safe search, blocklist, fake-ip answers and rebind protection, and `mr proxy check`, DHCP and
+  the router's own resolver keep working. It needs the router's static sing-box (`LAB_SING_BOX=...`, default
+  `/root/build/sbmin/amd64/sing-box`) and takes about 8 minutes.
 - `08-dhcp-slaac-relay` enables and disables IPv6 relay on a DHCP-only SLAAC upstream; probe and
   proxy checks retry for up to 70 s.
 - `09-first-run-wizard` checks deferred install discovery and the session/plan/apply/confirm/

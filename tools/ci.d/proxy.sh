@@ -87,6 +87,8 @@ veth "$R" w0 "$S" eth0
 for d in lanc lanm; do ip -n "$R" link set "$d" master br-lan up; done
 ip -n "$R" addr add 192.168.1.6/24 dev br-lan
 ip -n "$R" addr add 2001:db8:1::6/64 dev br-lan nodad
+# ss-nodes keeps hundreds of /128 source addresses on lo: neither dnsmasq may open a listener on each of them
+seq 1 1000 | awk '{printf "addr add 2001:db8:77::%x/128 dev lo nodad\n", $1}' | ip -n "$R" -batch -
 ip -n "$R" addr add 192.168.30.1/24 dev br-iot
 ip -n "$R" link set br-lan up
 ip -n "$R" link set br-iot up
@@ -281,7 +283,7 @@ ip netns exec "$S" "$SB" run -c "$T/server.json" > "$T/server.log" 2>&1 &
 ip netns exec "$R" "$SB" run --disable-color -c "$T/router.json" -D "$T" > "$T/router.log" 2>&1 &
 # stand-in for the main dnsmasq (real answers for bypass devices; local names for mr-proxy-dns)
 ip netns exec "$R" dnsmasq --keep-in-foreground --pid-file= --user=root --conf-file=/dev/null --no-resolv --no-hosts \
-	--interface=br-lan --listen-address=127.0.0.1 --bind-dynamic --address=/e2e.test/198.51.100.10 > "$T/main-dns.log" 2>&1 &
+	--interface=br-lan --except-interface=lo --listen-address=127.0.0.1 --bind-dynamic --address=/e2e.test/198.51.100.10 > "$T/main-dns.log" 2>&1 &
 # (dnsmasq refuses to start when the resolv-file directory is missing; pppd's is not here)
 : > "$T/resolv.conf"
 sed "s#^resolv-file=.*#resolv-file=$T/resolv.conf#" "$L/proxy-dns.conf" > "$T/proxy-dns.conf"
@@ -307,6 +309,12 @@ until [ "$(q "$C" dns 192.168.1.6 www.e2e.test A)" != error ]; do
 	sleep 0.5
 done
 
+for pid in $(ip netns pids "$R"); do
+	[ "$(cat "/proc/$pid/comm" 2>/dev/null)" = dnsmasq ] || continue
+	nfd=$(find "/proc/$pid/fd" -type l | wc -l)
+	[ "$nfd" -lt 100 ] || { logs; fail "dnsmasq (pid $pid) holds $nfd descriptors with 1000 extra addresses on lo (want < 100)"; }
+	echo "dnsmasq (pid $pid): $nfd descriptors with 1000 extra /128 addresses on lo"
+done
 a4=$(q "$C" dns 192.168.1.6 www.e2e.test A)
 a6=$(q "$C" dns 2001:db8:1::6 www.e2e.test AAAA)
 am=$(q "$M" dns 192.168.1.6 www.e2e.test A)

@@ -35,6 +35,10 @@ records), `mr/mod_dns_query.go` (tiny DNS client, statistics, post-apply read-ba
   needs router.yaml to load, like every `mr` module command). The view hides `mr`'s own statistics
   probes (`*.bind` CHAOS queries from 127.0.0.1).
 - DNS redirect (`dns.redirect`, nft DNAT of LAN port 53 to the router) — unchanged.
+- **Listening scope**: dnsmasq, mr-proxy-dns and mr-parental-dns listen on the LAN bridges (`bind-dynamic`, so
+  they follow the delegated prefix) plus `127.0.0.1` and `::1`, and on no other address of `lo`
+  (`except-interface=lo`): ss-nodes keeps hundreds of /128 source addresses there, and a socket pair per address
+  used up dnsmasq's 1024 descriptors.
 - **DNS sovereignty** (`dns.sovereignty`, Cd1s/mini-router#45): keeps devices on the router's DNS, which
   local names, the split, policy routes by domain and the proxy's fake-ip all rely on (see below).
 - **nftset lines from the net module** (`policy_routes[].domains`, `Module.Dnsmasq`): dnsmasq writes the addresses
@@ -321,7 +325,8 @@ No handler builds a shell command; `rc-service dnsmasq restart` is the only exec
 
 ## Checks
 
-- Go tests (`mr/mod_dns_test.go`): the home dnsmasq.conf is byte-identical to the previous output;
+- Go tests (`mr/mod_dns_test.go`, `mod_dns_listen_test.go`): the home dnsmasq.conf is byte-identical to the previous output
+  (apart from the listening scope); the three dnsmasq configs listen on the LAN bridges, 127.0.0.1 and ::1 only;
   records / options / RA / upstream rendering; validation rejects injection (newlines, quotes, commas,
   `#`, spaces, reserved options); stubby.yml parses as YAML; lease parsing; DHCPRELEASE packet bytes;
   DNS message parser against truncation/corruption; statistics against a fake CHAOS server;
@@ -330,6 +335,8 @@ No handler builds a shell command; `rc-service dnsmasq restart` is the only exec
   real in a throwaway net+mount namespace, every record type is queried through `mr dns query`,
   `mr dns stats` answers, `mr dns release` makes dnsmasq drop a lease, and the canary / Private Relay
   names answer NXDOMAIN (the namespace has no upstream, so only dnsmasq's own answer can say that).
+  With 1000 extra /128 addresses on `lo` the rendered dnsmasq holds fewer than 100 descriptors
+  (`tools/ci.d/proxy.sh` checks mr-proxy-dns the same way).
 - `tools/ci.d/fw.sh` (lab: `block_dot`, a DoH list with the test "internet" host): LAN and guest → 853
   and → 443 of a listed resolver are refused (IPv4 and IPv6), DoT to a proxied range is refused before
   the proxy socket could take it, the router's own 853 and the resolver's other ports still work.
