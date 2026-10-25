@@ -119,6 +119,7 @@ IPv6 地址中查找接口标识，只有唯一匹配才接受。
 并把健康 WAN 提供的前两个 IPv4 DNS（没有 WAN DNS 时使用 `dns.fallback`）写入 forward-zone；WAN DNS 变化时只在内容改变后
 执行 `unbound-checkconf` 并向该实例发送 SIGHUP。`synth_all: true` 同时生成 `dns64-synthall` 和 `dns64-ignore-aaaa`，
 以保证节点得到的 AAAA 全部是 `64:ff9b::/96` 合成地址；设为 `false` 时省略这两项。
+保留的 `.test` 区域会设为 transparent，避免 Alpine unbound 的内置测试区域绕过 forward-zone；这只影响保留的测试域名。
 
 启用前请把系统手工 unbound 服务停掉，并确保固件里安装 `/usr/sbin/unbound`（缺少时校验会提示 `apk add unbound`）。
 原有 `proxy.extra_config` 中把 `dns64` 指向 `127.0.0.1:1153` 的配置可以原样保留；`mr-dns64` 会在 `mr-nat46` 和

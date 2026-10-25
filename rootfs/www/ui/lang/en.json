@@ -1344,7 +1344,7 @@
 "超过上限的新连接会被关闭。": "New connections above this limit are closed.",
 "节点 DNS64": "Node DNS64",
 "启用内置 DNS64": "Enable built-in DNS64",
-"给 proxy.extra_config 中的节点提供 DNS64；WAN DNS 会自动跟随，替代手工 unbound 和 isp-dns.sh。": "Provide DNS64 to nodes in proxy.extra_config; WAN DNS follows automatically, replacing manual unbound and isp-dns.sh.",
+"给 proxy.extra_config 中的节点提供 DNS64；WAN DNS 会自动跟随，替代手工 unbound 和 isp-dns.sh。先启用 NAT46。": "Provide DNS64 to proxy.extra_config nodes; WAN DNS follows automatically, replacing manual unbound and isp-dns.sh. Enable NAT46 first.",
 "DNS64 监听": "DNS64 listen address",
 "只允许回环地址，节点中的 dns64 服务器可继续使用 127.0.0.1:1153。": "Loopback only; nodes can keep using 127.0.0.1:1153 as their dns64 server.",
 "合成全部 AAAA": "Synthesize all AAAA",

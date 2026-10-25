@@ -213,7 +213,7 @@ alpine_pkgs(){
   # afterwards (the last word: a separate step)
   echo linux-lts linux-firmware-none
   sed -n '/^PKGS="/,/"$/p' "$1/install.sh" | tr -d '"' | sed 's/^PKGS=//' | tr '\n' ' '
-  echo dnsmasq-dnssec-nftset
+  echo dnsmasq-dnssec-nftset unbound
 }
 ensure_cloud(){
   if [ ! -s "$CLOUD" ]; then
@@ -304,6 +304,9 @@ ensure_mirror(){
     awk 'NR==FNR {base[$0] = 1; next} /^P:/ {p = substr($0, 3)} /^V:/ {v = substr($0, 3); if (!((p "-" v) in base)) print p}' \
       "$cr/tmp/base-installed" "$cr/tmp/sim/lib/apk/db/installed" >> "$cr/tmp/needed"
   done
+  # Keep explicitly requested resolver/daemon packages in the offline mirror even when the base
+  # image already carries a split subpackage (apk add still resolves the parent package name).
+  printf '%s\n' dnsmasq unbound >> "$cr/tmp/needed"
   # shellcheck disable=SC2046
   chroot "$cr" /sbin/apk fetch -q -o /tmp/fetch $(sort -u "$cr/tmp/needed")
   rm -rf "$cr/tmp/sim"
@@ -494,7 +497,9 @@ isp_cmd(){
   run_ns "$n" ip link set "$dev" up
   slirp_start "$id" "$wan"
   # --conf-file=/dev/null: never the host's /etc/dnsmasq.conf or /etc/dnsmasq.d
-  dns="--conf-file=/dev/null --no-resolv --no-hosts --server=10.0.2.3 --address=/isp.test/$subnet.$gw --pid-file=$d/dnsmasq.pid --log-facility=$d/dnsmasq.log --dhcp-leasefile=$d/dnsmasq.leases"
+  # Keep isp.test locally authoritative but return NOERROR/NODATA for AAAA. DNS64 must see an
+  # empty AAAA answer to synthesize from the A record; dnsmasq's address= alone returns REFUSED.
+  dns="--conf-file=/dev/null --no-resolv --no-hosts --server=10.0.2.3 --address=/isp.test/203.0.113.7 --local=/isp.test/ --pid-file=$d/dnsmasq.pid --log-facility=$d/dnsmasq.log --dhcp-leasefile=$d/dnsmasq.leases"
   case $mode in
     dhcp)
       run_ns "$n" ip addr add "$subnet.$gw/24" dev "$dev"

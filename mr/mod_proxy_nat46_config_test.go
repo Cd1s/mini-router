@@ -44,12 +44,22 @@ func TestProxyNat46RenderAndValidation(t *testing.T) {
 }
 
 func TestProxyNat46DisabledPreservesEnabledProxyRender(t *testing.T) {
-	before := renderMap(t, proxyTestConfig(t))
-	afterConfig := proxyTestConfig(t)
-	afterConfig.Proxy.Nat46 = ProxyNat46{}
-	after := renderMap(t, afterConfig)
-	if !reflect.DeepEqual(before, after) {
-		t.Fatalf("nat46 disabled changed an existing proxy render")
+	mainConfig := proxyTestConfig(t)
+	mainRender := renderMap(t, mainConfig)
+	withDefaults := proxyTestConfig(t)
+	proxyNat46Defaults(withDefaults)
+	defaultRender := renderMap(t, withDefaults)
+	if !reflect.DeepEqual(mainRender, defaultRender) {
+		t.Fatalf("nat46 defaults changed an existing proxy render")
+	}
+	if _, ok := defaultRender[proxyNat46Gen]; ok {
+		t.Fatal("nat46 file rendered while disabled")
+	}
+	if _, ok := defaultRender[proxyNat46DNS64Gen]; ok {
+		t.Fatal("dns64 file rendered while disabled")
+	}
+	if strings.Contains(defaultRender[GenDir+"/services"], "mr-nat46") || strings.Contains(defaultRender[GenDir+"/services"], "mr-dns64") {
+		t.Fatal("nat46 service enabled while disabled")
 	}
 }
 
@@ -173,7 +183,7 @@ func TestProxyNat46DNS64RenderAndForwardSync(t *testing.T) {
 	conf := files[proxyNat46DNS64Gen]
 	wantLines := []string{
 		"server:", "    interface: 127.0.0.1", "    port: 1153", "    access-control: 127.0.0.0/8 allow",
-		"    do-ip6: no", "    module-config: \"dns64 iterator\"", "    dns64-prefix: 64:ff9b::/96",
+		"    do-ip6: no", "    module-config: \"dns64 iterator\"", "    local-zone: \"test.\" transparent", "    dns64-prefix: 64:ff9b::/96",
 		"    dns64-synthall: yes", "    dns64-ignore-aaaa: ::/0", "    cache-min-ttl: 30", "    cache-max-ttl: 300",
 		"    num-threads: 1", "    msg-cache-size: 2m", "    rrset-cache-size: 4m", "    username: \"unbound\"",
 	}
@@ -255,6 +265,29 @@ func TestProxyNat46DNS64RejectsBadListen(t *testing.T) {
 	errs := strings.Join(c.Validate(), "\n")
 	if !strings.Contains(errs, "proxy.nat46.dns64.listen") {
 		t.Fatalf("bad DNS64 listen accepted: %s", errs)
+	}
+}
+
+func TestProxyNat46DNS64NeedsNat46AndNonLoopbackUpstream(t *testing.T) {
+	c := proxyTestConfig(t)
+	c.Proxy.Nat46.DNS64.Enabled = true
+	old := unboundBinaryExists
+	unboundBinaryExists = func() bool { return true }
+	defer func() { unboundBinaryExists = old }()
+	errs := strings.Join(c.Validate(), "\n")
+	if !strings.Contains(errs, "proxy.nat46.dns64: requires proxy.nat46.enabled") {
+		t.Fatalf("missing nat46 dependency error: %s", errs)
+	}
+	c.Proxy.Nat46.Enabled = true
+	c.DNS.Upstream = "manual"
+	c.DNS.Servers = []string{"127.0.0.1#53"}
+	c.DNS.Fallback = nil
+	errs = strings.Join(c.Validate(), "\n")
+	if !strings.Contains(errs, "non-loopback IPv4") {
+		t.Fatalf("loopback upstream accepted: %s", errs)
+	}
+	if got := proxyNat46DNS64Servers(c); len(got) != 0 {
+		t.Fatalf("loopback upstream was rendered: %v", got)
 	}
 }
 

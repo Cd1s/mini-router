@@ -75,6 +75,10 @@ func proxyNat46Defaults(c *Config) {
 
 func proxyNat46Validate(c *Config, v *Validator, used map[int]string) {
 	n := &c.Proxy.Nat46
+	if n.DNS64.Enabled && !n.Enabled {
+		v.Add("proxy.nat46.dns64: requires proxy.nat46.enabled")
+		return
+	}
 	if !c.Proxy.Enabled || !n.Enabled {
 		return
 	}
@@ -123,10 +127,22 @@ func proxyNat46Validate(c *Config, v *Validator, used map[int]string) {
 		if !unboundBinaryExists() {
 			v.Add("proxy.nat46.dns64: /usr/sbin/unbound is not installed; apk add unbound")
 		}
-		if c.DNS.Upstream != "isp" && len(c.DNS.Servers) == 0 && len(c.DNS.Fallback) == 0 {
-			v.Add("proxy.nat46.dns64: dns.upstream %q needs dns.servers or dns.fallback", c.DNS.Upstream)
+		configuredDNS := len(c.DNS.Servers) > 0 || len(c.DNS.Fallback) > 0
+		if (c.DNS.Upstream != "isp" || configuredDNS) && !proxyNat46HasDNS(c.DNS.Servers) && !proxyNat46HasDNS(c.DNS.Fallback) {
+			v.Add("proxy.nat46.dns64: dns.upstream %q needs a non-loopback IPv4 dns.servers or dns.fallback", c.DNS.Upstream)
 		}
 	}
+}
+
+func proxyNat46HasDNS(values []string) bool {
+	for _, value := range values {
+		host := strings.TrimSpace(strings.SplitN(value, "#", 2)[0])
+		ip := net.ParseIP(host)
+		if ip != nil && ip.To4() != nil && !ip.IsLoopback() && !ip.IsUnspecified() {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *ProxyDNS64) listen() string {
@@ -169,7 +185,9 @@ func proxyNat46Orphans(c *Config) []string {
 func proxyNat46DNS64Config(c *Config) string {
 	d, n := c.Proxy.Nat46.DNS64, c.Proxy.Nat46
 	var b strings.Builder
-	fmt.Fprintf(&b, "server:\n    interface: %s\n    port: %s\n    access-control: 127.0.0.0/8 allow\n    do-ip6: no\n    module-config: \"dns64 iterator\"\n    dns64-prefix: %s\n", d.listenAddr(), d.port(), n.prefix())
+	// Alpine's unbound ships the RFC 6761 .test local zone. Keep it transparent so the lab's
+	// authoritative isp.test record exercises the same forwarder and DNS64 path as real domains.
+	fmt.Fprintf(&b, "server:\n    interface: %s\n    port: %s\n    access-control: 127.0.0.0/8 allow\n    do-ip6: no\n    module-config: \"dns64 iterator\"\n    local-zone: \"test.\" transparent\n    dns64-prefix: %s\n", d.listenAddr(), d.port(), n.prefix())
 	if d.synthAll() {
 		b.WriteString("    dns64-synthall: yes\n    dns64-ignore-aaaa: ::/0\n")
 	}
@@ -255,7 +273,7 @@ func proxyNat46DNS64Servers(c *Config) []string {
 		parts := strings.SplitN(s, "#", 2)
 		host := strings.TrimSpace(parts[0])
 		ip := net.ParseIP(host)
-		if ip != nil && ip.To4() != nil && !seen[host] {
+		if ip != nil && ip.To4() != nil && !ip.IsLoopback() && !ip.IsUnspecified() && !seen[host] {
 			seen[host] = true
 			if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
 				s = host + "@" + strings.TrimSpace(parts[1])

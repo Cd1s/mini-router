@@ -431,7 +431,7 @@ registerPage("proxy", "proxy-nodes", "代理节点", 10, async ()=>{
       ...field("源地址表（高级）", optText(p.nat46,"sources_file",{placeholder:"/etc/ss-nodes/sources.txt"}), "每行一个 IPv6；SOCKS 用户名也可以直接写本机 IPv6 地址。留空时按接口标识后缀查本机唯一地址。"),
       ...field("最大并发", optNum(p.nat46,"max_conns",{min:1,max:65535,placeholder:"4096"}), "超过上限的新连接会被关闭。"),
       h("div",{class:"proxy-sec"},"节点 DNS64"),
-      ...field("启用内置 DNS64", inBool(p.nat46.dns64 ||= {},"enabled"), "给 proxy.extra_config 中的节点提供 DNS64；WAN DNS 会自动跟随，替代手工 unbound 和 isp-dns.sh。"),
+      ...field("启用内置 DNS64", (()=>{ const d=p.nat46.dns64 ||= {}; const off=!p.nat46.enabled; return h("label",{class:"sw"},h("input",{type:"checkbox",checked:!!d.enabled,disabled:off,onchange:e=>{d.enabled=e.target.checked;touch();}}),h("span")); })(), "给 proxy.extra_config 中的节点提供 DNS64；WAN DNS 会自动跟随，替代手工 unbound 和 isp-dns.sh。先启用 NAT46。"),
       ...field("DNS64 监听", optText(p.nat46.dns64,"listen",{placeholder:"127.0.0.1:1153"}), "只允许回环地址，节点中的 dns64 服务器可继续使用 127.0.0.1:1153。"),
       ...field("合成全部 AAAA", inBool(p.nat46.dns64,"synth_all"), "开启后所有 AAAA 都按 NAT64 前缀合成；关闭则不设置 synthall / ignore-aaaa。"))));
 });
