@@ -58,19 +58,8 @@ func (n *ProxyNat46) maxConns() int {
 }
 
 func proxyNat46Defaults(c *Config) {
-	if c.Proxy.Nat46.Listen == "" {
-		c.Proxy.Nat46.Listen = "127.0.0.1:1094"
-	}
-	if c.Proxy.Nat46.Prefix == "" {
-		c.Proxy.Nat46.Prefix = "64:ff9b::/96"
-	}
-	if c.Proxy.Nat46.MaxConns == 0 {
-		c.Proxy.Nat46.MaxConns = 4096
-	}
-	if c.Proxy.Nat46.DNS64.SynthAll == nil {
-		v := true
-		c.Proxy.Nat46.DNS64.SynthAll = &v
-	}
+	// Defaults are applied by ProxyNat46.listen/prefix/maxConns and ProxyDNS64.synthAll.
+	// Keep this hook side-effect free so old router.yaml files retain their canonical form.
 }
 
 func proxyNat46Validate(c *Config, v *Validator, used map[int]string) {
@@ -126,10 +115,6 @@ func proxyNat46Validate(c *Config, v *Validator, used map[int]string) {
 		}
 		if !unboundBinaryExists() {
 			v.Add("proxy.nat46.dns64: /usr/sbin/unbound is not installed; apk add unbound")
-		}
-		configuredDNS := len(c.DNS.Servers) > 0 || len(c.DNS.Fallback) > 0
-		if (c.DNS.Upstream != "isp" || configuredDNS) && !proxyNat46HasDNS(c.DNS.Servers) && !proxyNat46HasDNS(c.DNS.Fallback) {
-			v.Add("proxy.nat46.dns64: dns.upstream %q needs a non-loopback IPv4 dns.servers or dns.fallback", c.DNS.Upstream)
 		}
 	}
 }
@@ -283,29 +268,41 @@ func proxyNat46DNS64Servers(c *Config) []string {
 			out = append(out, s)
 		}
 	}
-	if c.DNS.Upstream == "isp" {
-		if b, err := os.ReadFile(resolvConf); err == nil {
-			for _, line := range strings.Split(string(b), "\n") {
-				f := strings.Fields(line)
-				if len(f) == 2 && f[0] == "nameserver" {
-					add(f[1])
-				}
-				if len(out) >= 2 {
-					return out
-				}
+	if b, err := os.ReadFile(resolvConf); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			f := strings.Fields(line)
+			if len(f) == 2 && f[0] == "nameserver" {
+				add(f[1])
+			}
+			if len(out) >= 2 {
+				return out
 			}
 		}
 	}
-	for _, s := range c.DNS.Servers {
-		add(s)
-		if len(out) >= 2 {
-			return out
+	// In manual / dot mode writeResolv is intentionally not changed, so use the WAN lease DNS
+	// records directly. They are still the ISP resolvers and are independent of LAN DNS mode.
+	for _, w := range sortedWANs(c, wanHealthMap(c)) {
+		l, ok := readLease(w.Name)
+		if !ok {
+			continue
+		}
+		for _, s := range append(append([]string{}, l.DNS...), l.DNS6...) {
+			add(s)
+			if len(out) >= 2 {
+				return out
+			}
 		}
 	}
 	for _, s := range c.DNS.Fallback {
 		add(s)
 		if len(out) >= 2 {
 			break
+		}
+	}
+	for _, s := range c.DNS.Servers {
+		add(s)
+		if len(out) >= 2 {
+			return out
 		}
 	}
 	return out
