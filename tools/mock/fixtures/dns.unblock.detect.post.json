@@ -1,13 +1,300 @@
 {
+  "status": "ok",
+  "conclusive": true,
   "blocked": [
-    {"domain": "blocked.test", "upstream": ["125.26.170.3"], "trusted": ["1.1.1.53"], "verdict": "屏蔽", "reason": "命中配置的屏蔽页地址"}
+    {
+      "domain": "1xbet.com",
+      "upstream": [
+        "125.26.170.3"
+      ],
+      "trusted": [
+        "104.18.41.64",
+        "172.64.146.192"
+      ],
+      "plain": [
+        "125.26.170.3"
+      ],
+      "servers": [
+        {
+          "server": "192.0.2.53:53",
+          "ips": [
+            "125.26.170.3"
+          ],
+          "latency_ms": 12,
+          "rcode": "NOERROR"
+        }
+      ],
+      "kind": "block_page",
+      "verdict": "屏蔽（屏蔽页地址）",
+      "reason": "同一地址被多个注册域返回，且可信 DNS 从未返回过它"
+    },
+    {
+      "domain": "pornhub.com",
+      "upstream": [
+        "125.26.170.3"
+      ],
+      "trusted": [
+        "66.254.114.41"
+      ],
+      "plain": [
+        "125.26.170.3"
+      ],
+      "servers": [
+        {
+          "server": "192.0.2.53:53",
+          "ips": [
+            "125.26.170.3"
+          ],
+          "latency_ms": 12,
+          "rcode": "NOERROR"
+        }
+      ],
+      "kind": "block_page",
+      "verdict": "屏蔽（屏蔽页地址）",
+      "reason": "同一地址被多个注册域返回，且可信 DNS 从未返回过它"
+    },
+    {
+      "domain": "thepiratebay.org",
+      "upstream": [],
+      "trusted": [
+        "172.67.162.210",
+        "104.21.9.116"
+      ],
+      "plain": [],
+      "servers": [
+        {
+          "server": "192.0.2.53:53",
+          "ips": [],
+          "latency_ms": 12,
+          "rcode": "NXDOMAIN"
+        }
+      ],
+      "kind": "empty",
+      "verdict": "屏蔽（不返回结果）",
+      "reason": "运营商返回 NXDOMAIN 或没有地址，可信 DNS 有地址"
+    },
+    {
+      "domain": "torproject.org",
+      "upstream": [
+        "127.0.0.1"
+      ],
+      "trusted": [
+        "116.202.120.166"
+      ],
+      "plain": [
+        "127.0.0.1"
+      ],
+      "servers": [
+        {
+          "server": "192.0.2.53:53",
+          "ips": [
+            "127.0.0.1"
+          ],
+          "latency_ms": 12,
+          "rcode": "NOERROR"
+        }
+      ],
+      "kind": "fake_address",
+      "verdict": "屏蔽（假地址）",
+      "reason": "运营商返回私网/回环地址，可信 DNS 返回公网地址"
+    }
   ],
-  "block_ips": ["125.26.170.3"],
-  "intercepted": false,
-  "latency": {"upstream_ms": 12, "trusted_ms": 18, "plain_cf_ms": 9},
-  "recommend": {"enable": true, "block_ips": ["125.26.170.3"], "protocol": "udp"},
+  "block_ips": [
+    "125.26.170.3"
+  ],
+  "intercepted": true,
+  "interception": "yes",
+  "latency": {
+    "upstream_ms": 14,
+    "trusted_ms": 41,
+    "plain_cf_ms": 9
+  },
+  "recommend": {
+    "enable": true,
+    "block_ips": [
+      "125.26.170.3"
+    ],
+    "protocol": "tls"
+  },
   "results": [
-    {"domain": "blocked.test", "upstream": ["125.26.170.3"], "trusted": ["1.1.1.53"], "verdict": "屏蔽"},
-    {"domain": "isp.test", "upstream": ["203.0.113.7"], "trusted": ["203.0.113.7"], "verdict": "正常或需人工确认"}
-  ]
+    {
+      "domain": "1xbet.com",
+      "upstream": [
+        "125.26.170.3"
+      ],
+      "trusted": [
+        "104.18.41.64",
+        "172.64.146.192"
+      ],
+      "plain": [
+        "125.26.170.3"
+      ],
+      "servers": [
+        {
+          "server": "192.0.2.53:53",
+          "ips": [
+            "125.26.170.3"
+          ],
+          "latency_ms": 12,
+          "rcode": "NOERROR"
+        }
+      ],
+      "kind": "block_page",
+      "verdict": "屏蔽（屏蔽页地址）",
+      "reason": "同一地址被多个注册域返回，且可信 DNS 从未返回过它"
+    },
+    {
+      "domain": "pornhub.com",
+      "upstream": [
+        "125.26.170.3"
+      ],
+      "trusted": [
+        "66.254.114.41"
+      ],
+      "plain": [
+        "125.26.170.3"
+      ],
+      "servers": [
+        {
+          "server": "192.0.2.53:53",
+          "ips": [
+            "125.26.170.3"
+          ],
+          "latency_ms": 12,
+          "rcode": "NOERROR"
+        }
+      ],
+      "kind": "block_page",
+      "verdict": "屏蔽（屏蔽页地址）",
+      "reason": "同一地址被多个注册域返回，且可信 DNS 从未返回过它"
+    },
+    {
+      "domain": "thepiratebay.org",
+      "upstream": [],
+      "trusted": [
+        "172.67.162.210",
+        "104.21.9.116"
+      ],
+      "plain": [],
+      "servers": [
+        {
+          "server": "192.0.2.53:53",
+          "ips": [],
+          "latency_ms": 12,
+          "rcode": "NXDOMAIN"
+        }
+      ],
+      "kind": "empty",
+      "verdict": "屏蔽（不返回结果）",
+      "reason": "运营商返回 NXDOMAIN 或没有地址，可信 DNS 有地址"
+    },
+    {
+      "domain": "torproject.org",
+      "upstream": [
+        "127.0.0.1"
+      ],
+      "trusted": [
+        "116.202.120.166"
+      ],
+      "plain": [
+        "127.0.0.1"
+      ],
+      "servers": [
+        {
+          "server": "192.0.2.53:53",
+          "ips": [
+            "127.0.0.1"
+          ],
+          "latency_ms": 12,
+          "rcode": "NOERROR"
+        }
+      ],
+      "kind": "fake_address",
+      "verdict": "屏蔽（假地址）",
+      "reason": "运营商返回私网/回环地址，可信 DNS 返回公网地址"
+    },
+    {
+      "domain": "nyaa.si",
+      "upstream": [],
+      "trusted": [
+        "104.21.32.1"
+      ],
+      "plain": [
+        "104.21.32.1"
+      ],
+      "servers": [
+        {
+          "server": "192.0.2.53:53",
+          "ips": [],
+          "latency_ms": 2000,
+          "error": "i/o timeout"
+        }
+      ],
+      "kind": "error",
+      "verdict": "错误",
+      "error": "ISP DNS: i/o timeout"
+    },
+    {
+      "domain": "reddit.com",
+      "upstream": [
+        "151.101.1.140",
+        "151.101.65.140"
+      ],
+      "trusted": [
+        "151.101.1.140",
+        "151.101.65.140"
+      ],
+      "plain": [
+        "151.101.1.140"
+      ],
+      "servers": [
+        {
+          "server": "192.0.2.53:53",
+          "ips": [
+            "151.101.1.140",
+            "151.101.65.140"
+          ],
+          "latency_ms": 12,
+          "rcode": "NOERROR"
+        }
+      ],
+      "kind": "ok",
+      "verdict": "正常或需人工确认"
+    },
+    {
+      "domain": "bbc.com",
+      "upstream": [
+        "151.101.0.81"
+      ],
+      "trusted": [
+        "151.101.64.81"
+      ],
+      "plain": [
+        "151.101.64.81"
+      ],
+      "servers": [
+        {
+          "server": "192.0.2.53:53",
+          "ips": [
+            "151.101.0.81"
+          ],
+          "latency_ms": 12,
+          "rcode": "NOERROR"
+        }
+      ],
+      "kind": "ok",
+      "verdict": "正常或需人工确认"
+    }
+  ],
+  "errors": [
+    "ISP DNS 192.0.2.53:53: i/o timeout (x1)"
+  ],
+  "upstreams": [
+    "192.0.2.53:53"
+  ],
+  "trusted": "tls://1.1.1.1:853",
+  "total": 7,
+  "probed": 7,
+  "trusted_tried": 7,
+  "trusted_ok": 7
 }

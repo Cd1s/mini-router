@@ -381,7 +381,11 @@ func dnsCommand(c *Config, args []string) error {
 				domains = append(domains, arg)
 			}
 		}
-		report, err := dnsUnblockDetect(c, domains)
+		custom, err := dnsDetectCustomDomains(domains)
+		if err != nil {
+			return err
+		}
+		report, err := dnsUnblockDetectLocked(c, custom)
 		if err != nil {
 			return err
 		}
