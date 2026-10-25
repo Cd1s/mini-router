@@ -179,6 +179,9 @@ func proxyRender(c *Config, out *Out) error {
 	if !c.Proxy.Enabled {
 		return nil
 	}
+	if err := proxyNat46Render(c, out); err != nil {
+		return err
+	}
 	sets, err := proxyLoad(c, true)
 	if err != nil {
 		return err

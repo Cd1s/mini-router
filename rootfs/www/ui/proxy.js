@@ -151,6 +151,7 @@ function setType(p, n, t){
 // ---------------- 代理节点 ----------------
 registerPage("proxy", "proxy-nodes", "代理节点", 10, async ()=>{
   const p = P();
+  p.nat46 ||= {};
   const st = await status(); learnSecrets(st);
   const delays = {};
   for (const [k,v] of Object.entries(st.proxies||{})) if (v.delay) delays[k] = v.delay;
@@ -420,9 +421,19 @@ registerPage("proxy", "proxy-nodes", "代理节点", 10, async ()=>{
     card("节点组", [h("div",{class:"mut",style:"padding:10px 16px 0"},"自动：定时测延迟，选最快的节点，节点故障自动切换。手动：在“当前”里选择，立即生效（不需要应用）。"),
       h("div",{class:"tw"}, h("table",{}, h("thead",{}, h("tr",{}, ["名称","类型","成员","测试 URL","间隔","当前",""].map(x=>h("th",{},x)))), groupBody))],
       h("button",{class:"btn sm p",onclick:()=>{ const names=new Set([...p.nodes,...p.groups].map(x=>x.name)); p.groups.push({name:uniqueName("group",names),type:"urltest",nodes:p.nodes.map(n=>n.name).filter(Boolean)}); touch(); drawGroups(); }},"+ 添加组"), true),
-    card("高级（端口，一般不用改）", form(...PORTS.flatMap(([k,l,d])=>field(l,
-      h("input",{type:"number", min:1024, max:65535, value:p[k]||"", placeholder:"默认 "+d, oninput:e=>{ const v=e.target.value; if (v==="") delete p[k]; else p[k]=Number(v); touch(); }}),
-      k==="lan_dns_port" ? "LAN 设备的 DNS 被透明重定向到这里" : "只监听本机回环地址，LAN 不可访问")))));
+    card("高级（端口，一般不用改）", form(
+      ...PORTS.flatMap(([k,l,d])=>field(l,
+        h("input",{type:"number", min:1024, max:65535, value:p[k]||"", placeholder:"默认 "+d, oninput:e=>{ const v=e.target.value; if (v==="") delete p[k]; else p[k]=Number(v); touch(); }}),
+        k==="lan_dns_port" ? "LAN 设备的 DNS 被透明重定向到这里" : "只监听本机回环地址，LAN 不可访问")),
+      h("div",{class:"proxy-sec"},"IPv4 字面量走 NAT64（NAT46）"),
+      ...field("启用 NAT46", inBool(p.nat46,"enabled"), "代理节点访问 IPv4 字面量（例如 https://1.2.3.4）时合成 NAT64 地址；只有使用 DNS64 仍无法处理 IPv4 字面量时才需要。"),
+      ...field("NAT64 前缀", optText(p.nat46,"prefix",{placeholder:"64:ff9b::/96"}), "必须是 IPv6 /96，通常为 64:ff9b::/96。"),
+      ...field("源地址表（高级）", optText(p.nat46,"sources_file",{placeholder:"/etc/ss-nodes/sources.txt"}), "每行一个 IPv6；SOCKS 用户名也可以直接写本机 IPv6 地址。留空时按接口标识后缀查本机唯一地址。"),
+      ...field("最大并发", optNum(p.nat46,"max_conns",{min:1,max:65535,placeholder:"4096"}), "超过上限的新连接会被关闭。"),
+      h("div",{class:"proxy-sec"},"节点 DNS64"),
+      ...field("启用内置 DNS64", (()=>{ const d=p.nat46.dns64 ||= {}; const off=!p.nat46.enabled; return h("label",{class:"sw"},h("input",{type:"checkbox",checked:!!d.enabled,disabled:off,onchange:e=>{d.enabled=e.target.checked;touch();}}),h("span")); })(), "给 proxy.extra_config 中的节点提供 DNS64；WAN DNS 会自动跟随，替代手工 unbound 和 isp-dns.sh。先启用 NAT46。"),
+      ...field("DNS64 监听", optText(p.nat46.dns64,"listen",{placeholder:"127.0.0.1:1153"}), "只允许回环地址，节点中的 dns64 服务器可继续使用 127.0.0.1:1153。"),
+      ...field("合成全部 AAAA", inBool(p.nat46.dns64,"synth_all"), "开启后所有 AAAA 都按 NAT64 前缀合成；关闭则不设置 synthall / ignore-aaaa。"))));
 });
 
 // ---------------- 分流规则 ----------------

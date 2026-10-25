@@ -1,0 +1,39 @@
+#!/sbin/openrc-run
+# Private DNS64 resolver for proxy node outbounds. The generated server section is immutable;
+# mr hooks refresh /run/mini-router/dns64.conf's forward-zone from WAN DNS and reload with SIGHUP.
+description="private DNS64 resolver for proxy nodes"
+supervisor=supervise-daemon
+command=/usr/sbin/unbound
+command_args="-d -p -c /run/mini-router/dns64.conf"
+extra_started_commands="reload"
+respawn_delay=2
+respawn_max=0
+output_logger="logger -t mr-dns64 -p daemon.info"
+error_logger="logger -t mr-dns64 -p daemon.notice"
+
+cfg=/etc/mini-router/gen/dns64.conf
+runtime=/run/mini-router/dns64.conf
+
+depend() {
+	need net
+	after mr-network
+	before mr-nat46 mr-proxy
+}
+
+start_pre() {
+	[ -x /usr/sbin/unbound ] || { eerror "unbound is not installed (apk add unbound)"; return 1; }
+	[ -f "$cfg" ] || { eerror "$cfg missing (run mr apply)"; return 1; }
+	MR_DNS64_START_PRE=1 /usr/sbin/mr proxy nat46 dns64-sync || {
+		eerror "could not create $runtime from WAN DNS"; return 1
+	}
+	[ -f "$runtime" ] || { eerror "$runtime missing (no WAN DNS or dns.fallback)"; return 1; }
+	/usr/sbin/unbound-checkconf "$runtime" >/dev/null || {
+		eerror "unbound-checkconf failed"; return 1;
+	}
+}
+
+reload() {
+	ebegin "Reloading DNS64"
+	supervise-daemon "$RC_SVCNAME" --signal HUP
+	eend $?
+}

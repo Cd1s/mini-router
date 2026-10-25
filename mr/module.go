@@ -47,6 +47,9 @@ type Module struct {
 	RestartOrder []string
 	// Verify runs after an apply restarted services; return problems (rolls back the apply).
 	Verify func(c *Config, restarted []string) []string
+	// Orphans lists generated/runtime files owned by this module that should be removed when
+	// a feature is disabled. The core snapshots and removes them transactionally during apply.
+	Orphans func(c *Config) []string
 	// Status adds keys to the status JSON (panel, web UI overview, agent).
 	Status func(c *Config, st map[string]any)
 	// API adds web UI actions: /cgi-bin/api?a=<name>. Handlers run only for logged-in sessions.

@@ -9,6 +9,16 @@
 
 proxy:
   enabled: true
+  nat46:
+    enabled: true
+    listen: 127.0.0.1:1094
+    prefix: 64:ff9b::/96
+    sources_file: /tmp/mr-lab-sources.txt
+    max_conns: 32
+    dns64:
+      enabled: false
+      listen: 127.0.0.1:1153
+      synth_all: true
   nodes:
     - {name: sg1, server: sg1.example.net, port: 8388, method: 2022-blake3-aes-128-gcm, password_secret: proxy_sg1, tcp_only: true}
     - {name: jp1, server: 203.0.113.7, port: 8389, method: aes-128-gcm, password_secret: proxy_jp1, tfo: true}

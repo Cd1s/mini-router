@@ -20,6 +20,15 @@ import (
 	"time"
 )
 
+var proxyNat46ListenCheck = func(addr string) bool {
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
 // ---- verification ----
 
 func proxyVerify(c *Config, restarted []string) []string {
@@ -51,6 +60,14 @@ func proxyVerify(c *Config, restarted []string) []string {
 			})
 			if !ok {
 				errs = append(errs, "mr-proxy-dns: not answering")
+			}
+		case "mr-nat46":
+			if p.Nat46.Enabled && !waitFor(deadline, func() bool { return proxyNat46ListenCheck(p.Nat46.listen()) }) {
+				errs = append(errs, "mr-nat46: SOCKS5 listener not answering")
+			}
+		case "mr-dns64":
+			if p.Nat46.DNS64.Enabled && !waitFor(deadline, func() bool { return proxyNat46ListenCheck(p.Nat46.DNS64.listen()) }) {
+				errs = append(errs, "mr-dns64: DNS64 listener not answering")
 			}
 		}
 	}
@@ -430,13 +447,25 @@ func apiProxyRoutes(r apiReq) apiResp {
 
 // proxyCmd: `mr proxy status|check|delay [NAME]|select GROUP NODE|parse|fetch` for the shell / agent.
 func proxyCmd(c *Config, args []string) error {
-	usage := fmt.Errorf("usage: mr proxy status | check | routes | delay [NODE|GROUP] | select GROUP NODE | parse [--secrets] [FILE] | fetch [--secrets] URL|SUBSCRIPTION")
+	usage := fmt.Errorf("usage: mr proxy status | check | routes | delay [NODE|GROUP] | select GROUP NODE | nat46 serve | parse [--secrets] [FILE] | fetch [--secrets] URL|SUBSCRIPTION")
 	if len(args) == 0 {
 		return usage
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	switch args[0] {
+	case "nat46":
+		if len(args) != 2 {
+			return usage
+		}
+		switch args[1] {
+		case "serve":
+			return proxyNat46Serve(c, nil)
+		case "dns64-sync":
+			return proxyNat46DNS64Sync(c)
+		default:
+			return usage
+		}
 	case "parse", "fetch":
 		return proxyImportCmd(c, args[0] == "fetch", args[1:])
 	case "status":

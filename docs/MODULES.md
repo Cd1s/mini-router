@@ -51,6 +51,7 @@ Register exactly one `Module` in `init()`:
 - `Services(c)` / `Managed` — OpenRC services wanted / owned. `Restart(path)` — service to restart
   when a generated file changes (`"-"` = none). `RestartOrder` — relative restart order.
 - `Verify(c, restarted)` — post-apply checks (failure rolls the apply back).
+- `Orphans(c)` — generated or runtime files owned by this module that should be removed transactionally when a feature is disabled.
 - `Status(c, st)` — add keys to status JSON. `API` — web UI actions `"<module>.<verb>"`; mutating
   actions must require `r.method == "POST"`; never return secrets; validate every input. API tokens
   reach an action only when the module lists it in `TokenScope` (next to `API`) with the scope it needs —

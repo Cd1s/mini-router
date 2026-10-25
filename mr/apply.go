@@ -216,8 +216,18 @@ func plan(c *Config) (*Plan, error) {
 	}
 	sort.Strings(p.Enable)
 	sort.Strings(p.Disable)
-	p.Remove = orphanWANPaths(c)
+	p.Remove = append(orphanWANPaths(c), moduleOrphanPaths(c)...)
 	return p, nil
+}
+
+func moduleOrphanPaths(c *Config) []string {
+	var out []string
+	for _, m := range modules {
+		if m.Orphans != nil {
+			out = append(out, m.Orphans(c)...)
+		}
+	}
+	return dedup(out)
 }
 
 // managedServices: everything mr may switch on/off (never touches services it does not own).
@@ -625,6 +635,7 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 		run("rc-service", s, "stop")
 		run("rc-update", "del", s, "default")
 	}
+	cleanupModuleOrphans(c)
 	cleanupOrphanWANFiles(c)
 	restart := dedup(append(append([]string{}, p.Services...), p.Enable...))
 	if failed := restartAll(restart); len(failed) > 0 {
@@ -655,6 +666,12 @@ func applyWith(c *Config, dryRun bool, confirmSecs int, install func() error, o 
 		}
 	}
 	return nil
+}
+
+func cleanupModuleOrphans(c *Config) {
+	for _, path := range moduleOrphanPaths(c) {
+		os.Remove(path)
+	}
 }
 
 // cleanupOrphanWANFiles removes generated per-WAN credentials and init wrappers left by a
