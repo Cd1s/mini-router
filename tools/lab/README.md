@@ -54,7 +54,7 @@ MRLAB_FORCE=1 $L reset $ID                      # only after checking that nobod
 
 Scenarios (TAP output, log in `/tmp/mrlab<ID>-<name>.log`): `$L run $ID 01-fresh-dhcp`,
 `02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`,
-`06-lan-renumber`, `07-require-public-ip`, `08-dhcp-slaac-relay`, `09-first-run-wizard`, `11-dns-unblock`.
+`06-lan-renumber`, `07-require-public-ip`, `08-dhcp-slaac-relay`, `09-first-run-wizard`, `11-dns-unblock`, `12-dns-unblock-detect`.
 The longer scenarios have these purposes and waits:
 
 - `05-isp-switch-live` changes a live PPPoE line to down, back to PPPoE, then DHCP and back; it
@@ -68,6 +68,15 @@ The longer scenarios have these purposes and waits:
   proxy checks retry for up to 70 s.
 - `09-first-run-wizard` checks deferred install discovery and the session/plan/apply/confirm/
   `setup.complete` API path, then verifies a normal installed router skips the wizard.
+- `12-dns-unblock-detect` runs `mr dns unblock detect --json` five times against the ISP simulator:
+  block page shared by two domains, private sinkhole, NXDOMAIN block, regional-CDN names that must not
+  be flagged, port-53 interception (also with `protocol: udp` configured), no interception, and a
+  trusted resolver that stalls or is closed (nothing may be recommended, the run stays within 16 s).
+  It needs no internet: `lab isp` takes `--plain-cf NAME=IP` (a stand-in for plain 1.1.1.1:53 inside
+  the ISP namespace) next to `--trusted`, and `tools/lab/dot-standin.py` is the DoT trusted resolver
+  (`--silent` / `--stall` for a server that never answers); mr's certificate check stays on, the
+  scenario hands mr the stand-in's CA through `SSL_CERT_FILE`. Each JSON report is checked on the host
+  with python3 (`q`), and `router.yaml` must be byte-identical after the detections.
 Each starts with `reset` and removes its lab when it ends (passed, failed or interrupted;
 `MRLAB_KEEP=1` leaves it up for inspection), so give every parallel scenario its own ID. A failed
 setup step prints `Bail out!` and stops the scenario.
@@ -138,7 +147,8 @@ namespace replaces with lab directories. Go comes from `/etc/profile.d/buildtool
 DNS options for `dhcp` / `static` / `pppoe` (scenario `11-dns-unblock`): `--address NAME=IP[,TTL]` makes the ISP resolver answer NAME
 (with a TTL the answer has a real lifetime, so the router's dnsmasq caches it; without one the TTL is 0), `--nxdomain NAME`,
 `--trusted NAME=IP` starts a second resolver on `10.<id>.<wan>.2` (the trusted DNS of `dns.unblock`) and `--hijack53` redirects
-the ISP's UDP port 53 to its own resolver.
+the ISP's UDP port 53 to its own resolver. `--plain-cf NAME=IP` answers plain `1.1.1.1:53` from inside the ISP namespace (what
+`mr dns unblock detect` asks to see whether port 53 is hijacked; `--hijack53` redirects it too), scenario `12-dns-unblock-detect`.
 
 The ISP's own resolver files (`/etc/resolv.conf`, `/etc/ppp`) are per-namespace copies under
 `/etc/netns/mrlab<ID>-*`; kea runs under the host's AppArmor profile in a private mount namespace

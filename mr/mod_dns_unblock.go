@@ -448,7 +448,7 @@ func dnsUnblockDoctor(c *Config, _ *docEnv) []docFinding {
 }
 
 func dnsUnblockDirectServers(c *Config) []string {
-	if c == nil || c.DNS.Unblock == nil || !c.DNS.Unblock.Enabled {
+	if c == nil {
 		return nil
 	}
 	if c.DNS.Upstream == "manual" {

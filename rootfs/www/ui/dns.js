@@ -9,7 +9,29 @@ addCSS(`
 .dns-note code{font-size:12px}
 .dns-log{max-height:360px}
 .dns-sub{color:var(--mut);font-size:12px;margin-left:6px}
+.dns-sub0{font-size:12px;line-height:1.6;margin-top:4px}
+.dns-detect{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.dns-detect .row input{flex:1 1 200px;min-width:0}
+.dns-rows{margin-top:6px}
+.dns-drow{padding:8px 0;border-top:1px solid var(--line)}
+.dns-dh{display:flex;justify-content:space-between;align-items:baseline;gap:4px 10px;flex-wrap:wrap}
+.dns-dh b{word-break:break-all}
+.dns-drow .dns-sub0{word-break:break-word}
+.dns-warn{margin:10px 0;padding:8px 12px;border:1px solid;border-radius:6px;font-size:13px;line-height:1.6}
+.dns-warn.bad{color:var(--bad);border-color:var(--bad)}
+.dns-warn.warn{color:var(--warn);border-color:var(--warn)}
 `);
+
+// merge a detection result into the unblock form: it never turns the feature off, never drops an
+// address the user already has, and never moves the lookup to plaintext
+const dnsDetectMerge = (o, rec)=>{
+  rec = rec||{};
+  if (rec.enable) o.enabled = true;
+  const list = Array.isArray(o.block_ips) ? o.block_ips.slice() : [];
+  for (const ip of rec.block_ips||[]) if (!list.includes(ip)) list.push(ip);
+  o.block_ips = list;
+  if (rec.enable && o.protocol==="udp" && (rec.protocol==="tls"||rec.protocol==="https")) o.protocol = rec.protocol;
+};
 
 const RTYPES = ["A","AAAA","CNAME","PTR","SRV","TXT"];
 const RA_MODES = [["","SLAAC（默认，ra-only）"],["slaac","SLAAC（ra-only）"],["stateless","SLAAC + 无状态 DHCPv6（ra-stateless）"],["stateful","有状态 DHCPv6 + SLAAC"]];
@@ -220,6 +242,54 @@ const basicTab = async ()=>{
   const c = S.cfg, d = c.dns; const box = h("div");
   const ub = lazy(d, "unblock", ()=>({enabled:false, block_ips:[], retry_private:true, retry_empty:true, fallback:"cloudflare", protocol:"tls", server:""}));
   const ubEdit = el=>onEdit(el,()=>ub.attach());
+  let detectReport = null;
+  const detectNames = {v:""};
+  const detectBox = h("div");
+  const detTxt = (ips, bad)=>bad ? "错误" : (ips&&ips.length ? ips.join(", ") : "（空）");
+  const detectMsg = r=>{
+    if (r.status==="partial") return "检测超时：只完成了 "+r.probed+"/"+r.total+" 个域名，结果仅供参考";
+    if (r.status!=="inconclusive") return "";
+    if (!r.probed) return "无法判断：检测超时，没有完成任何一个域名";
+    if (!r.trusted_tried || r.trusted_ok*2 < r.trusted_tried)
+      return "无法判断：可信服务器不可用（"+r.trusted_ok+"/"+r.trusted_tried+" 个加密查询成功）。请确认路由器能访问可信服务器的 853（TLS）或 443（HTTPS）端口，或换一个可信服务器后重试";
+    return "无法判断：运营商 DNS 没有应答";
+  };
+  const renderDetect = ()=>{
+    const r = detectReport;
+    if (!r) { detectBox.replaceChildren(); return; }
+    const rows = (r.results||[]).map(x=>h("div",{class:"dns-drow"},
+      h("div",{class:"dns-dh"}, h("b",{},x.domain), h("span",{class:/^(block_page|fake_address|empty)$/.test(x.kind)?"err":"mut"},x.verdict||"正常或需人工确认")),
+      h("div",{class:"mut dns-sub0"},"运营商答案 "+detTxt(x.upstream, x.kind==="error")+" · 可信答案 "+detTxt(x.trusted, x.kind==="unknown"||(x.kind==="error"&&!(x.trusted||[]).length))),
+      (x.reason||x.error) ? h("div",{class:"mut dns-sub0"},x.reason||x.error) : null));
+    const inter = r.interception==="yes" ? "是" : r.interception==="no" ? "否" : "未知";
+    const msg = detectMsg(r);
+    const L = r.latency||{};
+    const rec = r.recommend||{};
+    detectBox.replaceChildren(...[
+      msg ? h("div",{class:"dns-warn "+(r.status==="inconclusive"?"bad":"warn")},msg) : null,
+      h("div",{class:"dns-rows"},rows),
+      r.conclusive ? h("div",{class:"mut dns-sub0"},"屏蔽域名 "+((r.blocked||[]).length)+" 个；明文 1.1.1.1 劫持："+inter) : null,
+      h("div",{class:"mut dns-sub0"},"平均延迟：运营商 "+(L.upstream_ms||0)+" ms，可信（加密）"+(L.trusted_ms||0)+" ms，明文 1.1.1.1 "+(L.plain_cf_ms||0)+" ms"),
+      ...(r.errors||[]).slice(0,4).map(e=>h("div",{class:"mut dns-sub0"},"错误详情："+e)),
+      r.conclusive ? h("div",{class:"row",style:"margin-top:8px"},
+        h("span",{class:"mut"},"建议："+(rec.enable?"启用":"暂不需要启用")+"，"+(rec.protocol||"tls")+"；屏蔽页地址 "+((r.block_ips||[]).join(", ")||"（未发现）")),
+        rec.enable||(rec.block_ips||[]).length ? h("button",{class:"btn sm p",onclick:()=>{ dnsDetectMerge(ub.o, rec); ub.attach(); draw(); }},"按检测结果填入") : null) : null,
+      r.conclusive ? h("div",{class:"mut dns-sub0"},"填入只做合并：不会关闭已启用的开关，不会清空已有的地址，也不会改成明文。之后请照常点“保存并应用”。") : null].filter(Boolean));
+  };
+  const detectBtn = h("button",{class:"btn sm p",onclick:async()=>{
+    const names = String(detectNames.v||"").split(/[\s,]+/).filter(Boolean);
+    if (names.length>20) { detectBox.replaceChildren(h("div",{class:"err"},"最多填 20 个域名")); return; }
+    detectBtn.disabled = true; detectReport = null;
+    detectBox.replaceChildren(h("div",{class:"mut"},"检测中，请等待约 10 秒…"));
+    try { detectReport=await api("dns.unblock.detect",{domains:names},{timeout:15000}); renderDetect(); }
+    catch(e){ detectBox.replaceChildren(h("div",{class:"err"},"检测失败："+e.message)); }
+    finally { detectBtn.disabled = false; }
+  }},"检测");
+  const detectPanel = h("div",{class:"dns-detect"},
+    h("div",{class:"mut dns-sub0"},"不确定运营商怎么屏蔽？先检测：对内置的 30 个常见被屏蔽网站（博彩、成人、BT、VPN 等）和你填写的网站，分别问运营商 DNS、可信服务器（总是加密）和明文 1.1.1.1，比较结果。检测只读，不会修改配置。"),
+    h("div",{class:"mut dns-sub0"},"这些域名会发给运营商 DNS、所选可信服务器和 Cloudflare，对方可能留有记录；清单见文档。"),
+    h("div",{class:"row",style:"margin-top:8px"},inText(detectNames,"v",{placeholder:"可选：打不开的网站，空格分隔"}),detectBtn),
+    detectBox);
   let files = await dnsFiles();
   const fileEd = h("div");
   const refreshFiles = async()=>{ files.splice(0,files.length,...await dnsFiles()); draw(); };
@@ -242,7 +312,7 @@ const basicTab = async ()=>{
         ...(ub.o.fallback==="custom" ? [...field("自定义服务器", ubEdit(inText(ub.o,"server",{placeholder:"1.1.1.1 或 2001:4860:4860::8888#53"})))] : []),
         ...field("查询方式", ubEdit(inSel(ub.o,"protocol",[["tls","TLS 加密（推荐）"],["https","HTTPS 加密"],["udp","UDP 明文（较快）"]])), "运营商劫持 53 端口时请选择 TLS 或 HTTPS"),
         ...field("私网假地址也改问", ubEdit(inBool(ub.o,"retry_private")), "例如 10.x、127.0.0.1、0.0.0.0"),
-        ...field("空结果也改问", ubEdit(inBool(ub.o,"retry_empty")), "NXDOMAIN、REFUSED、SERVFAIL 或 A/AAAA/HTTPS 无地址") )])]),
+        ...field("空结果也改问", ubEdit(inBool(ub.o,"retry_empty")), "NXDOMAIN、REFUSED、SERVFAIL 或 A/AAAA/HTTPS 无地址") ), detectPanel])]),
       card("DoT 加密 DNS（stubby）", [form(
         ...field("启用 stubby", inBool(stub.o,"enabled",()=>{ stub.attach(); draw(); }), "与 服务 页的开关相同；分流到 127.0.0.1#"+dotPort+" 或上游选 DoT 时必须开启"),
         ...field("监听端口", inNum(d.dot,"port"), "只监听 127.0.0.1，不对局域网开放"),

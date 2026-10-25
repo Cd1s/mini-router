@@ -479,14 +479,25 @@ isp_stop(){
   run_ns "$n" ip addr flush dev "mrlab${id}s${wan}p" 2>/dev/null || true
   run_ns "$n" ip addr flush dev lo scope global 2>/dev/null || true
   run_ns "$n" ip link del trusted-dns 2>/dev/null || true
+  run_ns "$n" ip link del plain-cf 2>/dev/null || true
   run_ns "$n" nft delete table ip mrlab_dns 2>/dev/null || true
   run_ns "$n" ip -6 route flush proto static 2>/dev/null || true
+}
+# isp_plain_cf <netns> <state dir>: a stand-in for plain 1.1.1.1:53 inside the ISP namespace (the
+# address mr's interception probe asks), answering from --plain-cf records; --hijack53 still redirects
+# it to the ISP's own dnsmasq.
+isp_plain_cf(){
+  run_ns "$1" ip link add plain-cf type dummy
+  run_ns "$1" ip link set plain-cf up
+  run_ns "$1" ip addr add 1.1.1.1/32 dev plain-cf
+  # shellcheck disable=SC2086
+  run_ns "$1" dnsmasq --conf-file=/dev/null --no-resolv --no-hosts --interface=plain-cf --except-interface=lo --listen-address=1.1.1.1 --port=53 --bind-interfaces --server=10.0.2.3 --pid-file="$2/plain-cf-dnsmasq.pid" $plaincf_extra
 }
 isp_cmd(){
   id=$1; wan=$2; mode=$3; shift 3; valid_id "$id"; n=$(isp "$id" "$wan"); d=$(state "$id")/isp$wan; dev=mrlab${id}s${wan}p
   [ -e "/run/netns/$n" ] || die "lab $id is not up"
   mkdir -p "$d"; isp_stop "$id" "$wan"
-  v6=none; badpass=0; nopado=0; cgnat=0; subnet=10.$id.$wan; gw=1; dns_extra=""; trusted_extra=""; hijack53=0
+  v6=none; badpass=0; nopado=0; cgnat=0; subnet=10.$id.$wan; gw=1; dns_extra=""; trusted_extra=""; plaincf_extra=""; hijack53=0
   while [ $# -gt 0 ]; do case $1 in
     v6=*) v6=${1#v6=};; --cgnat) cgnat=1;; --badpass) badpass=1;; nopado|--nopado) nopado=1;;
     --subnet) shift; subnet=${1%.*}; subnet=${subnet%/*}; subnet=${subnet%.0};;
@@ -495,6 +506,7 @@ isp_cmd(){
       case $a in *,*) dns_extra="$dns_extra --host-record=${1%%=*},$a";; *) dns_extra="$dns_extra --address=/${1%%=*}/$a";; esac;;
     --nxdomain) shift; dns_extra="$dns_extra --local=/$1/";;
     --trusted) shift; trusted_extra="$trusted_extra --address=/${1%%=*}/${1#*=}";;
+    --plain-cf) shift; plaincf_extra="$plaincf_extra --address=/${1%%=*}/${1#*=}";;
     --hijack53) hijack53=1;;
     *) die "isp: unknown option $1";; esac; shift; done
   case $v6 in none|slaac|pd) ;; *) die "isp: v6=none|slaac|pd";; esac
@@ -528,6 +540,7 @@ isp_cmd(){
           run_ns "$n" nft add rule ip mrlab_dns prerouting udp dport 53 redirect to :53
         fi
       fi
+      [ -n "$plaincf_extra" ] && isp_plain_cf "$n" "$d"
       if [ "$v6" != none ]; then
         # DHCP modem mode can also advertise a single on-link /64.  It deliberately has
         # no DHCPv6-PD service, which is the IPv6 relay scenario.
@@ -556,6 +569,7 @@ isp_cmd(){
           run_ns "$n" nft add rule ip mrlab_dns prerouting udp dport 53 redirect to :53
         fi
       fi
+      [ -n "$plaincf_extra" ] && isp_plain_cf "$n" "$d"
       ;;
     pppoe)
       pe=/etc/netns/$n/ppp; mkdir -p "$pe"
