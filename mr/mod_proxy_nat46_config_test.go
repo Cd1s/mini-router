@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestProxyNat46DefaultsOffDoesNotRenderOrEnable(t *testing.T) {
@@ -18,6 +20,25 @@ func TestProxyNat46DefaultsOffDoesNotRenderOrEnable(t *testing.T) {
 	}
 	if strings.Contains(files[GenDir+"/services"], "mr-nat46") {
 		t.Fatal("mr-nat46 enabled while disabled")
+	}
+}
+
+func TestProxyNat46DefaultsKeepLegacyCanonicalConfig(t *testing.T) {
+	c := testConfig(t)
+	before, err := yaml.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyNat46Defaults(c)
+	after, err := yaml.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("proxy.nat46 defaults changed the canonical form of a legacy config")
+	}
+	if c.Proxy.Nat46 != (ProxyNat46{}) {
+		t.Fatalf("legacy config gained nat46 defaults: %+v", c.Proxy.Nat46)
 	}
 }
 
@@ -200,16 +221,16 @@ func TestProxyNat46DNS64RenderAndForwardSync(t *testing.T) {
 	if err := os.WriteFile(resolv, []byte("nameserver 203.0.113.2\nnameserver 203.0.113.3\nnameserver 2001:db8::53\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	oldGen, oldRun, oldResolv, oldCheck := proxyNat46DNS64Gen, proxyNat46DNS64Run, resolvConf, runUnboundCheckconf
+	oldGen, oldRun, oldResolv, oldWanRun, oldCheck := proxyNat46DNS64Gen, proxyNat46DNS64Run, resolvConf, wanRunDir, runUnboundCheckconf
 	oldStatus, oldAction := nat46DNS64ServiceRunning, nat46DNS64ServiceAction
-	proxyNat46DNS64Gen, proxyNat46DNS64Run, resolvConf = gen, run, resolv
+	proxyNat46DNS64Gen, proxyNat46DNS64Run, resolvConf, wanRunDir = gen, run, resolv, filepath.Join(dir, "wan")
 	checks := 0
 	var actions []string
 	runUnboundCheckconf = func(string) error { checks++; return nil }
 	nat46DNS64ServiceRunning = func() bool { return false }
 	nat46DNS64ServiceAction = func(action string) error { actions = append(actions, action); return nil }
 	defer func() {
-		proxyNat46DNS64Gen, proxyNat46DNS64Run, resolvConf, runUnboundCheckconf = oldGen, oldRun, oldResolv, oldCheck
+		proxyNat46DNS64Gen, proxyNat46DNS64Run, resolvConf, wanRunDir, runUnboundCheckconf = oldGen, oldRun, oldResolv, oldWanRun, oldCheck
 		nat46DNS64ServiceRunning, nat46DNS64ServiceAction = oldStatus, oldAction
 	}()
 	if err := proxyNat46DNS64Sync(c); err != nil {
@@ -282,12 +303,39 @@ func TestProxyNat46DNS64NeedsNat46AndNonLoopbackUpstream(t *testing.T) {
 	c.DNS.Upstream = "manual"
 	c.DNS.Servers = []string{"127.0.0.1#53"}
 	c.DNS.Fallback = nil
+	oldResolv, oldWanRun := resolvConf, wanRunDir
+	resolvConf = filepath.Join(t.TempDir(), "resolv.conf")
+	wanRunDir = filepath.Join(t.TempDir(), "wan")
+	defer func() { resolvConf, wanRunDir = oldResolv, oldWanRun }()
 	errs = strings.Join(c.Validate(), "\n")
-	if !strings.Contains(errs, "non-loopback IPv4") {
-		t.Fatalf("loopback upstream accepted: %s", errs)
+	if strings.Contains(errs, "non-loopback IPv4") {
+		t.Fatalf("manual mode was blocked by LAN DNS settings: %s", errs)
 	}
 	if got := proxyNat46DNS64Servers(c); len(got) != 0 {
 		t.Fatalf("loopback upstream was rendered: %v", got)
+	}
+}
+
+func TestProxyNat46DNS64UsesWANResolversForEveryLANDNSMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "resolv.conf")
+	if err := os.WriteFile(path, []byte("nameserver 127.0.0.1\nnameserver 198.51.100.7\nnameserver 203.0.113.8\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	c := proxyTestConfig(t)
+	c.Proxy.Nat46.Enabled = true
+	c.Proxy.Nat46.DNS64.Enabled = true
+	c.DNS.Servers = []string{"127.0.0.1#5455"}
+	c.DNS.Fallback = []string{"192.0.2.53"}
+	old := resolvConf
+	resolvConf = path
+	defer func() { resolvConf = old }()
+	for _, mode := range []string{"manual", "dot", "isp"} {
+		c.DNS.Upstream = mode
+		got := proxyNat46DNS64Servers(c)
+		if !reflect.DeepEqual(got, []string{"198.51.100.7", "203.0.113.8"}) {
+			t.Fatalf("%s DNS64 upstreams: %v", mode, got)
+		}
 	}
 }
 
@@ -302,14 +350,14 @@ func TestProxyNat46DNS64FallbackAndNonISPHook(t *testing.T) {
 	if err := os.WriteFile(gen, []byte(proxyNat46DNS64Config(c)), 0644); err != nil {
 		t.Fatal(err)
 	}
-	oldGen, oldRun, oldResolv, oldCheck := proxyNat46DNS64Gen, proxyNat46DNS64Run, resolvConf, runUnboundCheckconf
+	oldGen, oldRun, oldResolv, oldWanRun, oldCheck := proxyNat46DNS64Gen, proxyNat46DNS64Run, resolvConf, wanRunDir, runUnboundCheckconf
 	oldStatus, oldAction := nat46DNS64ServiceRunning, nat46DNS64ServiceAction
-	proxyNat46DNS64Gen, proxyNat46DNS64Run, resolvConf = gen, run, resolv
+	proxyNat46DNS64Gen, proxyNat46DNS64Run, resolvConf, wanRunDir = gen, run, resolv, filepath.Join(dir, "wan")
 	runUnboundCheckconf = func(string) error { return nil }
 	nat46DNS64ServiceRunning = func() bool { return false }
 	nat46DNS64ServiceAction = func(string) error { return nil }
 	defer func() {
-		proxyNat46DNS64Gen, proxyNat46DNS64Run, resolvConf, runUnboundCheckconf = oldGen, oldRun, oldResolv, oldCheck
+		proxyNat46DNS64Gen, proxyNat46DNS64Run, resolvConf, wanRunDir, runUnboundCheckconf = oldGen, oldRun, oldResolv, oldWanRun, oldCheck
 		nat46DNS64ServiceRunning, nat46DNS64ServiceAction = oldStatus, oldAction
 	}()
 	// writeResolv used to return before this sync for non-ISP upstreams.

@@ -979,6 +979,9 @@ func writeResolv(c *Config) {
 			// Never hand dnsmasq an empty (and therefore newest) resolv file: it would drop every
 			// upstream. Without this file dnsmasq has no usable ISP source and doctor reports it.
 			os.Remove(resolvConf)
+			if err := proxyNat46DNS64Sync(c); err != nil {
+				logf("dns64: %v", err)
+			}
 			return
 		}
 	}
