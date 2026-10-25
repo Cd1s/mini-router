@@ -1,0 +1,30 @@
+#!/sbin/openrc-run
+# DNS unblock helper (dns.unblock, docs/modules/dns.md): sing-box asks the ISP first and retries
+# answers that look like a blocking page through the configured trusted resolver.
+description="DNS unblock helper (sing-box)"
+supervisor=supervise-daemon
+command=/usr/bin/sing-box
+command_args="run --disable-color -c /etc/mini-router/gen/dns-unblock.json"
+respawn_delay=2
+respawn_max=10
+respawn_period=600
+cfg=/etc/mini-router/gen/dns-unblock.json
+
+if id -u sing-box >/dev/null 2>&1; then
+	command_user="sing-box:sing-box"
+	capabilities="^cap_net_admin"
+fi
+
+depend() {
+	need mr-network
+	after mr-firewall dnsmasq
+}
+
+start_pre() {
+	[ -f "$cfg" ] || { eerror "$cfg missing (WAN DNS not known; waiting for a lease)"; return 1; }
+	/usr/bin/sing-box version 2>/dev/null | awk 'BEGIN {ok=0} /1\.(1[4-9]|[2-9][0-9])\./ {ok=1} END {exit !ok}' || {
+		eerror "sing-box >= 1.14.0 is required for dns.unblock"
+		return 1
+	}
+	/usr/bin/sing-box check -c "$cfg" || { eerror "$cfg: sing-box check failed"; return 1; }
+}

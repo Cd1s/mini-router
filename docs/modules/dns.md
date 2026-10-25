@@ -344,6 +344,38 @@ No handler builds a shell command; `rc-service dnsmasq restart` is the only exec
 
 ## 怎么用
 
+### 运营商 DNS 屏蔽绕过（dns.unblock）
+
+在 `dns.upstream: isp`（也支持 `manual`）时打开此功能，路由器先向运营商 DNS 查询；只有返回配置的
+`block_ips`、私网/回环假地址，或 A/AAAA/HTTPS 返回空结果时，才把该查询改问可信服务器。其它记录继续使用
+运营商结果，因此 CDN 就近和现有 `dns.split`、`dns.parental`、`dns.sovereignty` 行为保持不变。`dot` 模式已经
+全量加密，不允许再套这一层。
+
+可信服务器可选 Cloudflare、Google、Quad9 或自定义地址，协议可选 TLS（默认）、HTTPS、UDP。运营商会劫持明文
+53 端口时必须使用 TLS/HTTPS；UDP 适合没有劫持且追求延迟的线路。主 dnsmasq 使用 `strict-order`，把运营商
+服务器保留在 `127.0.0.1#5455` 后面；辅助服务崩溃或停止时，局域网 DNS 仍会直接访问运营商服务器。
+
+WAN hooks 每次更新 `/run/mini-router/resolv.conf` 都会按健康顺序取前两个 DNS，运行 `sing-box check` 后原子替换
+配置并重启 `mr-dns-unblock`。没有 WAN DNS 且没有 `dns.fallback` 时保留上一份配置并等待下一次租约，不阻塞开机。
+启用前需要 sing-box 1.14.0 或更新版本（`evaluate` / `match_response`）。
+
+示例（泰国运营商的屏蔽页地址仅作为配置示例；不要把它当成全球清单）：
+
+```yaml
+dns:
+  upstream: isp
+  unblock:
+    enabled: true
+    block_ips: [125.26.170.3]
+    retry_private: true
+    retry_empty: true
+    fallback: cloudflare
+    protocol: udp
+```
+
+`block_ips` 只认当前配置的地址。运营商更换屏蔽页地址后要把新地址加入列表；功能不会猜测一个国家的所有
+屏蔽页，也不会自动改写配置。被改问的域名会发送给所选公共 DNS。
+
 ### 网页（网络 › DHCP / IPv6 RA、网络 › DNS、状态 › 终端设备）
 
 - **给家里服务器起名字**：网络 › DNS › 本地记录 → “+ 添加”，名称填 `nas`，类型 A，值 `192.168.1.10`，

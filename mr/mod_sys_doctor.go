@@ -551,18 +551,18 @@ func docProbeName(c *Config) string {
 func docDNS(c *Config, e *docEnv) []docFinding {
 	up := docWANsUp(c, e)
 	if len(up) == 0 {
-		return []docFinding{{Sev: "skip", Title: "DNS", Detail: "no WAN is up"}}
+		return append([]docFinding{{Sev: "skip", Title: "DNS", Detail: "no WAN is up"}}, dnsUnblockDoctor(c, e)...)
 	}
 	if c.DNS.Upstream == "isp" && len(c.DNS.Fallback) == 0 && !wanDNSFromPeers(c) {
-		return []docFinding{{Sev: "warn", Title: "DNS", Detail: "WAN is online but dns.upstream isp has no configured DNS source",
-			Fix: "enable WAN peerdns, configure static WAN DNS, or set dns.fallback"}}
+		return append([]docFinding{{Sev: "warn", Title: "DNS", Detail: "WAN is online but dns.upstream isp has no configured DNS source",
+			Fix: "enable WAN peerdns, configure static WAN DNS, or set dns.fallback"}}, dnsUnblockDoctor(c, e)...)
 	}
 	name := docProbeName(c)
 	if err := e.resolve(name); err != nil {
-		return []docFinding{{Sev: "risk", Title: "DNS", Detail: fmt.Sprintf("the router's DNS (dnsmasq, 127.0.0.1) does not resolve %s: %s", name, eventClean(err.Error(), 120)),
-			Fix: "rc-service dnsmasq status; mr dns query " + name + "; cat /run/mini-router/resolv.conf (upstreams)"}}
+		return append([]docFinding{{Sev: "risk", Title: "DNS", Detail: fmt.Sprintf("the router's DNS (dnsmasq, 127.0.0.1) does not resolve %s: %s", name, eventClean(err.Error(), 120)),
+			Fix: "rc-service dnsmasq status; mr dns query " + name + "; cat /run/mini-router/resolv.conf (upstreams)"}}, dnsUnblockDoctor(c, e)...)
 	}
-	return []docFinding{docOK("DNS", "dnsmasq resolves "+name)}
+	return append([]docFinding{docOK("DNS", "dnsmasq resolves "+name)}, dnsUnblockDoctor(c, e)...)
 }
 
 func docIPv6(c *Config, e *docEnv) []docFinding {
