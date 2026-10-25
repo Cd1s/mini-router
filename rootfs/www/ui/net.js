@@ -19,6 +19,13 @@ const PROTOS = [["pppoe","PPPoE 拨号"],["dhcp","DHCP 自动获取"],["static",
 const fmtSpeed = s => !s ? "" : s>=1000 ? (s/1000)+"G" : s+"M";
 const natSort = a => a.slice().sort((x,y)=>x.localeCompare(y, undefined, {numeric:true}));
 const mono = x => h("span",{class:"mono"}, x);
+// require_public_ip: the line is up on a private / CGNAT address; the redials go on and routing treats it as down
+const publicWaitTag = r => {
+  const p = r && r.public_wait;
+  if (!p) return null;
+  const left = p.next_at ? Math.max(0, p.next_at - Date.now()/1000) : 0;
+  return h("span",{class:"tag warn"}, "等待运营商释放名额", p.redials ? " · 第 "+p.redials+" 次重拨" : "", p.next_at ? (left < 60 ? " · "+Math.ceil(left)+" 秒后再拨" : " · "+Math.ceil(left/60)+" 分钟后再拨") : "");
+};
 const healthTag = w => !w || !w.health ? null : h("span",{class:"tag "+(w.health==="up"?"ok":"bad")}, w.health==="up"?"健康":"故障");
 const svcOf = w => w.proto==="pppoe" ? "mr-pppoe."+w.name : w.proto==="dhcp" ? "mr-udhcpc."+w.name : "";
 // wanRefs: the settings that name WAN `name` and would fail validation without it, as [{what, drop}];
@@ -187,7 +194,7 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
     const now = Date.now()/1000;
     return h("div",{class:"net-rt row"}, h("span",{class:"dot "+(r.up?"ok":"bad")}),
       r.up ? ["已连接 ", mono(r.ip), r.gateway?[" · 网关 ", mono(r.gateway)]:null, r.overlap?[" · 上游/LAN 同网段 ", mono(r.overlap)]:null, r.since?" · "+fmtDur(now-r.since):null, (r.dns||[]).length?" · DNS "+r.dns.join(", "):null] : "未连接",
-      " · 接口 ", mono(r.dev), healthTag(r));
+      " · 接口 ", mono(r.dev), healthTag(r), r.public_wait ? " " : null, publicWaitTag(r));
   };
   const redial = w=>{
     if (!svcOf(w) || !live[w.name]) return null;
@@ -238,8 +245,8 @@ registerPage("network", "wan", "WAN 外网", 10, async ()=>{
       }});
       rows.push(...field("光猫管理页", h("span",{class:"row"},modemToggleControl,modemInput), "启用后，局域网设备可访问桥接光猫的管理页（例如 192.168.1.1）；地址必须是上级私网 IPv4。"));
       rows.push(
-        ...field("要求公网 IPv4", inBool(w,"require_public_ip"), "拿到内网或 CGNAT 地址时自动重拨这一条线路；连续 5 次仍拿不到公网地址后停止并告警。"),
-        ...field("公网地址重拨冷却（秒）", inNum(w,"require_public_ip_gap",{min:1,max:86400,placeholder:"180",value:w.require_public_ip_gap||""}), "留空使用默认 180 秒；只在 PPPoE 且开启上面的开关时生效。"));
+        ...field("要求公网 IPv4", inBool(w,"require_public_ip"), "拿到内网或 CGNAT 地址时只重拨这一条线路，间隔逐步加长（最长 15 分钟），一直重拨到拿到公网地址；这期间这条线路按故障处理：策略路由里 fallback 为 main 的设备改走主路由，fallback 为 drop 的仍然不通。"),
+        ...field("公网地址重拨冷却（秒）", inNum(w,"require_public_ip_gap",{min:1,max:86400,placeholder:"180",value:w.require_public_ip_gap||""}), "前 4 次重拨的间隔，之后每次翻倍，最长 15 分钟；留空使用默认 180 秒；只在 PPPoE 且开启上面的开关时生效。"));
     }
     if (p==="static") rows.push(
       ...field("IPv4 地址 / 掩码", inText(w,"ipv4",{placeholder:"203.0.113.10/24"})),

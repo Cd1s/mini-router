@@ -734,7 +734,7 @@ func balanceMembers(c *Config, exists func(string) bool) []lbMember {
 	if c.MultiWAN.Mode != "balance" {
 		return nil
 	}
-	health := readWanState()
+	health := wanHealthMap(c)
 	var out []lbMember
 	for _, w := range c.WAN {
 		wt := c.MultiWAN.Weight(w.Name)

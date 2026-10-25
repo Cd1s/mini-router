@@ -86,8 +86,8 @@ wan:
     ipv6: true
     ipv6_pd: true
     ipv6_relay: false                 # next release: optional SLAAC /64 relay when ISP has no PD
-    require_public_ip: true           # bounded redials for private / CGNAT PPPoE addresses
-    require_public_ip_gap: 180        # seconds; 0 uses the 180-second default
+    require_public_ip: true           # redial a PPPoE line on a private / CGNAT address, backing off to 15 min, never giving up
+    require_public_ip_gap: 180        # seconds between the first 4 redials (then doubling); 0 uses the 180-second default
   - {name: wan2, device: eth2, proto: dhcp}           # proto: pppoe | dhcp | static (ipv4:, gateway:, dns:)
 devices:                                              # inventory: other sections use the name (docs/modules/dev.md)
   - {name: nas, macs: ["aa:bb:cc:dd:ee:02"], ip: 192.168.1.20, type: server}  # ip = static lease; a MAC not also in dhcp.hosts
@@ -162,7 +162,9 @@ Secrets: add `name: value` to `/etc/mini-router/secrets.yaml` without echoing th
   dials on macvlan `mv-<name>` (the ISP keys sessions by MAC). `mr doctor` warns about WANs sharing a MAC.
   For a bridged modem page, set `wan[].modem.address` (PPPoE only); mini-router adds a host route, gateway-only proxy
   ARP and masquerade. `wan[].require_public_ip: true` redials a PPPoE line that receives RFC1918, 100.64.0.0/10 or
-  169.254.0.0/16, waits `require_public_ip_gap` (default 180 s), and stops after five attempts. `wan[].ipv6_relay: true`
+  169.254.0.0/16 (only that line), waits `require_public_ip_gap` (default 180 s) for four redials, then doubles the wait up to
+  15 minutes and keeps going until the line gets a public address. Meanwhile the line counts as down: policy routes with
+  `fallback: main` use the main route, `fallback: drop` stays cut off. `wan[].ipv6_relay: true`
   is a next-release option on main, requires WAN IPv6 plus LAN RA, and relays an upstream SLAAC /64 when no PD exists.
 
 - **LAN renumber / 改 LAN 网段**: changing `lan.ipv4` in the web UI can shift matching DHCP leases, device addresses,
@@ -231,7 +233,7 @@ dmesg | tail -n 50
 
 The v0.4 doctor has specific guidance for a PPPoE line that appears to have changed to DHCP (it throttles the DHCP
 probe and suggests `mr wan detect`), for a WAN address overlapping a LAN subnet (change `lan.ipv4` or the upstream), and
-for `require_public_ip` after five private-address attempts (a risk finding). It also reports when ISP DNS sources are
+for `require_public_ip` while a line waits on a private / CGNAT address (a warning with the redial count and the next redial; nothing to fix, the ISP has to release a session slot). It also reports when ISP DNS sources are
 gone and `dns.fallback` is missing. Treat these as actionable findings; do not paper over them by editing generated files.
 
 ## Without SSH: the HTTP API with a token

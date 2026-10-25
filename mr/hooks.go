@@ -38,17 +38,74 @@ var (
 	requirePublicNow    = time.Now
 	requirePublicRedial = func(w *WAN) { startDetached("rc-service", netService(*w), "restart") }
 	publicCheckAddrs    = ipv4Addrs
+	publicCheckMetrics  = mainDefaultMetrics
+	publicCheckRefresh  = func(c *Config) { _ = hookHealth(c) }
 )
 
 const (
-	requirePublicMax = 5
-	requirePublicGap = 180
+	requirePublicGap  = 180 // seconds between redials unless wan[].require_public_ip_gap says otherwise
+	requirePublicFast = 4   // redials at that plain gap; after them the wait doubles every time
+	requirePublicCap  = 900 // the longest wait between redials (a configured gap above it is kept)
 )
 
+// requirePublicRecord is the guard's memory of one WAN (/run, so a reboot starts over). It never
+// ends: a record only goes away with a public address.
 type requirePublicRecord struct {
-	Attempts   int   `json:"attempts"`
+	Attempts   int   `json:"attempts"` // redials issued since boot / the last public address
 	LastRedial int64 `json:"last_redial"`
-	Risk       bool  `json:"risk,omitempty"`
+}
+
+func requirePublicGapOf(w *WAN) int {
+	if w.RequirePublicIPGap == 0 {
+		return requirePublicGap
+	}
+	return w.RequirePublicIPGap
+}
+
+// requirePublicWait: seconds between redial n and redial n+1. The ISP may be counting the old sessions
+// (AIS: a session over the concurrent limit sits in a walled garden until the old ones time out), so
+// the redials back off instead of stopping: gap for the first four, then 2x, 4x, ... up to 15 minutes.
+func requirePublicWait(gap, n int) int {
+	limit := max(gap, requirePublicCap)
+	wait := gap
+	for i := requirePublicFast; i <= n && wait < limit; i++ {
+		wait *= 2
+	}
+	return min(wait, limit)
+}
+
+// publicWait is what the panel and doctor show of a WAN that holds a private address.
+type publicWait struct {
+	Class   string `json:"class"`             // cgnat | private
+	Redials int    `json:"redials"`           // issued so far
+	NextAt  int64  `json:"next_at,omitempty"` // unix time of the next redial (0: the next check)
+}
+
+// publicWaitOf: nil unless w has to hold a public address and ip is not one.
+func publicWaitOf(w *WAN, ip string, rec requirePublicRecord) *publicWait {
+	if w.Proto != "pppoe" || !w.RequirePublicIP || addrClass(ip) == "" {
+		return nil
+	}
+	pw := &publicWait{Class: addrClass(ip), Redials: rec.Attempts}
+	if rec.Attempts > 0 {
+		pw.NextAt = rec.LastRedial + int64(requirePublicWait(requirePublicGapOf(w), rec.Attempts))
+	}
+	return pw
+}
+
+// publicIPHeld: the private / CGNAT address of a PPPoE WAN that has to hold a public one
+// (wan[].require_public_ip), else "". The session is up and has an address but is not what the owner
+// asked for (AIS puts the sessions over its concurrent limit in a walled garden: 100.64/10, no
+// traffic), so routing treats the line as down: the WAN table loses its default route and the
+// policy routes with fallback: main use the main table until a public address arrives.
+func publicIPHeld(w *WAN) string {
+	if w == nil || w.Proto != "pppoe" || !w.RequirePublicIP {
+		return ""
+	}
+	if l, ok := readLease(w.Name); ok {
+		return addrClass(l.IP)
+	}
+	return ""
 }
 
 func readRequirePublic() map[string]requirePublicRecord {
@@ -71,8 +128,9 @@ func writeRequirePublic(m map[string]requirePublicRecord) {
 	}
 }
 
-// requirePublicIP enforces the PPPoE public-address guard from the ppp-up hook. The state is in
-// /run, so a reboot starts a fresh sequence; a public address clears it immediately.
+// requirePublicIP enforces the PPPoE public-address guard from the ppp-up hook and the cron check: a
+// private address redials this one WAN (never another), waiting longer each time; a public address
+// clears the record at once. It returns true while the address is private.
 func requirePublicIP(c *Config, w *WAN, ip string) bool {
 	if w == nil || w.Proto != "pppoe" || !w.RequirePublicIP {
 		return false
@@ -85,36 +143,49 @@ func requirePublicIP(c *Config, w *WAN, ip string) bool {
 	defer lk.Close()
 	m := readRequirePublic()
 	if cls == "" {
-		delete(m, w.Name)
-		writeRequirePublic(m)
+		if _, ok := m[w.Name]; ok {
+			delete(m, w.Name)
+			writeRequirePublic(m)
+		}
 		return false
 	}
 	r := m[w.Name]
 	now := requirePublicNow().Unix()
-	gap := w.RequirePublicIPGap
-	if gap == 0 {
-		gap = requirePublicGap
-	}
-	if r.Risk {
-		return true
-	}
-	if r.LastRedial != 0 && now >= r.LastRedial && now-r.LastRedial < int64(gap) {
+	gap := requirePublicGapOf(w)
+	if r.Attempts > 0 && now >= r.LastRedial && now-r.LastRedial < int64(requirePublicWait(gap, r.Attempts)) {
 		return true
 	}
 	r.Attempts++
-	if r.Attempts >= requirePublicMax {
-		r.Risk = true
-		m[w.Name] = r
-		writeRequirePublic(m)
-		eventAdd(c, "doctor", "risk", "wan."+w.Name, fmt.Sprintf("%s has a %s IPv4 address after %d PPPoE attempts; automatic redial stopped", w.Name, cls, r.Attempts), false)
-		return true
-	}
 	r.LastRedial = now
 	m[w.Name] = r
 	writeRequirePublic(m)
-	logf("wan %s: %s IPv4 address; redial %d/%d", w.Name, cls, r.Attempts, requirePublicMax-1)
+	next := requirePublicWait(gap, r.Attempts)
+	logf("wan %s: %s IPv4 address; redial %d, next in %d s", w.Name, cls, r.Attempts, next)
+	if r.Attempts == requirePublicFast+1 {
+		eventAdd(c, "doctor", "warn", "wan."+w.Name, fmt.Sprintf("%s still has a %s IPv4 address after %d redials; the ISP may be holding the session (concurrent-session limit), redialing continues with growing intervals up to %d min", w.Name, cls, requirePublicFast, max(gap, requirePublicCap)/60), false)
+	}
 	requirePublicRedial(w)
 	return true
+}
+
+// pruneRequirePublic forgets the records of WANs that are gone or no longer need a public address
+// (after an accepted apply), so switching the option on again starts a fresh sequence.
+func pruneRequirePublic(c *Config) {
+	if _, err := os.Stat(requirePublicFile); err != nil {
+		return
+	}
+	lk := flock(requirePublicFile+".lock", true)
+	if lk == nil {
+		return
+	}
+	defer lk.Close()
+	m := readRequirePublic()
+	for name := range m {
+		if w := c.WANByName(name); w == nil || w.Proto != "pppoe" || !w.RequirePublicIP {
+			delete(m, name)
+		}
+	}
+	writeRequirePublic(m)
 }
 
 func publicIPCheckEnabled(c *Config) bool {
@@ -133,10 +204,12 @@ func publicIPCheckCronLine(c *Config) []string {
 	return []string{"# require_public_ip", "* * * * * " + mrBin + " wan public-check --cron"}
 }
 
-// publicIPCheck is the periodic review for sessions that came back during the cooldown. It reads
-// the live interface address, so it also catches a PPPoE session that was already up when the option
-// was enabled. The cron invocation is the only periodic work; no resident process is added.
+// publicIPCheck is the periodic review (cron, every minute) for sessions that came back during a wait.
+// It reads the live interface address, so it also catches a PPPoE session that was already up when the
+// option was enabled, and it re-routes a WAN whose routes do not match the guard (held out, or public
+// again) within that minute. The cron invocation is the only periodic work; no resident process is added.
 func publicIPCheck(c *Config) error {
+	reroute := false
 	for i := range c.WAN {
 		w := &c.WAN[i]
 		if w.Proto != "pppoe" || !w.RequirePublicIP {
@@ -148,6 +221,12 @@ func publicIPCheck(c *Config) error {
 		}
 		ip := strings.SplitN(addrs[0], "/", 2)[0]
 		requirePublicIP(c, w, ip)
+		if ms := publicCheckMetrics(w.Ifname()); len(ms) > 0 && (ms[0] >= w.Metric+downMetric) != !wanHealthy(c, w.Name) {
+			reroute = true
+		}
+	}
+	if reroute {
+		publicCheckRefresh(c)
 	}
 	return nil
 }
@@ -259,12 +338,19 @@ func readWanState() map[string]string {
 	return m
 }
 
-// wanHealthMap is readWanState when the health checker is configured, else empty (all healthy).
+// wanHealthMap: the health checker's verdicts when it is configured, plus "down" for every WAN the
+// public-address guard holds out (publicIPHeld), whatever the checker says about it.
 func wanHealthMap(c *Config) map[string]string {
-	if !c.MultiWAN.Enabled() {
-		return map[string]string{}
+	m := map[string]string{}
+	if c.MultiWAN.Enabled() {
+		m = readWanState()
 	}
-	return readWanState()
+	for i := range c.WAN {
+		if publicIPHeld(&c.WAN[i]) != "" {
+			m[c.WAN[i].Name] = "down"
+		}
+	}
+	return m
 }
 
 func wanHealthy(c *Config, name string) bool { return wanHealthMap(c)[name] != "down" }
@@ -935,6 +1021,7 @@ func refreshRoutes(c *Config) {
 // passed verification (and, for a confirm window, after the owner confirms).
 func netCommit(c *Config) error {
 	removeStalePD6(c)
+	pruneRequirePublic(c)
 	lan6Renumber(c, true)
 	srcDefaults6(c)
 	writeResolv(c)

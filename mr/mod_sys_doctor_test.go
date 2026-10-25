@@ -275,9 +275,10 @@ func TestDoctorFindings(t *testing.T) {
 	}
 }
 
-func TestDoctorRequiresPublicIPGiveUpIsRisk(t *testing.T) {
+func TestDoctorRequiresPublicIPWaitingIsWarn(t *testing.T) {
 	tempState(t)
 	c := testConfig(t)
+	c.Services.Edge = Edge{} // no certificates to check
 	c.WAN[0].RequirePublicIP = true
 	e := fakeDocEnv()
 	e.addrs4 = func(dev string) []string {
@@ -290,13 +291,40 @@ func TestDoctorRequiresPublicIPGiveUpIsRisk(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(requirePublicFile), 0700); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := json.Marshal(map[string]requirePublicRecord{"wan": {Attempts: requirePublicMax, Risk: true}})
+	// 7th redial 2 minutes ago: the wait after it is the 15 minute cap, 13 minutes are left
+	b, _ := json.Marshal(map[string]requirePublicRecord{"wan": {Attempts: 7, LastRedial: e.now.Unix() - 120}})
 	if err := os.WriteFile(requirePublicFile, b, 0600); err != nil {
 		t.Fatal(err)
 	}
-	f := docFind(runDoctor(c, e), "wan.wan")
-	if f.Sev != "risk" || !strings.Contains(f.Detail, "stopped") {
-		t.Fatalf("give-up state: %+v", f)
+	r := runDoctor(c, e)
+	f := docFind(r, "wan.wan")
+	if f.Sev != "warn" || strings.Contains(f.Detail, "stopped") ||
+		!strings.Contains(f.Detail, "waiting for the ISP to release a session slot") ||
+		!strings.Contains(f.Detail, "redial 7 done, next in 13 min") || !strings.Contains(f.Detail, "100.64.3.4 (cgnat)") {
+		t.Fatalf("waiting state: %+v", f)
+	}
+	if r.Risk != 0 {
+		t.Fatalf("waiting for the ISP is not a risk: %d risk, %s", r.Risk, docProblems(r))
+	}
+	if g := docFind(r, "wan.wan2"); g.Sev != "ok" {
+		t.Fatalf("the public line next to it: %+v", g)
+	}
+}
+
+func TestDoctorRequiresPublicIPWaitingTexts(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	for _, tc := range []struct {
+		pw   publicWait
+		want string
+	}{
+		{publicWait{Class: "cgnat"}, "no redial yet, the next check (within a minute) starts it"},
+		{publicWait{Class: "cgnat", Redials: 1, NextAt: now.Unix() + 45}, "redial 1 done, next in 45 s"},
+		{publicWait{Class: "cgnat", Redials: 5, NextAt: now.Unix() + 61}, "redial 5 done, next in 2 min"},
+		{publicWait{Class: "private", Redials: 2, NextAt: now.Unix() - 5}, "redial 2 done, the next one is due now"},
+	} {
+		if got := docPublicWait(&tc.pw, now); got != tc.want {
+			t.Errorf("%+v: %q, want %q", tc.pw, got, tc.want)
+		}
 	}
 }
 
@@ -378,7 +406,7 @@ func TestDoctorDHCPNegativeProbeIsThrottled(t *testing.T) {
 	}
 }
 
-func TestDoctorIgnoresStalePublicRiskWhenGuardDisabled(t *testing.T) {
+func TestDoctorIgnoresStaleRecordWhenGuardDisabled(t *testing.T) {
 	tempState(t)
 	c := testConfig(t)
 	c.WAN[0].RequirePublicIP = false
@@ -390,13 +418,13 @@ func TestDoctorIgnoresStalePublicRiskWhenGuardDisabled(t *testing.T) {
 		return []string{"198.51.100.20/32"}
 	}
 	e.health = func(*Config) map[string]string { return map[string]string{"wan": "down"} }
-	b, _ := json.Marshal(map[string]requirePublicRecord{"wan": {Attempts: requirePublicMax, Risk: true}})
+	b, _ := json.Marshal(map[string]requirePublicRecord{"wan": {Attempts: 9, LastRedial: 1}})
 	if err := os.WriteFile(requirePublicFile, b, 0600); err != nil {
 		t.Fatal(err)
 	}
 	f := docFind(runDoctor(c, e), "wan.wan")
-	if f.Sev == "risk" || strings.Contains(f.Detail, "automatic public-IP redial stopped") {
-		t.Fatalf("disabled guard kept stale risk: %+v", f)
+	if f.Sev == "risk" || strings.Contains(f.Detail, "waiting for the ISP") {
+		t.Fatalf("disabled guard kept a stale record: %+v", f)
 	}
 }
 

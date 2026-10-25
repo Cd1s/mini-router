@@ -481,6 +481,7 @@ isp_stop(){
   run_ns "$n" ip link del trusted-dns 2>/dev/null || true
   run_ns "$n" ip link del plain-cf 2>/dev/null || true
   run_ns "$n" nft delete table ip mrlab_dns 2>/dev/null || true
+  run_ns "$n" nft delete table inet mrlab_walled 2>/dev/null || true
   run_ns "$n" ip -6 route flush proto static 2>/dev/null || true
 }
 # isp_plain_cf <netns> <state dir>: a stand-in for plain 1.1.1.1:53 inside the ISP namespace (the
@@ -498,8 +499,10 @@ isp_cmd(){
   [ -e "/run/netns/$n" ] || die "lab $id is not up"
   mkdir -p "$d"; isp_stop "$id" "$wan"
   v6=none; badpass=0; nopado=0; cgnat=0; subnet=10.$id.$wan; gw=1; dns_extra=""; trusted_extra=""; plaincf_extra=""; hijack53=0
+  cgnat_dials=0; cgnat_mac=""; echo_srv=0
   while [ $# -gt 0 ]; do case $1 in
     v6=*) v6=${1#v6=};; --cgnat) cgnat=1;; --badpass) badpass=1;; nopado|--nopado) nopado=1;;
+    --cgnat-dials) shift; cgnat_dials=$1;; --cgnat-mac) shift; cgnat_mac=$(echo "$1" | tr 'A-F' 'a-f');; --echo) echo_srv=1;;
     --subnet) shift; subnet=${1%.*}; subnet=${subnet%/*}; subnet=${subnet%.0};;
     --gw) shift; gw=$1;;
     --address) shift; a=${1#*=}   # NAME=IP, or NAME=IP,TTL: an answer with a real TTL (dnsmasq caches it)
@@ -510,6 +513,7 @@ isp_cmd(){
     --hijack53) hijack53=1;;
     *) die "isp: unknown option $1";; esac; shift; done
   case $v6 in none|slaac|pd) ;; *) die "isp: v6=none|slaac|pd";; esac
+  case $cgnat_dials in ''|*[!0-9]*) die "isp: --cgnat-dials N (a number)";; esac
   [ "$mode" = pppoe ] && subnet=203.0.113
   [ "$cgnat" = 1 ] && subnet=100.64.$id
   if [ "$mode" = down ]; then run_ns "$n" ip link set "$dev" down; echo "down" > "$d/mode"; echo "isp $id wan$wan down"; return; fi
@@ -625,12 +629,62 @@ EOF
       run_ns "$n" ip addr add "$subnet.1/32" dev lo
       # shellcheck disable=SC2086
       run_ns "$n" dnsmasq $dns --listen-address="$subnet.1" --bind-interfaces
+      # every PPPoE discovery frame and LCP terminate on the wire, for the scenarios (pppoe-wire.log)
+      : > "$d/pppoe-wire.log"
+      (setsid ip netns exec "$n" python3 -I "$LABDIR/pppoe-watch.py" "$dev" "$d/pppoe-wire.log" >/dev/null 2>&1 &)
+      qopt=""
+      if [ "$cgnat_dials" -gt 0 ]; then
+        # an ISP with a concurrent-session limit (AIS): the first N dials of a client (all of them, or those
+        # of the MAC given with --cgnat-mac) land in the walled garden - 100.64.<id>.x, up, but nothing is
+        # forwarded - and later dials get a public address. pppoe-server starts one pppd per dial; the
+        # wrapper (-q) counts the dials per client MAC and picks the address (dials.log is the record).
+        rm -f "$d"/dials.* "$d/dials.log"
+        echo "$cgnat_dials" > "$d/walled"
+        cat > "$d/pppd-wrap" <<'WRAP'
+#!/bin/sh
+mac=
+for a in "$@"; do case $a in *" -e "*) mac=$(echo "$a" | sed -n 's/.* -e [0-9]*:\([0-9a-f:]*\).*/\1/p');; esac; done
+f=@D@/dials.$(echo "$mac" | tr -d :)
+c=$(( $(cat "$f" 2>/dev/null || echo 0) + 1 )); echo "$c" > "$f"
+walled=0
+n=$(cat @D@/walled 2>/dev/null || echo @N@)
+if [ "$c" -le "$n" ] && { [ -z "@MAC@" ] || [ "$mac" = "@MAC@" ]; }; then walled=1; fi
+for a in "$@"; do
+  case $a in [0-9]*.[0-9]*.[0-9]*.[0-9]*:[0-9]*.[0-9]*.[0-9]*.[0-9]*)
+    [ $walled = 0 ] || a=${a%%:*}:100.64.@ID@.${a##*.}
+    echo "$(date +%s) dial mac=$mac n=$c walled=$walled addr=${a##*:}" >> @D@/dials.log;;
+  esac
+  set -- "$@" "$a"; shift
+done
+exec @PPPD@ "$@"
+WRAP
+        sed -i "s#@D@#$d#g; s#@N@#$cgnat_dials#g; s#@MAC@#$cgnat_mac#g; s#@ID@#$id#g; s#@PPPD@#$(command -v pppd)#g" "$d/pppd-wrap"
+        chmod +x "$d/pppd-wrap"
+        qopt="-q $d/pppd-wrap"
+        run_ns "$n" nft -f - <<'NFT'
+table inet mrlab_walled {
+  chain input { type filter hook input priority 0; policy accept; ip saddr 100.64.0.0/10 drop; }
+  chain forward { type filter hook forward priority 0; policy accept; ip saddr 100.64.0.0/10 drop; ip daddr 100.64.0.0/10 drop; }
+}
+NFT
+      fi
+      if [ "$echo_srv" = 1 ]; then
+        # 192.0.2.99:80 answers with the address the request came from: through which WAN did a LAN client leave?
+        run_ns "$n" ip addr add 192.0.2.99/32 dev lo
+        (setsid ip netns exec "$n" python3 -I -c 'import http.server
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        b = (self.client_address[0] + "\n").encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(b))); self.send_header("Connection", "close"); self.end_headers(); self.wfile.write(b)
+    def log_message(self, *a): pass
+http.server.ThreadingHTTPServer(("192.0.2.99", 80), H).serve_forever()' >/dev/null 2>&1 &)
+      fi
       if [ "$nopado" = 0 ]; then
         # pppd writes /run/pppN.pid and /run/pppd2.tdb: a private mount namespace with its own /run
         # (the sessions of every lab are ppp0) keeps them off the host's /run
         # shellcheck disable=SC2016
         run_ns "$n" unshare -m --propagation private sh -c 'mount -t tmpfs mrlab-ppp /run && exec "$@"' sh \
-          pppoe-server -I "$dev" -O "$d/pppoe-options" -L "$subnet.1" -R "$subnet.10" -N 8 -X "$d/pppoe.pid"
+          pppoe-server -I "$dev" -O "$d/pppoe-options" -L "$subnet.1" -R "$subnet.10" -N 8 -X "$d/pppoe.pid" $qopt
       fi
       ;;
     *) die "unknown ISP mode: $mode (dhcp|pppoe|static|down)";;
@@ -852,17 +906,25 @@ change_cmd(){
   return 0
 }
 run_cmd(){ id=$1; scen=$2; valid_id "$id"; case $scen in */*) f=$scen;; *) f="$LABDIR/scenarios/$scen.sh";; esac; [ -x "$f" ] || die "scenario not found: $f"; LAB_SH="$LABDIR/lab.sh" "$f" "$id"; }
+# isp-walled <id> <wan> <N>: change the number of dials per client that land in the walled garden
+# (isp ... --cgnat-dials); 0 = the ISP has released its slots, the next dial gets a public address.
+isp_walled_cmd(){
+  id=$1; wan=$2; n=$3; valid_id "$id"
+  case $n in ''|*[!0-9]*) die "isp-walled <id> <wan> <N>";; esac
+  [ -s "$(state "$id")/isp$wan/pppd-wrap" ] || die "isp $wan of lab $id was not started with --cgnat-dials"
+  echo "$n" > "$(state "$id")/isp$wan/walled"; echo "isp $id wan$wan: dials 1..$n are walled"
+}
 reboot_cmd(){ id=$1; valid_id "$id"; agent_exec "$id" 10 'sync; (sleep 1; reboot) &' >/dev/null || true; sleep 8; wait_agent "$id" 180 && echo "rebooted $id"; }
 powercut_cmd(){ id=$1; valid_id "$id"; kill_qemu "$id" 9; up "$id" >/dev/null; wait_agent "$id" 180 && echo "power restored $id"; }
 
-usage(){ die "usage: lab.sh up|down|reset|status <id> | isp <id> <wan> dhcp|pppoe|static|down [opts] | install <id> [opts] | lan <id> dhcp|static|check|exec | console|ssh <id> <cmd> | api <id> GET|POST <action> [json] | change <id> <patch-json> [--no-confirm] | reboot|powercut <id> | run <id> <scenario>"; }
+usage(){ die "usage: lab.sh up|down|reset|status <id> | isp <id> <wan> dhcp|pppoe|static|down [opts] | isp-walled <id> <wan> <N> | install <id> [opts] | lan <id> dhcp|static|check|exec | console|ssh <id> <cmd> | api <id> GET|POST <action> [json] | change <id> <patch-json> [--no-confirm] | reboot|powercut <id> | run <id> <scenario>"; }
 cmd=${1:-}; shift || true
 case $cmd in
-  up|down|reset|isp|install|lan|ssh|console|api|change|run|reboot|powercut) valid_id "${1:-}"; id_guard "$1";;
+  up|down|reset|isp|isp-walled|install|lan|ssh|console|api|change|run|reboot|powercut) valid_id "${1:-}"; id_guard "$1";;
 esac
 case $cmd in
   up) up "$@";; down) down "$@";; status) status "$@";; reset) reset "$@";;
-  isp) isp_cmd "$@";; install) install_cmd "$@";; lan) lan_cmd "$@";;
+  isp) isp_cmd "$@";; isp-walled) isp_walled_cmd "$@";; install) install_cmd "$@";; lan) lan_cmd "$@";;
   ssh) ssh_cmd "$@";; console) console "$@";; api) api_cmd "$@";; change) change_cmd "$@";; run) run_cmd "$@";;
   reboot) reboot_cmd "$@";; powercut) powercut_cmd "$@";; mirror) lock_images; ensure_mirror "${1:-$ROOT}"; echo "$MIRROR";;
   guard-reset) echo "lab: guard baseline reset ($HOST_GUARD_BASE)";;

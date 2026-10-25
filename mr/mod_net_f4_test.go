@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,8 +40,30 @@ func TestRequirePublicIPValidation(t *testing.T) {
 	}
 }
 
-func TestRequirePublicIPRedialsOnlyOneWANAndStops(t *testing.T) {
+func TestRequirePublicWaitSchedule(t *testing.T) {
+	for _, tc := range []struct {
+		gap  int
+		want []int // wait after redial 1, 2, 3, ...
+	}{
+		{180, []int{180, 180, 180, 360, 720, 900, 900, 900}},
+		{1, []int{1, 1, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 900, 900}},
+		{600, []int{600, 600, 600, 900, 900}},
+		{3600, []int{3600, 3600, 3600, 3600, 3600}}, // a longer gap is the owner's choice: never shortened
+	} {
+		for i, want := range tc.want {
+			if got := requirePublicWait(tc.gap, i+1); got != want {
+				t.Errorf("gap %d, wait after redial %d = %d, want %d", tc.gap, i+1, got, want)
+			}
+		}
+	}
+	if got := requirePublicWait(180, 1000); got != 900 {
+		t.Errorf("a long run overflowed the cap: %d", got)
+	}
+}
+
+func TestRequirePublicIPRedialsOnlyThePrivateWANAndNeverStops(t *testing.T) {
 	tempState(t)
+	eventEnv(t)
 	c := testConfig(t)
 	c.WAN[0].RequirePublicIP = true
 	c.WAN[0].RequirePublicIPGap = 1
@@ -55,26 +76,43 @@ func TestRequirePublicIPRedialsOnlyOneWANAndStops(t *testing.T) {
 	requirePublicRedial = func(w *WAN) { redials = append(redials, w.Name) }
 	t.Cleanup(func() { requirePublicNow, requirePublicRedial = oldNow, oldRedial })
 
-	for i := 0; i < requirePublicMax; i++ {
+	var times []int64
+	for i := 1; i <= 15; i++ {
+		if !requirePublicIP(c, &c.WAN[0], "100.64.1.2") {
+			t.Fatalf("private address %d was not reported as guarded", i)
+		}
+		if requirePublicIP(c, &c.WAN[1], "198.51.100.2") { // the public line next to it is never touched
+			t.Fatal("public address reported as guarded")
+		}
+		times = append(times, now.Unix())
+		wait := requirePublicWait(1, i)
+		now = now.Add(time.Duration(wait-1) * time.Second) // still inside the wait: nothing happens
 		requirePublicIP(c, &c.WAN[0], "100.64.1.2")
-		now = now.Add(2 * time.Second)
+		now = now.Add(time.Second)
 	}
-	if strings.Join(redials, ",") != "wan,wan,wan,wan" {
-		t.Fatalf("redials=%v, want four attempts for wan only", redials)
+	if len(redials) != 15 {
+		t.Fatalf("%d redials in 15 rounds (no give-up expected): %v", len(redials), redials)
 	}
-	var rec map[string]requirePublicRecord
-	b, err := os.ReadFile(requirePublicFile)
-	if err != nil || json.Unmarshal(b, &rec) != nil || !rec["wan"].Risk || rec["wan"].Attempts != requirePublicMax {
-		t.Fatalf("state=%s err=%v", b, err)
+	for _, n := range redials {
+		if n != "wan" {
+			t.Fatalf("redialed %s, the line with a public address", n)
+		}
 	}
-	// A public address clears the sequence; another private address may start fresh.
+	rec := readRequirePublic()
+	if _, ok := rec["wan2"]; ok || rec["wan"].Attempts != 15 {
+		t.Fatalf("state=%+v", rec)
+	}
+	if gap := times[14] - times[13]; gap != 900 {
+		t.Fatalf("the interval did not settle at the 15 minute cap: %d s", gap)
+	}
+	// A public address clears the sequence; another private address starts fresh.
 	requirePublicIP(c, &c.WAN[0], "203.0.113.2")
 	if _, ok := readRequirePublic()["wan"]; ok {
 		t.Fatal("public address did not clear require_public_ip state")
 	}
 }
 
-func TestPublicIPCheckHonoursCooldownAndEventuallyStops(t *testing.T) {
+func TestPublicIPCheckHonoursBackoff(t *testing.T) {
 	tempState(t)
 	eventEnv(t)
 	c := testConfig(t)
@@ -82,6 +120,7 @@ func TestPublicIPCheckHonoursCooldownAndEventuallyStops(t *testing.T) {
 	c.WAN[1].RequirePublicIP, c.WAN[1].RequirePublicIPGap = true, 180
 	now := time.Unix(1_800_000_000, 0)
 	oldNow, oldAddrs, oldRedial := requirePublicNow, publicCheckAddrs, requirePublicRedial
+	oldMetrics, oldRefresh := publicCheckMetrics, publicCheckRefresh
 	var redials []string
 	requirePublicNow = func() time.Time { return now }
 	publicCheckAddrs = func(dev string) []string {
@@ -90,8 +129,11 @@ func TestPublicIPCheckHonoursCooldownAndEventuallyStops(t *testing.T) {
 		}
 		return []string{"198.51.100.2/32"}
 	}
+	publicCheckMetrics = func(string) []int { return nil }
 	requirePublicRedial = func(w *WAN) { redials = append(redials, w.Name) }
-	t.Cleanup(func() { requirePublicNow, publicCheckAddrs, requirePublicRedial = oldNow, oldAddrs, oldRedial })
+	t.Cleanup(func() {
+		requirePublicNow, publicCheckAddrs, requirePublicRedial, publicCheckMetrics, publicCheckRefresh = oldNow, oldAddrs, oldRedial, oldMetrics, oldRefresh
+	})
 
 	publicIPCheck(c) // first observation: redial immediately
 	now = now.Add(10 * time.Second)
@@ -99,15 +141,34 @@ func TestPublicIPCheckHonoursCooldownAndEventuallyStops(t *testing.T) {
 	if len(redials) != 1 {
 		t.Fatalf("cooldown was ignored: %v", redials)
 	}
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ { // the fast phase: one redial per gap
 		now = now.Add(180 * time.Second)
 		publicIPCheck(c)
 	}
-	if strings.Join(redials, ",") != "wan,wan,wan,wan" {
-		t.Fatalf("redials after cooldown: %v", redials)
+	if len(redials) != 4 {
+		t.Fatalf("redials in the fast phase: %v", redials)
 	}
-	if !readRequirePublic()["wan"].Risk {
-		t.Fatal("fifth private observation did not stop and mark risk")
+	for _, step := range []struct {
+		after time.Duration
+		total int
+	}{{180, 4}, {179, 4}, {1, 5}, {719, 5}, {1, 6}, {900, 7}, {899, 7}, {1, 8}} {
+		now = now.Add(step.after * time.Second)
+		publicIPCheck(c)
+		if len(redials) != step.total {
+			t.Fatalf("after +%ds: %d redials, want %d (wait after redial 4 = 360 s, 5 = 720 s, then 900 s)", step.after, len(redials), step.total)
+		}
+	}
+	for _, n := range redials {
+		if n != "wan" {
+			t.Fatalf("the check redialed %s", n)
+		}
+	}
+	if _, ok := readRequirePublic()["wan2"]; ok {
+		t.Fatal("public line got a record")
+	}
+	ev, _ := os.ReadFile(eventLog)
+	if n := strings.Count(string(ev), "redialing continues"); n != 1 {
+		t.Fatalf("expected one 'redialing continues' event when the fast phase ended, got %d:\n%s", n, ev)
 	}
 }
 
@@ -264,7 +325,7 @@ func TestIPv6HealthRoutingOnlyChangesWithMultiWANHealth(t *testing.T) {
 
 func TestDoctorCGNATHealthHint(t *testing.T) {
 	c := testConfig(t)
-	c.WAN[0].RequirePublicIP = true
+	c.WAN[0].RequirePublicIP = false
 	e := fakeDocEnv()
 	e.addrs4 = func(dev string) []string {
 		if dev == c.WAN[0].Ifname() {
@@ -274,7 +335,7 @@ func TestDoctorCGNATHealthHint(t *testing.T) {
 	}
 	e.health = func(*Config) map[string]string { return map[string]string{"wan": "down"} }
 	f := docFindingsByID(docWAN(c, e), "wan.wan")
-	if !strings.Contains(f.Detail, "CGNAT") || !strings.Contains(f.Fix, "automatic public-IP redial") {
+	if !strings.Contains(f.Detail, "CGNAT") || !strings.Contains(f.Fix, "enable wan.require_public_ip") {
 		t.Fatalf("doctor finding: %+v", f)
 	}
 }
