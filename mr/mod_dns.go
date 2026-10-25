@@ -940,7 +940,8 @@ func dnsUpstreamLines(c *Config) []string {
 	case "manual":
 		out = append(out, "no-resolv")
 		if c.DNS.Unblock != nil && c.DNS.Unblock.Enabled {
-			out = append(out, "strict-order", fmt.Sprintf("server=127.0.0.1#%d", c.DNS.Unblock.Port))
+			out = append(out, dnsUnblockUpstreamConf)
+			break
 		}
 		for _, s := range c.DNS.Servers {
 			out = append(out, "server="+s)
@@ -955,9 +956,8 @@ func dnsUpstreamLines(c *Config) []string {
 		}
 	default:
 		if c.DNS.Unblock != nil && c.DNS.Unblock.Enabled {
-			// Keep the ISP resolvers after the loopback helper. strict-order makes a stopped
-			// helper fail over to the normal WAN resolvers instead of taking LAN DNS down.
-			out = append(out, "strict-order", fmt.Sprintf("server=127.0.0.1#%d", c.DNS.Unblock.Port))
+			out = append(out, dnsUnblockUpstreamConf)
+			break
 		}
 		// The merged file follows current leases; pppd's own file remains a transient bootstrap
 		// source while a PPP session is coming up or the merged hook state is being rebuilt.

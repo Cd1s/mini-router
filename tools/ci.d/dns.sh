@@ -31,6 +31,13 @@ grep -q 'redirect to :5356 comment "parental-dns"' "$OUT/lab/etc/mini-router/gen
 [ ! -e "$OUT/home/etc/mini-router/gen/parental-dns.conf" ] || { echo "home rendered parental-dns.conf"; exit 1; }
 echo "ok: parental-dns.conf"
 
+sb=${SING_BOX:-/opt/sing-box/${SB_VERSION:-1.14.1}/sing-box}
+ub=$OUT/lab/etc/mini-router/gen/dns-unblock.json
+[ -e "$ub" ] || { echo "$ub: lab unblock config missing"; exit 1; }
+[ -x "$sb" ] || { echo "$sb: sing-box is required to check dns-unblock.json"; exit 1; }
+"$sb" check -c "$ub"
+echo "ok: dns-unblock.json passes sing-box check"
+
 conf=$OUT/lab/etc/dnsmasq.conf
 # main LAN = first interface= line; its router address, pool start and netmask from the tagged pool
 br=$(sed -n 's/^interface=//p' "$conf" | head -1)

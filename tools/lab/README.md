@@ -54,7 +54,7 @@ MRLAB_FORCE=1 $L reset $ID                      # only after checking that nobod
 
 Scenarios (TAP output, log in `/tmp/mrlab<ID>-<name>.log`): `$L run $ID 01-fresh-dhcp`,
 `02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`,
-`06-lan-renumber`, `07-require-public-ip`, `08-dhcp-slaac-relay`, `09-first-run-wizard`, `10-dns-unblock`.
+`06-lan-renumber`, `07-require-public-ip`, `08-dhcp-slaac-relay`, `09-first-run-wizard`, `11-dns-unblock`.
 The longer scenarios have these purposes and waits:
 
 - `05-isp-switch-live` changes a live PPPoE line to down, back to PPPoE, then DHCP and back; it

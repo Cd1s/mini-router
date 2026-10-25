@@ -517,7 +517,7 @@
 "）走 TLS。NTP 域名用下方“引导 DNS”明文解析，否则开机时钟不准会导致 TLS 失败。": "). NTP names are resolved in plain text with the “Bootstrap DNS” below; otherwise a wrong clock at boot makes TLS fail.",
 "使用 PPPoE 拨号下发的 DNS（WAN 需开启“使用运营商 DNS”）；出国换网络时自动跟随。": "Uses the DNS from PPPoE (the WAN needs “Use ISP DNS” on); follows automatically when you move to another network abroad.",
 "运营商 DNS 屏蔽绕过": "ISP DNS unblock",
-"平时使用运营商 DNS；只有检测到屏蔽页、私网假地址或空结果的域名才改问所选可信 DNS。被改问的域名会发送给该公共 DNS，不影响 DNS 分流名单。dot 模式不适用。": "Use the ISP DNS normally; only domains with a block page, private sinkhole address, or empty result are retried through the trusted DNS. Retried domains are sent to that public DNS. DNS-over-TLS upstream mode is not supported.",
+"平时使用运营商 DNS；只有检测到屏蔽页、私网假地址或空结果的域名才改问所选可信 DNS。被改问的域名会发送给该公共 DNS，不影响 DNS 分流名单。": "Use the ISP DNS normally; only domains with a block page, private sinkhole address, or empty result are retried through the trusted DNS. Retried domains are sent to that public DNS.",
 "启用": "Enabled",
 "适合运营商会劫持或屏蔽域名的地区": "For regions where the ISP hijacks or blocks domains",
 "屏蔽页地址": "Block page addresses",

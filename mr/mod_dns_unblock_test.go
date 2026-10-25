@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -45,8 +47,8 @@ func TestDNSUnblockRenderRulesAndUpstreams(t *testing.T) {
 		t.Fatalf("servers: %#v", servers)
 	}
 	rules := dns["rules"].([]any)
-	if len(rules) != 7 {
-		t.Fatalf("rules length = %d, want 7: %#v", len(rules), rules)
+	if len(rules) != 9 {
+		t.Fatalf("rules length = %d, want 9: %#v", len(rules), rules)
 	}
 	if rules[0].(map[string]any)["action"] != "evaluate" || rules[0].(map[string]any)["server"] != "isp1" {
 		t.Fatalf("first rule: %#v", rules[0])
@@ -59,11 +61,8 @@ func TestDNSUnblockRenderRulesAndUpstreams(t *testing.T) {
 	}
 	lines := dnsUpstreamLines(c)
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "server=127.0.0.1#5455") || !strings.Contains(joined, "resolv-file="+resolvConf) {
+	if !strings.Contains(joined, dnsUnblockUpstreamConf) {
 		t.Fatalf("upstream lines: %v", lines)
-	}
-	if strings.Index(joined, "strict-order") > strings.Index(joined, "server=127.0.0.1#5455") || strings.Index(joined, "server=127.0.0.1#5455") > strings.Index(joined, "resolv-file="+resolvConf) {
-		t.Fatalf("helper must precede ISP fallback under strict-order: %v", lines)
 	}
 	if got := dnsUnblockServices(c); len(got) != 1 || got[0] != "mr-dns-unblock" {
 		t.Fatalf("services = %v, want mr-dns-unblock", got)
@@ -76,7 +75,7 @@ func TestDNSUnblockValidation(t *testing.T) {
 	c.DNS.Upstream = "dot"
 	c.defaults()
 	errs := strings.Join(c.Validate(), "\n")
-	for _, want := range []string{"dns.unblock: only valid with dns.upstream: isp or manual", "dns.unblock.block_ips: invalid IP", "dns.unblock.server: ip[#port]", "dns.unblock.port: 1-65535 and not 53"} {
+	for _, want := range []string{"dns.unblock: only valid with dns.upstream: isp or manual", "dns.unblock.block_ips: invalid IP", "dns.unblock.server: ip[#port]", "dns.unblock.port: 1024-65535 and not 53"} {
 		if !strings.Contains(errs, want) {
 			t.Errorf("missing %q in:\n%s", want, errs)
 		}
@@ -96,5 +95,38 @@ func TestSingBoxVersion(t *testing.T) {
 		if got := singBoxVersionOK(tc.v); got != tc.ok {
 			t.Errorf("singBoxVersionOK(%q)=%v, want %v", tc.v, got, tc.ok)
 		}
+	}
+}
+
+func TestDNSUnblockInitialServersManualUsesTwo(t *testing.T) {
+	c := testConfig(t)
+	c.DNS.Upstream = "manual"
+	c.DNS.Servers = []string{"1.1.1.1", "2.2.2.2", "3.3.3.3"}
+	c.DNS.Unblock = &DNSUnblock{Enabled: true}
+	c.defaults()
+	got := dnsUnblockInitialServers(c)
+	if strings.Join(got, ",") != "1.1.1.1,2.2.2.2" {
+		t.Fatalf("manual servers = %v", got)
+	}
+}
+
+func TestDNSUnblockRefreshCheckAndNoChange(t *testing.T) {
+	c := testConfig(t)
+	c.DNS.Unblock = &DNSUnblock{Enabled: true, Fallback: "custom", Protocol: "udp", Server: "9.9.9.9"}
+	c.defaults()
+	d := t.TempDir()
+	oldPath, oldRun := dnsUnblockConfigPath, dnsUnblockRun
+	dnsUnblockConfigPath = filepath.Join(d, "dns-unblock.json")
+	calls := 0
+	dnsUnblockRun = func(name string, args ...string) (string, error) { calls++; return "", nil }
+	t.Cleanup(func() { dnsUnblockConfigPath, dnsUnblockRun = oldPath, oldRun })
+	dnsUnblockRefresh(c, []string{"1.1.1.1"})
+	if _, err := os.Stat(dnsUnblockConfigPath); err != nil || calls == 0 {
+		t.Fatalf("refresh did not write/check config: err=%v calls=%d", err, calls)
+	}
+	first := calls
+	dnsUnblockRefresh(c, []string{"1.1.1.1"})
+	if calls != first {
+		t.Fatalf("unchanged refresh called commands: %d -> %d", first, calls)
 	}
 }

@@ -4,11 +4,12 @@
 description="DNS unblock helper (sing-box)"
 supervisor=supervise-daemon
 command=/usr/bin/sing-box
-command_args="run --disable-color -c /etc/mini-router/gen/dns-unblock.json"
+command_args="run --disable-color -c /run/mr-dns-unblock/config.json"
 respawn_delay=2
 respawn_max=10
 respawn_period=600
 cfg=/etc/mini-router/gen/dns-unblock.json
+rundir=/run/mr-dns-unblock
 
 if id -u sing-box >/dev/null 2>&1; then
 	command_user="sing-box:sing-box"
@@ -22,9 +23,23 @@ depend() {
 
 start_pre() {
 	[ -f "$cfg" ] || { eerror "$cfg missing (WAN DNS not known; waiting for a lease)"; return 1; }
-	/usr/bin/sing-box version 2>/dev/null | awk 'BEGIN {ok=0} /1\.(1[4-9]|[2-9][0-9])\./ {ok=1} END {exit !ok}' || {
-		eerror "sing-box >= 1.14.0 is required for dns.unblock"
-		return 1
-	}
-	/usr/bin/sing-box check -c "$cfg" || { eerror "$cfg: sing-box check failed"; return 1; }
+	checkpath -d -m 0700 -o "${command_user:-root}" "$rundir" || return 1
+	cp "$cfg" "$rundir/config.json" || return 1
+	if [ -n "${command_user:-}" ]; then chown "$command_user" "$rundir/config.json"; fi
+	ver=$(/usr/bin/sing-box version 2>/dev/null | sed -n '1s/[^0-9]*\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p')
+	case "$ver" in
+		1.1[4-9].*|1.[2-9][0-9].*|[2-9].*) ;;
+		*) eerror "sing-box >= 1.14.0 is required for dns.unblock (found ${ver:-unknown})"; return 1 ;;
+	esac
+	/usr/bin/sing-box check -c "$rundir/config.json" || { eerror "$cfg: sing-box check failed"; return 1; }
+}
+
+stop_post() {
+	# Switch dnsmasq to the WAN resolvers immediately when an operator stops the helper.
+	# The next WAN health hook will refresh this file again.
+	if [ -s /run/mini-router/resolv.conf ]; then
+		awk '/^nameserver[[:space:]]/ { print "server=" $2 }' /run/mini-router/resolv.conf > /run/mini-router/dns-unblock-upstream.conf.tmp
+		mv /run/mini-router/dns-unblock-upstream.conf.tmp /run/mini-router/dns-unblock-upstream.conf
+		rc-service dnsmasq restart >/dev/null 2>&1 || true
+	fi
 }

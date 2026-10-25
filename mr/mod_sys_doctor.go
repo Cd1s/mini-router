@@ -551,7 +551,7 @@ func docProbeName(c *Config) string {
 func docDNS(c *Config, e *docEnv) []docFinding {
 	up := docWANsUp(c, e)
 	if len(up) == 0 {
-		return append([]docFinding{{Sev: "skip", Title: "DNS", Detail: "no WAN is up"}}, dnsUnblockDoctor(c, e)...)
+		return []docFinding{{Sev: "skip", Title: "DNS", Detail: "no WAN is up"}}
 	}
 	if c.DNS.Upstream == "isp" && len(c.DNS.Fallback) == 0 && !wanDNSFromPeers(c) {
 		return append([]docFinding{{Sev: "warn", Title: "DNS", Detail: "WAN is online but dns.upstream isp has no configured DNS source",

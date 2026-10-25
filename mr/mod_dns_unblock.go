@@ -28,9 +28,12 @@ type DNSUnblock struct {
 }
 
 const (
-	dnsUnblockConf = GenDir + "/dns-unblock.json"
-	dnsUnblockPort = 5455
+	dnsUnblockConf         = GenDir + "/dns-unblock.json"
+	dnsUnblockUpstreamConf = "conf-file=" + RunDir + "/dns-unblock-upstream.conf"
+	dnsUnblockPort         = 5455
 )
+
+var dnsUnblockConfigPath = dnsUnblockConf
 
 func dnsUnblockDefaults(u *DNSUnblock) {
 	if u.Port == 0 {
@@ -42,7 +45,15 @@ func dnsUnblockDefaults(u *DNSUnblock) {
 	if u.Protocol == "" {
 		u.Protocol = "tls"
 	}
+	if u.RetryPrivate == nil {
+		u.RetryPrivate = boolPtr(true)
+	}
+	if u.RetryEmpty == nil {
+		u.RetryEmpty = boolPtr(true)
+	}
 }
+
+func boolPtr(v bool) *bool { return &v }
 
 func (u DNSUnblock) retryPrivate() bool { return u.RetryPrivate == nil || *u.RetryPrivate }
 func (u DNSUnblock) retryEmpty() bool   { return u.RetryEmpty == nil || *u.RetryEmpty }
@@ -76,8 +87,16 @@ func dnsUnblockValidate(c *Config, v *Validator) {
 		}
 		seen[key] = true
 	}
-	if u.Port < 1 || u.Port > 65535 || u.Port == 53 {
-		v.Add("dns.unblock.port: 1-65535 and not 53 (dnsmasq), got %d", u.Port)
+	if u.Port < 1024 || u.Port > 65535 || u.Port == 53 {
+		v.Add("dns.unblock.port: 1024-65535 and not 53 (dnsmasq), got %d", u.Port)
+	}
+	used := map[int]string{53: "DNS", 67: "DHCP", 80: "web UI", c.DNS.DoT.Port: "dns.dot.port", parentalPort: "dns.parental"}
+	if c.Proxy.Enabled {
+		used[c.Proxy.dnsPort()] = "proxy.dns_port"
+		used[c.Proxy.lanDNSPort()] = "proxy.lan_dns_port"
+	}
+	if o, ok := used[u.Port]; ok {
+		v.Add("dns.unblock.port: %d already used by %s", u.Port, o)
 	}
 	switch u.Fallback {
 	case "cloudflare", "google", "quad9":
@@ -87,12 +106,28 @@ func dnsUnblockValidate(c *Config, v *Validator) {
 	case "custom":
 		if !validServer(u.Server) {
 			v.Add("dns.unblock.server: ip[#port], got %q", u.Server)
+		} else if serverLoops(c, u.Server) {
+			v.Add("dns.unblock.server: %s is dnsmasq itself", u.Server)
 		}
 	default:
 		v.Add("dns.unblock.fallback: cloudflare|google|quad9|custom, got %q", u.Fallback)
 	}
 	if u.Protocol != "udp" && u.Protocol != "tls" && u.Protocol != "https" {
 		v.Add("dns.unblock.protocol: udp|tls|https, got %q", u.Protocol)
+	}
+	if c.DNS.Upstream == "manual" {
+		for _, s := range c.DNS.Servers {
+			host, port := splitServer(s)
+			if (host == "127.0.0.1" || host == "::1") && port == u.Port {
+				v.Add("dns.servers: %s is dns.unblock itself", s)
+			}
+		}
+	}
+	if _, err := os.Stat(singBoxBin); err == nil {
+		out, err := exec.Command(singBoxBin, "version").CombinedOutput()
+		if err != nil || !singBoxVersionOK(string(out)) {
+			v.Add("dns.unblock: sing-box >= 1.14.0 is required (install it before enabling this feature)")
+		}
 	}
 }
 
@@ -158,7 +193,14 @@ func renderDNSUnblockJSON(c *Config, isp []string) (string, error) {
 	servers = append(servers, dnsUnblockServer("trusted", trusted, name, port, u.Protocol))
 	rules := make([]any, 0, len(isp)+4)
 	for i := range isp {
-		rules = append(rules, map[string]any{"action": "evaluate", "server": "isp" + strconv.Itoa(i+1)})
+		r := map[string]any{"action": "evaluate", "server": "isp" + strconv.Itoa(i+1)}
+		if i > 0 {
+			r["match_response"] = true
+			r["response_rcode"] = "NOERROR"
+			r["invert"] = true
+			r["action"] = "evaluate"
+		}
+		rules = append(rules, r)
 	}
 	if len(u.BlockIPs) > 0 {
 		rules = append(rules, map[string]any{"match_response": true, "ip_cidr": u.BlockIPs, "action": "route", "server": "trusted"})
@@ -167,10 +209,12 @@ func renderDNSUnblockJSON(c *Config, isp []string) (string, error) {
 		rules = append(rules, map[string]any{"match_response": true, "ip_is_private": true, "action": "route", "server": "trusted"})
 	}
 	if u.retryEmpty() {
-		rules = append(rules, map[string]any{"match_response": true, "response_rcode": []string{"NXDOMAIN", "REFUSED", "SERVFAIL"}, "action": "route", "server": "trusted"})
-		rules = append(rules, map[string]any{"match_response": true, "query_type": []string{"A", "AAAA", "HTTPS"}, "ip_accept_any": true, "invert": true, "action": "route", "server": "trusted"})
+		for _, rcode := range []string{"NXDOMAIN", "REFUSED", "SERVFAIL"} {
+			rules = append(rules, map[string]any{"match_response": true, "response_rcode": rcode, "action": "route", "server": "trusted"})
+		}
 	}
 	rules = append(rules, map[string]any{"match_response": true, "ip_accept_any": true, "action": "respond"})
+	rules = append(rules, map[string]any{"match_response": true, "query_type": []string{"A", "AAAA", "HTTPS"}, "invert": true, "action": "respond"})
 	tr := map[string]any{"log": map[string]any{"level": "warn"},
 		"dns":      map[string]any{"servers": servers, "rules": rules, "final": "trusted"},
 		"inbounds": []any{map[string]any{"type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": u.Port}},
@@ -233,6 +277,13 @@ func dnsUnblockRender(c *Config, out *Out) error {
 		return nil
 	}
 	servers := dnsUnblockInitialServers(c)
+	upstream := ""
+	if len(servers) > 0 {
+		for _, s := range servers {
+			upstream += "server=" + s + "\n"
+		}
+	}
+	out.Add(RunDir+"/dns-unblock-upstream.conf", 0644, upstream)
 	if len(servers) == 0 {
 		return nil // WAN hooks will create it once a lease supplies DNS.
 	}
@@ -240,8 +291,43 @@ func dnsUnblockRender(c *Config, out *Out) error {
 	if err != nil {
 		return err
 	}
-	out.Add(dnsUnblockConf, 0600, data)
+	out.Add(dnsUnblockConfigPath, 0600, data)
 	return nil
+}
+
+func dnsUnblockWriteUpstream(c *Config, servers []string, healthy bool) {
+	if c == nil || c.DNS.Unblock == nil || !c.DNS.Unblock.Enabled {
+		return
+	}
+	data := ""
+	if healthy {
+		data = fmt.Sprintf("server=127.0.0.1#%d\n", c.DNS.Unblock.Port)
+	} else {
+		for _, s := range servers {
+			data += "server=" + s + "\n"
+		}
+	}
+	path := RunDir + "/dns-unblock-upstream.conf"
+	if readFile(path) == data {
+		return
+	}
+	if err := writeAtomic(path, []byte(data), 0644); err != nil {
+		logf("dns-unblock upstream: %v", err)
+		return
+	}
+	_, _ = run("rc-service", "dnsmasq", "restart")
+	if c.Proxy.Enabled {
+		_, _ = run("rc-service", "mr-proxy-dns", "restart")
+	}
+}
+
+func dnsUnblockPortHealthy(c *Config) bool {
+	if c == nil || c.DNS.Unblock == nil || !c.DNS.Unblock.Enabled {
+		return false
+	}
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(c.DNS.Unblock.Port))
+	rc, _, err := dnsQuery(addr, "example.com", dnsTypeA, dnsClassIN, 500*time.Millisecond)
+	return err == nil && rc == 0
 }
 
 var dnsUnblockRun = func(name string, args ...string) (string, error) { return run(name, args...) }
@@ -251,10 +337,10 @@ func dnsUnblockRefresh(c *Config, servers []string) {
 		return
 	}
 	data, err := renderDNSUnblockJSON(c, servers)
-	if err != nil || readFile(dnsUnblockConf) == data {
+	if err != nil || readFile(dnsUnblockConfigPath) == data {
 		return
 	}
-	tmp := dnsUnblockConf + ".tmp"
+	tmp := dnsUnblockConfigPath + ".tmp"
 	if err := writeAtomic(tmp, []byte(data), 0600); err != nil {
 		logf("dns-unblock: %v", err)
 		return
@@ -264,7 +350,7 @@ func dnsUnblockRefresh(c *Config, servers []string) {
 		logf("dns-unblock: sing-box check failed: %v", err)
 		return
 	}
-	if err := os.Rename(tmp, dnsUnblockConf); err != nil {
+	if err := os.Rename(tmp, dnsUnblockConfigPath); err != nil {
 		os.Remove(tmp)
 		return
 	}
@@ -273,6 +359,13 @@ func dnsUnblockRefresh(c *Config, servers []string) {
 	}
 	if _, err := dnsUnblockRun("rc-service", "mr-dns-unblock", "restart"); err != nil {
 		_, _ = dnsUnblockRun("rc-service", "mr-dns-unblock", "start")
+	}
+	for i := 0; i < 10; i++ {
+		if dnsUnblockPortHealthy(c) {
+			dnsUnblockWriteUpstream(c, servers, true)
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -284,7 +377,7 @@ func dnsUnblockServices(c *Config) []string {
 }
 
 func dnsUnblockRestart(path string) string {
-	if path == dnsUnblockConf {
+	if path == dnsUnblockConfigPath {
 		return "mr-dns-unblock"
 	}
 	return ""
@@ -332,7 +425,7 @@ var dnsUnblockResolve = func(addr, name string) error {
 	return nil
 }
 
-func dnsUnblockDoctor(c *Config, e *docEnv) []docFinding {
+func dnsUnblockDoctor(c *Config, _ *docEnv) []docFinding {
 	if c.DNS.Unblock == nil || !c.DNS.Unblock.Enabled {
 		return nil
 	}
@@ -340,13 +433,9 @@ func dnsUnblockDoctor(c *Config, e *docEnv) []docFinding {
 		return []docFinding{{ID: "dns.unblock.version", Sev: "risk", Title: "DNS unblock", Detail: detail, Fix: "install sing-box 1.14.0 or newer"}}
 	}
 	if len(dnsUnblockInitialServers(c)) == 0 {
-		if _, err := os.Stat(dnsUnblockConf); err != nil {
+		if _, err := os.Stat(dnsUnblockConfigPath); err != nil {
 			return []docFinding{{ID: "dns.unblock", Sev: "skip", Title: "DNS unblock", Detail: "waiting for an ISP DNS lease"}}
 		}
-	}
-	status := e.running([]string{"mr-dns-unblock"})
-	if !status["mr-dns-unblock"] {
-		return []docFinding{{ID: "dns.unblock.service", Sev: "risk", Title: "DNS unblock", Detail: "mr-dns-unblock is not running", Fix: "mr doctor --heal (or rc-service mr-dns-unblock restart)"}}
 	}
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(c.DNS.Unblock.Port))
 	if err := dnsUnblockResolve(addr, "example.com"); err != nil {
