@@ -73,6 +73,43 @@ LAN 设备 ──TCP/UDP 到 fake-ip 或规则 CIDR──▶ nft proxy_pre (mang
   （否则该设备的包会被当成代理流量送进本机）。
 - **路由器自身的流量不走代理**（prerouting 看不到本机发出的包）。sing-box 连代理服务器走主路由表（主 WAN）。
 
+## IPv4 字面量走 NAT64（NAT46）
+
+DNS64 只能把域名的 A 记录合成为 NAT64 地址。sing-box 的 `proxy.extra_config` 里如果有每端口一个源 IPv6 的 SOCKS 出站，访问
+`https://124.222.230.137/` 这类 IPv4 字面量不会经过 DNS，因此需要启用内置的 `proxy.nat46` 转换器。它只监听回环
+`127.0.0.1:1094`，支持 SOCKS5 TCP `CONNECT` 和 UDP `ASSOCIATE`，把公网 IPv4 合成为 `prefix` 的最后 32 位，然后用对应的
+IPv6 源地址连接。域名目标、内网 / 回环 / CGNAT / `198.18.0.0/15` / 保留地址和其它 IPv6 目标都会拒绝。
+
+```yaml
+proxy:
+  enabled: true
+  nat46:
+    enabled: true
+    listen: 127.0.0.1:1094       # 必须是回环地址
+    prefix: 64:ff9b::/96         # 必须是 IPv6 /96
+    sources_file: /etc/ss-nodes/sources.txt
+    max_conns: 4096
+    dns64:
+      enabled: true
+      listen: 127.0.0.1:1153
+      synth_all: true
+```
+
+`sources_file` 每行写一个本机 IPv6 地址，文件变化会自动热重读。SOCKS 用户名可以写表中地址的十六进制低 16 位（例如
+`c001`），也可以直接写完整 IPv6 地址；完整地址必须当前确实属于本机。未配置源地址表时，`c001` 这类后缀会在本机全局
+IPv6 地址中查找接口标识，只有唯一匹配才接受。
+
+现有的 `proxy.extra_config` 不需要改动。每个端口继续使用同一个转换器和自己的用户名，例如：
+
+```json
+{"type":"direct","tag":"nat64-13001","inet6_bind_address":"<pfx>::c001","domain_resolver":{"server":"dns64","strategy":"ipv6_only"}}
+{"type":"socks","tag":"nat46-13001","server":"127.0.0.1","server_port":1094,"version":"5","username":"c001","password":"x"}
+```
+
+规则顺序保持为：先把 DNS64 的 `64:ff9b::/96` 交给 `nat64-13001`；IPv6 其它目标拒绝；IPv4 字面量交给
+`nat46-13001`；最后以 `nat64-13001` 兜底。`mr-nat46` 与 `mr-proxy` 都以 `sing-box` 用户运行，且服务在 `mr-proxy` 前启动。
+关闭 `proxy.enabled` 或 `proxy.nat46.enabled` 时不会生成服务或监听端口。
+
 ## 安全
 
 - sing-box 的 tproxy、DNS、clash API 端口只监听 127.0.0.1 / ::1，LAN 和 WAN 都访问不到；clash API 每次启动生成

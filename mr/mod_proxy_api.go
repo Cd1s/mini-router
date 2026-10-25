@@ -430,13 +430,23 @@ func apiProxyRoutes(r apiReq) apiResp {
 
 // proxyCmd: `mr proxy status|check|delay [NAME]|select GROUP NODE|parse|fetch` for the shell / agent.
 func proxyCmd(c *Config, args []string) error {
-	usage := fmt.Errorf("usage: mr proxy status | check | routes | delay [NODE|GROUP] | select GROUP NODE | parse [--secrets] [FILE] | fetch [--secrets] URL|SUBSCRIPTION")
+	usage := fmt.Errorf("usage: mr proxy status | check | routes | delay [NODE|GROUP] | select GROUP NODE | nat46 serve | parse [--secrets] [FILE] | fetch [--secrets] URL|SUBSCRIPTION")
 	if len(args) == 0 {
 		return usage
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	switch args[0] {
+	case "nat46":
+		if len(args) != 2 {
+			return usage
+		}
+		switch args[1] {
+		case "serve":
+			return proxyNat46Serve(c, nil)
+		default:
+			return usage
+		}
 	case "parse", "fetch":
 		return proxyImportCmd(c, args[0] == "fetch", args[1:])
 	case "status":

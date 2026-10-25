@@ -47,7 +47,17 @@ type Proxy struct {
 	// share-link subscriptions for the web UI's node import (URL in secrets.yaml)
 	Subscriptions []ProxySub `yaml:"subscriptions,omitempty"`
 	// raw sing-box fragment merged into the rendered config (may hold credentials; docs/modules/proxy.md)
-	ExtraConfig string `yaml:"extra_config,omitempty"`
+	ExtraConfig string     `yaml:"extra_config,omitempty"`
+	Nat46       ProxyNat46 `yaml:"nat46,omitempty"`
+}
+
+// ProxyNat46 converts IPv4-literal SOCKS5 destinations to NAT64 IPv6 addresses.
+type ProxyNat46 struct {
+	Enabled     bool   `yaml:"enabled,omitempty"`
+	Listen      string `yaml:"listen,omitempty"`
+	Prefix      string `yaml:"prefix,omitempty"`
+	SourcesFile string `yaml:"sources_file,omitempty"`
+	MaxConns    int    `yaml:"max_conns,omitempty"`
 }
 
 // ProxyNode is one proxy server (one sing-box outbound). Types and their keys: mod_proxy_node.go,
@@ -213,8 +223,9 @@ var (
 
 func init() {
 	register(&Module{
-		Name: "proxy",
-		Prio: 55,
+		Name:     "proxy",
+		Prio:     55,
+		Defaults: proxyNat46Defaults,
 		Secrets: func(c *Config) []string {
 			var out []string
 			for _, n := range c.Proxy.Nodes {
@@ -233,19 +244,25 @@ func init() {
 			if !c.Proxy.Enabled {
 				return nil
 			}
-			return []string{"mr-proxy", "mr-proxy-dns"}
+			out := []string{"mr-proxy", "mr-proxy-dns"}
+			if c.Proxy.Nat46.Enabled {
+				out = append(out, "mr-nat46")
+			}
+			return out
 		},
-		Managed: []string{"mr-proxy", "mr-proxy-dns"},
+		Managed: []string{"mr-proxy", "mr-proxy-dns", "mr-nat46"},
 		Restart: func(path string) string {
 			switch path {
 			case proxyGenJSON:
 				return "mr-proxy"
 			case proxyGenDNS:
 				return "mr-proxy-dns"
+			case proxyNat46Gen:
+				return "mr-nat46"
 			}
 			return ""
 		},
-		RestartOrder: []string{"mr-proxy", "mr-proxy-dns"},
+		RestartOrder: []string{"mr-nat46", "mr-proxy", "mr-proxy-dns"},
 		Verify:       proxyVerify,
 		TokenScope:   map[string]string{"proxy.status": "read", "proxy.routes": "read", "proxy.delay": "operate", "proxy.select": "operate", "proxy.check": "operate"},
 		API: map[string]func(r apiReq) apiResp{
@@ -321,6 +338,7 @@ func proxyCIDRProblem(c *Config, p netip.Prefix) string {
 
 func proxyValidate(c *Config, v *Validator) {
 	p := &c.Proxy
+	proxyNat46Validate(c, v)
 	switch p.LogLevel {
 	case "", "error", "warn", "info", "debug":
 	default:

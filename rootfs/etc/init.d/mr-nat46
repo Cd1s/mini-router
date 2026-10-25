@@ -1,0 +1,18 @@
+#!/sbin/openrc-run
+# NAT64 for IPv4-literal destinations handed to the proxy's SOCKS5 extra_config.
+# The command reads the validated router.yaml; mr apply restarts it when nat46.json changes.
+description="NAT64 for IPv4-literal proxy destinations"
+supervisor=supervise-daemon
+command=/usr/sbin/mr
+command_args="proxy nat46 serve"
+command_user="sing-box:sing-box"
+respawn_delay=2
+respawn_max=0
+output_logger="logger -t mr-nat46 -p daemon.info"
+error_logger="logger -t mr-nat46 -p daemon.notice"
+
+depend() {
+	need net
+	after mr-network
+	before mr-proxy
+}
