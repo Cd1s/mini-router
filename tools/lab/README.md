@@ -55,7 +55,7 @@ MRLAB_FORCE=1 $L reset $ID                      # only after checking that nobod
 Scenarios (TAP output, log in `/tmp/mrlab<ID>-<name>.log`): `$L run $ID 01-fresh-dhcp`,
 `02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`,
 `06-lan-renumber`, `07-require-public-ip`, `08-dhcp-slaac-relay`, `09-first-run-wizard`, `11-dns-unblock`,
-`12-dns-unblock-detect`, `14-policy-fallback-walled`.
+`12-dns-unblock-detect`, `14-policy-fallback-walled`, `15-pppoe-reboot-padt`.
 The longer scenarios have these purposes and waits:
 
 - `05-isp-switch-live` changes a live PPPoE line to down, back to PPPoE, then DHCP and back; it
@@ -71,6 +71,9 @@ The longer scenarios have these purposes and waits:
   first stays online through wan within a minute, the second stays cut off, both go back to wan2 when the ISP
   releases a slot; then the same with `require_public_ip` off and the multiwan health check as the only detector
   (about 90 s).
+- `15-pppoe-reboot-padt` reboots a router with two PPPoE sessions (own MACs on one port) and reads the ISP's wire log: both
+  sessions must end with LCP Terminate-Request + PADT, with `mr-pppoe.*` stopped before the firewall unloads; then again with
+  the ISP's pppd frozen (it never answers the Terminate-Request). About 2 minutes.
 - `08-dhcp-slaac-relay` enables and disables IPv6 relay on a DHCP-only SLAAC upstream; probe and
   proxy checks retry for up to 70 s.
 - `09-first-run-wizard` checks deferred install discovery and the session/plan/apply/confirm/

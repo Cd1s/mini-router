@@ -7,6 +7,11 @@ supervisor=supervise-daemon
 # pppoe-dial waits for the WANs before this one in multiwan.dial_order, then execs `pppd call ${WAN}`
 command=/usr/libexec/mr/pppoe-dial
 command_args="${WAN}"
+# stopping (service restart, reboot, shutdown): pppd sends LCP Terminate-Request and, once that is answered or has
+# timed out (pppoe-dial: lcp-max-terminate 1 -> 3 s), the PADT that frees the session at the ISP. supervise-daemon
+# stops waiting after 5 s by default, which a slow or silent ISP could outlast; the reboot then went on without
+# the PADT and the ISP kept counting the old session (AIS: the next dial lands in a walled garden)
+retry="SIGTERM/10"
 respawn_delay=5
 # never gives up: the uplink / WiFi is the way back in (a router far from home)
 respawn_max=0
