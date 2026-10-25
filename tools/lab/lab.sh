@@ -478,17 +478,24 @@ isp_stop(){
   rm -f "$d"/dnsmasq.pid "$d"/pppoe.pid "$d"/radvd.pid "$d"/kea.pid "$d"/http.pid
   run_ns "$n" ip addr flush dev "mrlab${id}s${wan}p" 2>/dev/null || true
   run_ns "$n" ip addr flush dev lo scope global 2>/dev/null || true
+  run_ns "$n" ip link del trusted-dns 2>/dev/null || true
+  run_ns "$n" nft delete table ip mrlab_dns 2>/dev/null || true
   run_ns "$n" ip -6 route flush proto static 2>/dev/null || true
 }
 isp_cmd(){
   id=$1; wan=$2; mode=$3; shift 3; valid_id "$id"; n=$(isp "$id" "$wan"); d=$(state "$id")/isp$wan; dev=mrlab${id}s${wan}p
   [ -e "/run/netns/$n" ] || die "lab $id is not up"
   mkdir -p "$d"; isp_stop "$id" "$wan"
-  v6=none; badpass=0; nopado=0; cgnat=0; subnet=10.$id.$wan; gw=1
+  v6=none; badpass=0; nopado=0; cgnat=0; subnet=10.$id.$wan; gw=1; dns_extra=""; trusted_extra=""; hijack53=0
   while [ $# -gt 0 ]; do case $1 in
     v6=*) v6=${1#v6=};; --cgnat) cgnat=1;; --badpass) badpass=1;; nopado|--nopado) nopado=1;;
     --subnet) shift; subnet=${1%.*}; subnet=${subnet%/*}; subnet=${subnet%.0};;
     --gw) shift; gw=$1;;
+    --address) shift; a=${1#*=}   # NAME=IP, or NAME=IP,TTL: an answer with a real TTL (dnsmasq caches it)
+      case $a in *,*) dns_extra="$dns_extra --host-record=${1%%=*},$a";; *) dns_extra="$dns_extra --address=/${1%%=*}/$a";; esac;;
+    --nxdomain) shift; dns_extra="$dns_extra --local=/$1/";;
+    --trusted) shift; trusted_extra="$trusted_extra --address=/${1%%=*}/${1#*=}";;
+    --hijack53) hijack53=1;;
     *) die "isp: unknown option $1";; esac; shift; done
   case $v6 in none|slaac|pd) ;; *) die "isp: v6=none|slaac|pd";; esac
   [ "$mode" = pppoe ] && subnet=203.0.113
@@ -499,7 +506,7 @@ isp_cmd(){
   # --conf-file=/dev/null: never the host's /etc/dnsmasq.conf or /etc/dnsmasq.d
   # Keep isp.test locally authoritative but return NOERROR/NODATA for AAAA. DNS64 must see an
   # empty AAAA answer to synthesize from the A record; dnsmasq's address= alone returns REFUSED.
-  dns="--conf-file=/dev/null --no-resolv --no-hosts --server=10.0.2.3 --address=/isp.test/203.0.113.7 --local=/isp.test/ --pid-file=$d/dnsmasq.pid --log-facility=$d/dnsmasq.log --dhcp-leasefile=$d/dnsmasq.leases"
+  dns="--conf-file=/dev/null --no-resolv --no-hosts --server=10.0.2.3 --address=/isp.test/203.0.113.7 --local=/isp.test/ --pid-file=$d/dnsmasq.pid --log-facility=$d/dnsmasq.log --dhcp-leasefile=$d/dnsmasq.leases $dns_extra"
   case $mode in
     dhcp)
       run_ns "$n" ip addr add "$subnet.$gw/24" dev "$dev"
@@ -509,6 +516,18 @@ isp_cmd(){
       # shellcheck disable=SC2086
       run_ns "$n" dnsmasq $dns --interface="$dev" --bind-interfaces --dhcp-range="$pool,255.255.255.0,1h" \
         --dhcp-option=3,"$subnet.$gw" --dhcp-option=6,"$subnet.$gw"
+      if [ -n "$trusted_extra" ]; then
+        run_ns "$n" ip link add trusted-dns type dummy
+        run_ns "$n" ip link set trusted-dns up
+        run_ns "$n" ip addr add "$subnet.2/32" dev trusted-dns
+        # shellcheck disable=SC2086
+        run_ns "$n" dnsmasq --conf-file=/dev/null --no-resolv --no-hosts --interface=trusted-dns --except-interface=lo --listen-address="$subnet.2" --port=53 --bind-interfaces --server=10.0.2.3 --pid-file="$d/trusted-dnsmasq.pid" $trusted_extra
+        if [ "$hijack53" = 1 ]; then
+          run_ns "$n" nft add table ip mrlab_dns
+          run_ns "$n" nft add chain ip mrlab_dns prerouting '{' type nat hook prerouting priority -100 ';' policy accept ';' '}'
+          run_ns "$n" nft add rule ip mrlab_dns prerouting udp dport 53 redirect to :53
+        fi
+      fi
       if [ "$v6" != none ]; then
         # DHCP modem mode can also advertise a single on-link /64.  It deliberately has
         # no DHCPv6-PD service, which is the IPv6 relay scenario.
@@ -525,6 +544,18 @@ isp_cmd(){
       run_ns "$n" ip addr add "$subnet.1/24" dev "$dev"
       # shellcheck disable=SC2086
       run_ns "$n" dnsmasq $dns --interface="$dev" --bind-interfaces
+      if [ -n "$trusted_extra" ]; then
+        run_ns "$n" ip link add trusted-dns type dummy
+        run_ns "$n" ip link set trusted-dns up
+        run_ns "$n" ip addr add "$subnet.2/32" dev trusted-dns
+        # shellcheck disable=SC2086
+        run_ns "$n" dnsmasq --conf-file=/dev/null --no-resolv --no-hosts --interface=trusted-dns --except-interface=lo --listen-address="$subnet.2" --port=53 --bind-interfaces --server=10.0.2.3 --pid-file="$d/trusted-dnsmasq.pid" $trusted_extra
+        if [ "$hijack53" = 1 ]; then
+          run_ns "$n" nft add table ip mrlab_dns
+          run_ns "$n" nft add chain ip mrlab_dns prerouting '{' type nat hook prerouting priority -100 ';' policy accept ';' '}'
+          run_ns "$n" nft add rule ip mrlab_dns prerouting udp dport 53 redirect to :53
+        fi
+      fi
       ;;
     pppoe)
       pe=/etc/netns/$n/ppp; mkdir -p "$pe"

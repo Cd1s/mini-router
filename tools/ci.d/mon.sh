@@ -65,6 +65,67 @@ sampler 3
 [ "$(calls)" = 0 ] || { echo "tick for a garbage event.due"; exit 1; }
 echo "event tick trigger ok"
 
+# dns.unblock health loop (dns module): `mr dns unblock-health` every few seconds, only when mr-mon is
+# started with --dns-unblock (MON_DNS_UNBLOCK=1 in conf.d/mr-mon, rendered only while the feature is on) and
+# the helper config exists. Without the flag the sampler is what it always was: no loop, no extra process.
+# With it, TERM (rc-service mr-mon stop / restart) must end everything at once, in busybox ash as well as dash.
+U=$OUT/mon-unblock
+rm -rf "$U" && mkdir -p "$U/ev"
+cat > "$U/mr" <<'STUB'
+#!/bin/sh
+echo "$*" >> "${0%/*}/calls"
+STUB
+chmod +x "$U/mr"
+descendants() { for c in $(pgrep -P "$1"); do echo "$c"; descendants "$c"; done; }
+alive() { for p in "$@"; do kill -0 "$p" 2>/dev/null && return 0; done; return 1; }
+health_calls() { if [ -e "$U/calls" ]; then grep -c '^dns unblock-health$' "$U/calls" || true; else echo 0; fi; }
+# start ARGS: the sampler in the background, pid in $pid (a long sample
+# interval, so only a prompt TERM can end it quickly)
+start() {
+	rm -f "$U/calls"
+	MON_FILE=$U/history MON_INTERVAL=30 MON_EVENT_DIR=$U/ev MON_LEASES=$U/none MON_MR=$U/mr \
+		MON_UNBLOCK_CONF=$U/dns-unblock.json MON_UNBLOCK_EVERY=1 $SH "$ROOT/rootfs/usr/libexec/mr/mon-collect" "$@" < /dev/null > /dev/null 2>&1 &
+	pid=$!
+}
+trap '[ -z "${pid:-}" ] || kill "$pid" 2> /dev/null || true' EXIT # a failed check leaves no sampler behind
+for SH in sh "busybox sh"; do
+	[ "$SH" = sh ] || command -v busybox > /dev/null 2>&1 || continue
+	rm -f "$U/dns-unblock.json"
+	# no flag, helper config present: not one probe, nothing but `sleep` below the sampler
+	echo '{}' > "$U/dns-unblock.json"
+	start lo
+	sleep 3
+	[ "$(health_calls)" = 0 ] || { echo "$SH: probes without --dns-unblock"; exit 1; }
+	kids=$(pgrep -P "$pid" | wc -l)
+	[ "$kids" -le 1 ] || { echo "$SH: sampler without --dns-unblock has $kids children"; exit 1; }
+	for c in $(pgrep -P "$pid"); do [ "$(cat /proc/$c/comm)" = sleep ] || { echo "$SH: child $c is $(cat /proc/$c/comm)"; exit 1; }; done
+	sleeper=$(pgrep -P "$pid" || true)
+	kill -TERM "$pid"; sleep 0.3
+	alive "$pid" && { echo "$SH: sampler without --dns-unblock survived TERM"; exit 1; }
+	# shellcheck disable=SC2086
+	[ -z "$sleeper" ] || kill $sleeper 2> /dev/null || true # a TERMed shell leaves its foreground sleep, as it always did
+
+	# flag, no helper config yet (no lease): the loop runs but does not probe
+	rm -f "$U/dns-unblock.json"
+	start --dns-unblock lo
+	sleep 2.5
+	[ "$(health_calls)" = 0 ] || { echo "$SH: probes without $U/dns-unblock.json"; exit 1; }
+	kill -TERM "$pid"; sleep 0.3
+
+	# flag and helper config: a probe every MON_UNBLOCK_EVERY seconds, and TERM leaves nothing behind
+	echo '{}' > "$U/dns-unblock.json"
+	start --dns-unblock lo
+	sleep 3.5
+	n=$(health_calls)
+	[ "$n" -ge 2 ] || { echo "$SH: --dns-unblock probed $n times in 3.5 s, want >= 2"; exit 1; }
+	pids="$pid $(descendants "$pid")"
+	kill -TERM "$pid"
+	sleep 0.5
+	# shellcheck disable=SC2086
+	if alive $pids; then ps -o pid,ppid,args -p "$(echo $pids | tr ' ' ',')" || true; echo "$SH: processes left half a second after TERM"; exit 1; fi
+	echo "unblock loop ok ($SH: $n probes, nothing left after TERM)"
+done
+
 CFG="-c $ROOT/examples/router.yaml -s $ROOT/mr/testdata/secrets.yaml"
 # shellcheck disable=SC2086
 "$MR" $CFG mon history "$H/history" > "$H/history.json"

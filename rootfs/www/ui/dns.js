@@ -218,6 +218,8 @@ const sovCard = (d, files, ed, after)=>{
 };
 const basicTab = async ()=>{
   const c = S.cfg, d = c.dns; const box = h("div");
+  const ub = lazy(d, "unblock", ()=>({enabled:false, block_ips:[], retry_private:true, retry_empty:true, fallback:"cloudflare", protocol:"tls", server:""}));
+  const ubEdit = el=>onEdit(el,()=>ub.attach());
   let files = await dnsFiles();
   const fileEd = h("div");
   const refreshFiles = async()=>{ files.splice(0,files.length,...await dnsFiles()); draw(); };
@@ -233,6 +235,14 @@ const basicTab = async ()=>{
         ...(d.upstream==="manual" ? [...field("上游服务器", inList(d,"servers",{placeholder:"1.1.1.1, 223.5.5.5, 9.9.9.9#9953"}), "IP 或 IP#端口，按响应速度自动选择")] : []),
         ...(d.upstream==="dot" ? [...field("", h("span",{class:"mut"},"所有查询经 stubby（127.0.0.1#"+dotPort+"）走 TLS。NTP 域名用下方“引导 DNS”明文解析，否则开机时钟不准会导致 TLS 失败。"))] : []),
         ...(d.upstream==="isp"||!d.upstream ? [...field("", h("span",{class:"mut"},"使用 PPPoE 拨号下发的 DNS（WAN 需开启“使用运营商 DNS”）；出国换网络时自动跟随。"))] : []))),
+      ...(d.upstream==="dot" ? [] : [card("运营商 DNS 屏蔽绕过", [h("div",{class:"dns-note"},"平时使用运营商 DNS；只有检测到屏蔽页、私网假地址或空结果的域名才改问所选可信 DNS。被改问的域名会发送给该公共 DNS，不影响 DNS 分流名单。"), form(
+        ...field("启用", inBool(ub.o,"enabled",v=>{ ub.o.enabled=v; ub.attach(); draw(); }), "适合运营商会劫持或屏蔽域名的地区"),
+        ...field("屏蔽页地址", ubEdit(inList(ub.o,"block_ips",{placeholder:"例如 125.26.170.3"})), "只填写运营商屏蔽页返回的 IPv4 / IPv6 地址；可填多个"),
+        ...field("可信服务器", ubEdit(inSel(ub.o,"fallback",[["cloudflare","Cloudflare"],["google","Google"],["quad9","Quad9"],["custom","自定义"]],v=>{ if(v!=="custom") ub.o.server=""; ub.attach(); draw(); }))),
+        ...(ub.o.fallback==="custom" ? [...field("自定义服务器", ubEdit(inText(ub.o,"server",{placeholder:"1.1.1.1 或 2001:4860:4860::8888#53"})))] : []),
+        ...field("查询方式", ubEdit(inSel(ub.o,"protocol",[["tls","TLS 加密（推荐）"],["https","HTTPS 加密"],["udp","UDP 明文（较快）"]])), "运营商劫持 53 端口时请选择 TLS 或 HTTPS"),
+        ...field("私网假地址也改问", ubEdit(inBool(ub.o,"retry_private")), "例如 10.x、127.0.0.1、0.0.0.0"),
+        ...field("空结果也改问", ubEdit(inBool(ub.o,"retry_empty")), "NXDOMAIN、REFUSED、SERVFAIL 或 A/AAAA/HTTPS 无地址") )])]),
       card("DoT 加密 DNS（stubby）", [form(
         ...field("启用 stubby", inBool(stub.o,"enabled",()=>{ stub.attach(); draw(); }), "与 服务 页的开关相同；分流到 127.0.0.1#"+dotPort+" 或上游选 DoT 时必须开启"),
         ...field("监听端口", inNum(d.dot,"port"), "只监听 127.0.0.1，不对局域网开放"),

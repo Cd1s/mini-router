@@ -325,6 +325,17 @@ func dnsVerify(c *Config, restarted []string) []string {
 				return append(errs, "dnsmasq not answering")
 			}
 			errs = append(errs, verifyRecords(c, dnsLocal)...)
+		case "mr-dns-unblock":
+			if c.DNS.Unblock == nil {
+				continue
+			}
+			addr := net.JoinHostPort(dnsUnblockListen, strconv.Itoa(dnsUnblockPort))
+			if !waitFor(verifyDeadline(), func() bool {
+				rc, _, err := dnsQuery(addr, "example.com", dnsTypeA, dnsClassIN, time.Second)
+				return err == nil && rc == 0
+			}) {
+				errs = append(errs, "mr-dns-unblock not answering on "+addr)
+			}
 		}
 	}
 	return errs

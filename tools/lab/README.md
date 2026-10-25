@@ -54,7 +54,7 @@ MRLAB_FORCE=1 $L reset $ID                      # only after checking that nobod
 
 Scenarios (TAP output, log in `/tmp/mrlab<ID>-<name>.log`): `$L run $ID 01-fresh-dhcp`,
 `02-pppoe-pd`, `03-move-dhcp-samesubnet`, `04-powercut-confirm`, `05-isp-switch-live`,
-`06-lan-renumber`, `07-require-public-ip`, `08-dhcp-slaac-relay`, `09-first-run-wizard`.
+`06-lan-renumber`, `07-require-public-ip`, `08-dhcp-slaac-relay`, `09-first-run-wizard`, `11-dns-unblock`.
 The longer scenarios have these purposes and waits:
 
 - `05-isp-switch-live` changes a live PPPoE line to down, back to PPPoE, then DHCP and back; it
@@ -134,6 +134,11 @@ namespace replaces with lab directories. Go comes from `/etc/profile.d/buildtool
 | `static` | `10.<id>.<wan>.1/24` + DNS; `install --wan-proto static` uses `.2/24` | static |
 | `pppoe [v6=slaac\|pd] [--badpass] [nopado] [--cgnat]` | pppoe-server, CHAP `lab`/`labpass` (`--badpass`: the server expects another password; `nopado`: no server at all; `--cgnat`: 100.64.<id>.x). After IPv6CP the ISP end is `2001:db8:<id>:<wan>::1/64`; `v6=slaac` adds RAs for that /64, `v6=pd` also kea DHCPv6 delegating /60s from `2001:db8:<id>:<wan>00::/56` | PPPoE |
 | `down` | link down | — |
+
+DNS options for `dhcp` / `static` / `pppoe` (scenario `11-dns-unblock`): `--address NAME=IP[,TTL]` makes the ISP resolver answer NAME
+(with a TTL the answer has a real lifetime, so the router's dnsmasq caches it; without one the TTL is 0), `--nxdomain NAME`,
+`--trusted NAME=IP` starts a second resolver on `10.<id>.<wan>.2` (the trusted DNS of `dns.unblock`) and `--hijack53` redirects
+the ISP's UDP port 53 to its own resolver.
 
 The ISP's own resolver files (`/etc/resolv.conf`, `/etc/ppp`) are per-namespace copies under
 `/etc/netns/mrlab<ID>-*`; kea runs under the host's AppArmor profile in a private mount namespace

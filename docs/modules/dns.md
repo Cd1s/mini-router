@@ -344,6 +344,56 @@ No handler builds a shell command; `rc-service dnsmasq restart` is the only exec
 
 ## 怎么用
 
+### 运营商 DNS 屏蔽绕过（dns.unblock）
+
+在 `dns.upstream: isp`（也支持 `manual`）时打开此功能，路由器先向运营商 DNS 查询；只有返回配置的
+`block_ips`、私网/回环假地址，或 A/AAAA/HTTPS 返回空结果时，才把该查询改问可信服务器。其它记录继续使用
+运营商结果，因此 CDN 就近和现有 `dns.split`、`dns.parental`、`dns.sovereignty` 行为保持不变。`dot` 模式已经
+全量加密，不允许再套这一层。
+
+可信服务器可选 Cloudflare、Google、Quad9 或自定义地址，协议可选 TLS（默认）、HTTPS、UDP。运营商会劫持明文
+53 端口时必须使用 TLS/HTTPS；UDP 适合没有劫持且追求延迟的线路。helper 固定监听 `127.0.0.2:53`，由
+`mr-dns-unblock` 以非 root 用户运行并仅获得 `cap_net_bind_service`。
+
+主 dnsmasq（开了代理时还有 `mr-proxy-dns`）使用运行时的 `/run/mini-router/resolv-lan.conf`：helper 健康时只有
+`nameserver 127.0.0.2`，否则是运营商 DNS。这个文件不是生成文件。**只有 `mr-mon` 做周期性探测**：功能开启时
+`mr-mon` 带 `--dns-unblock` 启动（`conf.d/mr-mon` 里的 `MON_DNS_UNBLOCK=1`，没开这个功能的路由器不会有这一项，
+`mon-collect` 也没有额外的循环或进程），每约 5 秒执行一次 `mr dns unblock-health`；连续两次失败切到运营商，连续
+两次成功切回 helper，文件只在内容变化时原子替换，约 10 秒内完成切换，不重启 dnsmasq。WAN hook 不做周期探测，只在
+WAN 地址或 DNS 变化时按当时的一次探测结果重写这个文件。因此 helper 崩溃、挂起、重启或 `mr apply` 都会自动恢复；
+启动时文件尚不存在也不会阻止 dnsmasq 启动。没有 WAN DNS 时使用 `dns.fallback`，再没有就保持上一份。
+
+状态以这个文件里的实际模式为起点：开机后 `mr-dns-unblock` 的 `start_pre` 先写入 helper，第一次探测成功时不会把它
+改回运营商。直连期间 dnsmasq 会按 `min_cache_ttl` / `cache_size` 缓存运营商的答案（屏蔽页最长可能留一小时），
+所以每次**切回 helper**（包括开机后第一次发现文件已是 helper）都会给 `dnsmasq` 和 `mr-proxy-dns` 发 `SIGHUP`
+清缓存（不重启，不影响 DHCP）；切到运营商时不清。`proxy.nat46.dns64` 的转发器直接读 WAN 租约的 DNS，使用 DNS64
+的客户端不经过这一层。
+
+关闭 `dns.unblock` 并应用后，`mr-dns-unblock` 停止并取消开机启动，
+`gen/dns-unblock.json` 以及 `/run/mini-router/resolv-lan.conf`、`/run/mini-router/dns-unblock-health`、
+`/run/mr-dns-unblock/config.json` 会被删除，`mr-mon` 随 `conf.d/mr-mon` 的变化重启并不再启动探测循环。
+
+启用前需要 sing-box 1.14.0 或更新版本（`evaluate` / `match_response`）。固件镜像自带兼容版本；Alpine 官方仓库
+目前仍是 1.13.x，请从 sing-box 官方 releases 下载 1.14+ 的对应架构二进制并安装到 `/usr/bin/sing-box`，然后执行
+`sing-box version` 确认。校验和服务启动检查都会明确提示 `sing-box >= 1.14.0 is required`，不会让旧版本接管 DNS。
+
+示例（泰国运营商的屏蔽页地址仅作为配置示例；不要把它当成全球清单）：
+
+```yaml
+dns:
+  upstream: isp
+  unblock:
+    enabled: true
+    block_ips: [125.26.170.3]
+    retry_private: true
+    retry_empty: true
+    fallback: cloudflare
+    protocol: udp
+```
+
+`block_ips` 只认当前配置的地址。运营商更换屏蔽页地址后要把新地址加入列表；功能不会猜测一个国家的所有
+屏蔽页，也不会自动改写配置。被改问的域名会发送给所选公共 DNS。
+
 ### 网页（网络 › DHCP / IPv6 RA、网络 › DNS、状态 › 终端设备）
 
 - **给家里服务器起名字**：网络 › DNS › 本地记录 → “+ 添加”，名称填 `nas`，类型 A，值 `192.168.1.10`，

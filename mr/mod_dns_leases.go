@@ -351,6 +351,7 @@ func apiDNSQueryLog(r apiReq) apiResp {
 
 const dnsUsage = `mr dns stats                         dnsmasq cache / upstream statistics (JSON)
 mr dns query NAME [TYPE] [SERVER]    ask dnsmasq (or SERVER ip[#port]); TYPE A AAAA CNAME PTR SRV TXT
+mr dns unblock-health                probe the built-in DNS unblock helper (internal monitor tick)
 mr dns leases                        DHCP leases (JSON)
 mr dns release IP [MAC]              make dnsmasq drop a DHCPv4 lease
 mr dns querylog on [MINUTES]|off|show  temporary query logging (default 10 min, max 60, gone after reboot)
@@ -366,6 +367,9 @@ func dnsCommand(c *Config, args []string) error {
 		return nil
 	}
 	switch args[0] {
+	case "unblock-health":
+		dnsUnblockHealth(c)
+		return nil
 	case "adblock":
 		return adblockCommand(c, args[1:])
 	case "stats":

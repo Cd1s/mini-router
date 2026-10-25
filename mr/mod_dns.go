@@ -71,22 +71,23 @@ type Host struct {
 }
 
 type DNS struct {
-	CacheSize    int      `yaml:"cache_size"`
-	MinTTL       int      `yaml:"min_cache_ttl"`
-	StaleCache   int      `yaml:"use_stale_cache"`
-	NoNegCache   bool     `yaml:"no_negcache"`
-	EDNS         int      `yaml:"edns_packet_max"`
-	Upstream     string   `yaml:"upstream"`           // isp (DNS from PPPoE, default) | manual (servers) | dot (stubby)
-	Servers      []string `yaml:"servers"`            // manual upstreams: ip[#port]
-	Fallback     []string `yaml:"fallback,omitempty"` // isp fallback when no WAN currently supplies DNS
-	DoT          DoT      `yaml:"dot"`                // stubby, used when services.stubby is enabled
-	ServersFile  string   `yaml:"servers_file"`
-	AddnHosts    []string `yaml:"addn_hosts"`
-	Rebind       bool     `yaml:"rebind_protection"`
-	LocalService bool     `yaml:"local_service"`
-	Redirect     bool     `yaml:"redirect"` // hijack LAN DNS to the router
-	Records      []Record `yaml:"records"`  // local DNS records (home servers)
-	Split        []Split  `yaml:"split"`    // per-domain upstream (DNS 分流)
+	CacheSize    int         `yaml:"cache_size"`
+	MinTTL       int         `yaml:"min_cache_ttl"`
+	StaleCache   int         `yaml:"use_stale_cache"`
+	NoNegCache   bool        `yaml:"no_negcache"`
+	EDNS         int         `yaml:"edns_packet_max"`
+	Upstream     string      `yaml:"upstream"`           // isp (DNS from PPPoE, default) | manual (servers) | dot (stubby)
+	Servers      []string    `yaml:"servers"`            // manual upstreams: ip[#port]
+	Fallback     []string    `yaml:"fallback,omitempty"` // isp fallback when no WAN currently supplies DNS
+	DoT          DoT         `yaml:"dot"`                // stubby, used when services.stubby is enabled
+	ServersFile  string      `yaml:"servers_file"`
+	AddnHosts    []string    `yaml:"addn_hosts"`
+	Rebind       bool        `yaml:"rebind_protection"`
+	LocalService bool        `yaml:"local_service"`
+	Redirect     bool        `yaml:"redirect"`          // hijack LAN DNS to the router
+	Records      []Record    `yaml:"records"`           // local DNS records (home servers)
+	Split        []Split     `yaml:"split"`             // per-domain upstream (DNS 分流)
+	Unblock      *DNSUnblock `yaml:"unblock,omitempty"` // retry ISP-blocked answers through a public DNS
 
 	// keep LAN devices on the router's DNS (mod_dns_sovereignty.go); ad blocking (mod_dns_adblock.go)
 	Sovereignty DNSSovereignty `yaml:"sovereignty"`
@@ -145,6 +146,9 @@ func dnsDefaults(c *Config) {
 	}
 	if c.DNS.Upstream == "" {
 		c.DNS.Upstream = "isp"
+	}
+	if c.DNS.Unblock != nil {
+		dnsUnblockDefaults(c.DNS.Unblock)
 	}
 	if c.DNS.Sovereignty.FirefoxCanary == nil {
 		c.DNS.Sovereignty.FirefoxCanary = boolp(true)
@@ -749,6 +753,9 @@ func init() {
 		Defaults: dnsDefaults,
 		Validate: dnsValidate,
 		Render: func(c *Config, out *Out) error {
+			if err := dnsUnblockRender(c, out); err != nil {
+				return err
+			}
 			out.Add("/etc/resolv.conf", 0644, "nameserver 127.0.0.1\nsearch "+c.DHCP.Domain+"\n")
 			split, err := renderSplit(c)
 			if err != nil {
@@ -785,14 +792,21 @@ func init() {
 			}
 		},
 		Services: func(c *Config) []string {
-			if parentalOn(c) {
-				return []string{"dnsmasq", "mr-parental-dns"}
+			s := []string{"dnsmasq"}
+			if x := dnsUnblockServices(c); len(x) > 0 {
+				s = append(s, x...)
 			}
-			return []string{"dnsmasq"}
+			if parentalOn(c) {
+				s = append(s, "mr-parental-dns")
+			}
+			return s
 		},
-		Managed: []string{"mr-parental-dns"},
+		Managed: []string{"mr-parental-dns", "mr-dns-unblock"},
+		Orphans: dnsUnblockOrphans,
 		Restart: func(path string) string {
 			switch path {
+			case dnsUnblockConf:
+				return "mr-dns-unblock"
 			case parentalConf:
 				return "mr-parental-dns"
 			case "/etc/dnsmasq.conf", GenDir + "/dns-split.servers":
@@ -807,7 +821,7 @@ func init() {
 			return ""
 		},
 		// stubby first: dnsmasq may forward to it as soon as it starts
-		RestartOrder: []string{"stubby", "dnsmasq", "mr-parental-dns"},
+		RestartOrder: []string{"stubby", "dnsmasq", "mr-dns-unblock", "mr-parental-dns"},
 		Verify:       dnsVerify,
 		Status: func(c *Config, st map[string]any) {
 			v4, _ := readLeases(c)
@@ -925,6 +939,10 @@ func dnsUpstreamLines(c *Config) []string {
 	var out []string
 	switch c.DNS.Upstream {
 	case "manual":
+		if c.DNS.Unblock != nil && c.DNS.Unblock.Enabled {
+			out = append(out, "resolv-file="+dnsUnblockRuntimeResolv)
+			break
+		}
 		out = append(out, "no-resolv")
 		for _, s := range c.DNS.Servers {
 			out = append(out, "server="+s)
@@ -938,6 +956,13 @@ func dnsUpstreamLines(c *Config) []string {
 			}
 		}
 	default:
+		if c.DNS.Unblock != nil && c.DNS.Unblock.Enabled {
+			// Do not combine no-resolv with resolv-file: dnsmasq 2.91 treats that pair as having
+			// no usable upstreams and REFUSED every query. /etc/resolv.conf points back to the
+			// local dnsmasq, which it ignores; resolv-file is the sole effective source here.
+			out = append(out, "resolv-file="+dnsUnblockRuntimeResolv)
+			break
+		}
 		// The merged file follows current leases; pppd's own file remains a transient bootstrap
 		// source while a PPP session is coming up or the merged hook state is being rebuilt.
 		out = append(out, "resolv-file="+ResolvPPP)
@@ -950,6 +975,7 @@ func dnsUpstreamLines(c *Config) []string {
 
 func dnsValidate(c *Config, v *Validator) {
 	parentalValidate(c, v)
+	dnsUnblockValidate(c, v)
 	if c.DHCP.Start < 2 || c.DHCP.End > 254 || c.DHCP.Start > c.DHCP.End {
 		v.Add("dhcp: start/end must be 2..254 with start<=end, got %d-%d", c.DHCP.Start, c.DHCP.End)
 	}
