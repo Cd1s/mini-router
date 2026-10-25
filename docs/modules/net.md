@@ -437,6 +437,15 @@ conntrack 会把后续包当作 invalid 丢掉。
 | API `net.dial_restore` | POST `{}`：按已应用的 `multiwan.dial_order` 只重拨乱序 / 晚到的线路，返回 `redialled`、`failed` 和 `reason`；scope `operate` |
 | API `net.wan_mac` | POST `{"wan":"wan2","device":"wan","vlan":0}`：为同一物理口的第 2 条及后续 PPPoE WAN 返回本地管理单播 MAC；scope `operate` |
 
+**停止、重拨、关机时结束 PPPoE 会话。** `mr-pppoe.<wan>` 停止时 pppd 先发 LCP Terminate-Request，收到 Ack（或等 3 秒）后发 PADT，
+运营商才会马上释放这个会话；没收到 PADT 的旧会话会继续占着名额（AIS 这类按并发数限制的运营商：下一次拨号就落进 walled garden，
+见“PPPoE 公网地址保护”）。`reboot` / `poweroff` 走 OpenRC 的 `shutdown` 运行级，`mr-pppoe.*` 在防火墙卸载、链路关闭之前最先停止
+（`sysupgrade` 的 kexec 路径也先停所有 `mr-pppoe.*`）。两处保证 PADT 来得及发出：`pppoe-dial` 给 pppd 加 `lcp-max-terminate 1`
+（运营商不应答 Terminate-Request 时 3 秒后照样发 PADT；默认发两次，要 6 秒），`mr-pppoe` 设 `retry="SIGTERM/10"`
+（supervise-daemon 默认只等 5 秒就宣布服务已停止，OpenRC 接着关机，pppd 还没发出的 PADT 随重启丢掉）。断电、死机、硬件看门狗复位
+发不出 PADT，会话要等运营商自己超时。实验室场景 `15-pppoe-reboot-padt`（两条会话，运营商应答 / 不应答 Terminate-Request 两种情况下，
+ISP 一侧都看到每条会话的 LCP Terminate 和 PADT）。
+
 ## 对家里配置（examples/router.yaml）输出的改动（都是有意的）
 
 1. `network.sh` 多了 `ip rule ... lookup main suppress_prefixlength 0 pref 5299`（v4/v6），并且 5300 的 fwmark 规则先清空再加：

@@ -4,4 +4,7 @@
 # runs here, not in start_pre, so OpenRC never blocks on it (a serial boot starts every WAN at once) and a
 # respawn waits the same way. mr failing (no config) never keeps pppd from starting.
 "${MR_BIN:-/usr/sbin/mr}" wan dial-wait "$1" </dev/null
-exec /usr/sbin/pppd call "$1"
+# lcp-max-terminate 1: when pppd is stopped it sends one LCP Terminate-Request and waits lcp-restart (3 s) for the
+# Terminate-Ack; with the default of two requests it needs 6 s before it gives up and sends the PADT, longer than
+# a shutdown waits. One request: the PADT leaves after at most 3 s, at once when the ISP answers.
+exec /usr/sbin/pppd call "$1" lcp-max-terminate 1
