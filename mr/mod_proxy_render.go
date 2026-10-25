@@ -377,7 +377,7 @@ func proxyDnsmasq(c *Config, sets []proxyRuleSet) (string, error) {
 	for _, br := range proxyBridges(c) {
 		w("interface=%s\nno-dhcp-interface=%s", br, br)
 	}
-	w("bind-dynamic\nlocalise-queries\nexpand-hosts\ndomain=%s", c.DHCP.Domain)
+	w("%slocalise-queries\nexpand-hosts\ndomain=%s", dnsmasqListenLines, c.DHCP.Domain)
 	if d.Rebind {
 		// local names (below) legitimately resolve to private addresses
 		w("stop-dns-rebind\nrebind-localhost-ok\nrebind-domain-ok=/%s/\nrebind-domain-ok=//", c.DHCP.Domain)

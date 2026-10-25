@@ -236,6 +236,15 @@ func dhcpNets(c *Config) []dhcpNet {
 	return out
 }
 
+// dnsmasqListenLines: the listening scope shared by the three dnsmasq instances (after their interface= lines).
+// As soon as there is an interface= line dnsmasq adds all of lo, and bind-dynamic opens a UDP and a TCP socket for
+// every address on it. ss-nodes keeps hundreds of /128 source addresses on lo (twice that while the ISP's prefix
+// changes), which ran all instances into their 1024-descriptor limit: no DNS, `mr proxy check` failing, the
+// migration that would drop the old addresses never finishing. So lo is excepted and only the loopback addresses
+// mr itself talks to are listened on (listen-address wins over except-interface for the address it names).
+// bind-dynamic stays: the LAN bridges' addresses follow the delegated prefix.
+const dnsmasqListenLines = "except-interface=lo\nbind-dynamic\nlisten-address=127.0.0.1\nlisten-address=::1\n"
+
 func renderDnsmasq(c *Config) string {
 	var b strings.Builder
 	w := func(f string, a ...any) { fmt.Fprintf(&b, f+"\n", a...) }
@@ -243,7 +252,7 @@ func renderDnsmasq(c *Config) string {
 	for _, n := range c.LANNets() {
 		w("interface=%s", n.Bridge)
 	}
-	b.WriteString("bind-dynamic\nlisten-address=127.0.0.1\n")
+	b.WriteString(dnsmasqListenLines)
 	b.WriteString("domain-needed\nlocalise-queries\nexpand-hosts\ndhcp-authoritative\n")
 	// router advertisements are logged once per RA on every LAN (~95% of the RAM log): keep them out
 	b.WriteString("quiet-ra\n")

@@ -91,7 +91,7 @@ func parentalRender(c *Config, out *Out) {
 	if c.Proxy.Enabled {
 		up = fmt.Sprintf("127.0.0.1#%d", c.Proxy.lanDNSPort())
 	}
-	w("bind-dynamic\nno-resolv\nno-hosts\ncache-size=1000\nserver=%s", up)
+	w("%sno-resolv\nno-hosts\ncache-size=1000\nserver=%s", dnsmasqListenLines, up)
 	if c.DNS.Parental.SafeSearch {
 		b.WriteString(strings.Join(parentalSafe, "\n") + "\n")
 	}
