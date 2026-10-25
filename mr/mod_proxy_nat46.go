@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -22,7 +23,7 @@ import (
 	"time"
 )
 
-const proxyNat46Gen = GenDir + "/nat46.json"
+var proxyNat46Gen = GenDir + "/nat46.json"
 
 var proxyNat46DNS64Gen = GenDir + "/dns64.conf"
 var proxyNat46DNS64Run = RunDir + "/dns64.conf"
@@ -739,32 +740,62 @@ func isClosed(err error) bool {
 
 // proxyNat46Serve is the long-running command used by mr-nat46. The config is loaded by the
 // core dispatcher, so the service never needs a second copy of the router configuration.
-func proxyNat46Serve(c *Config, args []string) error {
-	if len(args) != 0 {
-		return fmt.Errorf("usage: mr proxy nat46 serve")
-	}
-	if !c.Proxy.Enabled || !c.Proxy.Nat46.Enabled {
-		return fmt.Errorf("proxy.nat46 is disabled")
-	}
+type nat46ServeConfig struct {
+	Listen      string `json:"listen"`
+	Prefix      string `json:"prefix"`
+	SourcesFile string `json:"sources_file"`
+	MaxConns    int    `json:"max_conns"`
+}
+
+func nat46ServeConfigFromProxy(c *Config) nat46ServeConfig {
 	n := c.Proxy.Nat46
-	prefix, err := netip.ParsePrefix(n.prefix())
-	if err != nil || !prefix.Addr().Is6() || prefix.Bits() != 96 {
-		return fmt.Errorf("NAT64 prefix must be IPv6 /96: %q", n.prefix())
+	return nat46ServeConfig{Listen: n.listen(), Prefix: n.prefix(), SourcesFile: n.SourcesFile, MaxConns: n.maxConns()}
+}
+
+func nat46ServeConfigFromFile() (nat46ServeConfig, error) {
+	path := proxyNat46Gen
+	if override := os.Getenv("MR_NAT46_CONFIG"); override != "" {
+		path = override
 	}
-	ln, err := net.Listen("tcp", n.listen())
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nat46ServeConfig{}, err
+	}
+	var cfg nat46ServeConfig
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return nat46ServeConfig{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+func serveNat46(cfg nat46ServeConfig) error {
+	if cfg.Listen == "" {
+		cfg.Listen = "127.0.0.1:1094"
+	}
+	if cfg.Prefix == "" {
+		cfg.Prefix = "64:ff9b::/96"
+	}
+	if cfg.MaxConns == 0 {
+		cfg.MaxConns = 4096
+	}
+	prefix, err := netip.ParsePrefix(cfg.Prefix)
+	if err != nil || !prefix.Addr().Is6() || prefix.Bits() != 96 {
+		return fmt.Errorf("NAT64 prefix must be IPv6 /96: %q", cfg.Prefix)
+	}
+	ln, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		return err
 	}
 	var sources interface {
 		Lookup(string) (netip.Addr, bool)
 	}
-	if n.SourcesFile == "" {
+	if cfg.SourcesFile == "" {
 		sources = localSourceTable{}
 	} else {
-		sources = &SourceTable{Path: n.SourcesFile}
+		sources = &SourceTable{Path: cfg.SourcesFile}
 	}
-	server := NewServer(prefix, sources, n.maxConns())
-	log.Printf("mr-nat46 listening on %s, prefix %s, sources %s", ln.Addr(), prefix, n.SourcesFile)
+	server := NewServer(prefix, sources, cfg.MaxConns)
+	log.Printf("mr-nat46 listening on %s, prefix %s, sources %s", ln.Addr(), prefix, cfg.SourcesFile)
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
@@ -775,4 +806,28 @@ func proxyNat46Serve(c *Config, args []string) error {
 		return err
 	}
 	return nil
+}
+
+// proxyNat46Serve is retained for direct module tests and the command dispatcher after config load.
+func proxyNat46Serve(c *Config, args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: mr proxy nat46 serve")
+	}
+	if !c.Proxy.Enabled || !c.Proxy.Nat46.Enabled {
+		return fmt.Errorf("proxy.nat46 is disabled")
+	}
+	return serveNat46(nat46ServeConfigFromProxy(c))
+}
+
+// proxyNat46ServeFromFile is called before dispatch loads router.yaml or secrets.yaml. The
+// generated file is 0644 and contains only the four values required by the unprivileged daemon.
+func proxyNat46ServeFromFile(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: mr proxy nat46 serve")
+	}
+	cfg, err := nat46ServeConfigFromFile()
+	if err != nil {
+		return err
+	}
+	return serveNat46(cfg)
 }

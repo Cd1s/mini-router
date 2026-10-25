@@ -59,7 +59,7 @@ module commands (JSON output unless noted):
                               | steer [--dry-run]   802.11v band steering run now (tick: crond, every minute)
   mr dns stats | leases | query NAME [TYPE] [SERVER] | release IP [MAC] | querylog on [MIN]|off|show
                               | adblock status | update   ad blocking lists (dns.adblock)
-  mr proxy status | check | delay [NODE|GROUP] | select GROUP NODE | parse [--secrets] [FILE] | fetch [--secrets] URL|SUB
+  mr proxy status | check | delay [NODE|GROUP] | select GROUP NODE | nat46 serve | parse [--secrets] [FILE] | fetch [--secrets] URL|SUB
   mr mon now | history | devices | conns [JSON] | procs | dmesg
   mr sys run ACTION [TARGET] | backup [-secrets] FILE|- | restore [-confirm SECS] FILE | keys
   mr ddns status | update [--force] [NAME...]   DDNS records; update now (sync --hook|--cron: WAN hooks / crond)
@@ -98,6 +98,11 @@ func main() {
 
 func dispatch(args []string, cfgPath, secPath string) error {
 	cmd := args[0]
+	// mr-nat46 runs as the unprivileged sing-box user. Its generated 0644 parameter file is
+	// sufficient; do not load router.yaml or the root-only secrets.yaml for this daemon.
+	if cmd == "proxy" && len(args) >= 3 && args[1] == "nat46" && args[2] == "serve" {
+		return proxyNat46ServeFromFile(args[3:])
+	}
 	switch cmd {
 	case "version":
 		fmt.Println(version)

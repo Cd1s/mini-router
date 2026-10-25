@@ -46,6 +46,25 @@ func TestProxyNat46FullAddressMustBeLocal(t *testing.T) {
 	}
 }
 
+func TestProxyNat46ServeReadsGeneratedConfigWithoutSecrets(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nat46.json")
+	if err := os.WriteFile(path, []byte(`{"listen":"127.0.0.1:1094","prefix":"64:ff9b::/96","max_conns":8}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	old := proxyNat46Gen
+	proxyNat46Gen = path
+	defer func() { proxyNat46Gen = old }()
+	if cfg, err := nat46ServeConfigFromFile(); err != nil || cfg.Listen != "127.0.0.1:1094" || cfg.MaxConns != 8 {
+		t.Fatalf("generated serve config: %+v, %v", cfg, err)
+	}
+	// An unreadable secrets path must not be touched by the serve subcommand. An extra argument
+	// makes it return before binding, while still exercising dispatch's early serve branch.
+	if err := dispatch([]string{"proxy", "nat46", "serve", "unexpected"}, filepath.Join(dir, "router.yaml"), filepath.Join(dir, "secrets.yaml")); err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Fatalf("serve branch loaded router/secrets instead of validating its own args: %v", err)
+	}
+}
+
 func TestProxyNat46DNS64RenderAndForwardSync(t *testing.T) {
 	c := proxyTestConfig(t)
 	c.Proxy.Nat46.Enabled = true
