@@ -26,6 +26,23 @@ EV=${MON_EVENT_DIR:-/run/mini-router}
 LEASES=${MON_LEASES:-/tmp/dhcp.leases}
 MR=${MON_MR:-/usr/sbin/mr}
 mkdir -p "${F%/*}"
+
+# dns.unblock health belongs here because mr-mon is always resident, including single-WAN
+# routers where mr-wanmon is deliberately disabled.  The helper probe itself has a one-second
+# deadline; two consecutive results switch /run/mini-router/resolv-lan.conf, so a crash or
+# restart is recovered in roughly ten seconds without restarting dnsmasq.
+DNS_UNBLOCK_PID=
+(
+	while :; do
+		# MON_MR is set by the CI sampler stub; do not turn its event-call assertions into
+		# health probes. On a router it is unset and the generated config gates the probe.
+		[ -z "${MON_MR:-}" ] && [ -s /etc/mini-router/gen/dns-unblock.json ] && "$MR" dns unblock-health >/dev/null 2>&1
+		sleep 5
+	done
+) &
+DNS_UNBLOCK_PID=$!
+trap '[ -n "$DNS_UNBLOCK_PID" ] && kill "$DNS_UNBLOCK_PID" 2>/dev/null || true' EXIT
+trap 'exit 0' INT TERM
 lines=0
 [ -f "$F" ] && lines=$(wc -l < "$F")
 

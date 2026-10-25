@@ -950,7 +950,6 @@ func writeResolv(c *Config) {
 		if c.DNS.Unblock != nil && c.DNS.Unblock.Enabled && c.DNS.Upstream == "manual" {
 			servers := dnsUnblockInitialServers(c)
 			dnsUnblockRefresh(c, servers)
-			dnsUnblockWriteUpstream(c, servers, dnsUnblockPortHealthy(c))
 		}
 		if err := proxyNat46DNS64Sync(c); err != nil {
 			logf("dns64: %v", err)
@@ -1001,7 +1000,6 @@ func writeResolv(c *Config) {
 		servers = servers[:2]
 	}
 	dnsUnblockRefresh(c, servers)
-	dnsUnblockWriteUpstream(c, servers, dnsUnblockPortHealthy(c))
 	if err := proxyNat46DNS64Sync(c); err != nil {
 		logf("dns64: %v", err)
 	}

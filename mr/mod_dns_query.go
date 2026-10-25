@@ -329,14 +329,12 @@ func dnsVerify(c *Config, restarted []string) []string {
 			if c.DNS.Unblock == nil {
 				continue
 			}
-			addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(c.DNS.Unblock.Port))
+			addr := net.JoinHostPort(dnsUnblockListen, strconv.Itoa(dnsUnblockPort))
 			if !waitFor(verifyDeadline(), func() bool {
 				rc, _, err := dnsQuery(addr, "example.com", dnsTypeA, dnsClassIN, time.Second)
 				return err == nil && rc == 0
 			}) {
 				errs = append(errs, "mr-dns-unblock not answering on "+addr)
-			} else {
-				dnsUnblockWriteUpstream(c, dnsUnblockInitialServers(c), true)
 			}
 		}
 	}

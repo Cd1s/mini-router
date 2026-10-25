@@ -938,11 +938,11 @@ func dnsUpstreamLines(c *Config) []string {
 	var out []string
 	switch c.DNS.Upstream {
 	case "manual":
-		out = append(out, "no-resolv")
 		if c.DNS.Unblock != nil && c.DNS.Unblock.Enabled {
-			out = append(out, dnsUnblockUpstreamConf)
+			out = append(out, "resolv-file="+dnsUnblockRuntimeResolv)
 			break
 		}
+		out = append(out, "no-resolv")
 		for _, s := range c.DNS.Servers {
 			out = append(out, "server="+s)
 		}
@@ -956,7 +956,10 @@ func dnsUpstreamLines(c *Config) []string {
 		}
 	default:
 		if c.DNS.Unblock != nil && c.DNS.Unblock.Enabled {
-			out = append(out, dnsUnblockUpstreamConf)
+			// Do not combine no-resolv with resolv-file: dnsmasq 2.91 treats that pair as having
+			// no usable upstreams and REFUSED every query. /etc/resolv.conf points back to the
+			// local dnsmasq, which it ignores; resolv-file is the sole effective source here.
+			out = append(out, "resolv-file="+dnsUnblockRuntimeResolv)
 			break
 		}
 		// The merged file follows current leases; pppd's own file remains a transient bootstrap

@@ -218,7 +218,7 @@ const sovCard = (d, files, ed, after)=>{
 };
 const basicTab = async ()=>{
   const c = S.cfg, d = c.dns; const box = h("div");
-  const ub = lazy(d, "unblock", ()=>({enabled:false, block_ips:[], retry_private:true, retry_empty:true, fallback:"cloudflare", protocol:"tls", server:"", port:5455}));
+  const ub = lazy(d, "unblock", ()=>({enabled:false, block_ips:[], retry_private:true, retry_empty:true, fallback:"cloudflare", protocol:"tls", server:"", port:53}));
   const ubEdit = el=>onEdit(el,()=>ub.attach());
   let files = await dnsFiles();
   const fileEd = h("div");

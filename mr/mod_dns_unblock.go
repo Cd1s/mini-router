@@ -28,12 +28,16 @@ type DNSUnblock struct {
 }
 
 const (
-	dnsUnblockConf         = GenDir + "/dns-unblock.json"
-	dnsUnblockUpstreamConf = "conf-file=" + RunDir + "/dns-unblock-upstream.conf"
-	dnsUnblockPort         = 5455
+	dnsUnblockConf   = GenDir + "/dns-unblock.json"
+	dnsUnblockListen = "127.0.0.2"
+	dnsUnblockPort   = 53
 )
 
-var dnsUnblockConfigPath = dnsUnblockConf
+var (
+	dnsUnblockConfigPath    = dnsUnblockConf
+	dnsUnblockRuntimeResolv = RunDir + "/resolv-lan.conf"
+	dnsUnblockHealthState   = RunDir + "/dns-unblock-health"
+)
 
 func dnsUnblockDefaults(u *DNSUnblock) {
 	if u.Port == 0 {
@@ -87,16 +91,8 @@ func dnsUnblockValidate(c *Config, v *Validator) {
 		}
 		seen[key] = true
 	}
-	if u.Port < 1024 || u.Port > 65535 || u.Port == 53 {
-		v.Add("dns.unblock.port: 1024-65535 and not 53 (dnsmasq), got %d", u.Port)
-	}
-	used := map[int]string{53: "DNS", 67: "DHCP", 80: "web UI", c.DNS.DoT.Port: "dns.dot.port", parentalPort: "dns.parental"}
-	if c.Proxy.Enabled {
-		used[c.Proxy.dnsPort()] = "proxy.dns_port"
-		used[c.Proxy.lanDNSPort()] = "proxy.lan_dns_port"
-	}
-	if o, ok := used[u.Port]; ok {
-		v.Add("dns.unblock.port: %d already used by %s", u.Port, o)
+	if u.Port != dnsUnblockPort {
+		v.Add("dns.unblock.port: helper must listen on 127.0.0.2:53, got %d", u.Port)
 	}
 	switch u.Fallback {
 	case "cloudflare", "google", "quad9":
@@ -217,7 +213,7 @@ func renderDNSUnblockJSON(c *Config, isp []string) (string, error) {
 	rules = append(rules, map[string]any{"match_response": true, "query_type": []string{"A", "AAAA", "HTTPS"}, "invert": true, "action": "respond"})
 	tr := map[string]any{"log": map[string]any{"level": "warn"},
 		"dns":      map[string]any{"servers": servers, "rules": rules, "final": "trusted"},
-		"inbounds": []any{map[string]any{"type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": u.Port}},
+		"inbounds": []any{map[string]any{"type": "direct", "tag": "dns-in", "listen": dnsUnblockListen, "listen_port": dnsUnblockPort}},
 		"route":    map[string]any{"rules": []any{map[string]any{"inbound": "dns-in", "action": "hijack-dns"}}, "default_domain_resolver": map[string]any{"server": "trusted"}},
 	}
 	b, err := json.MarshalIndent(tr, "", "  ")
@@ -277,13 +273,6 @@ func dnsUnblockRender(c *Config, out *Out) error {
 		return nil
 	}
 	servers := dnsUnblockInitialServers(c)
-	upstream := ""
-	if len(servers) > 0 {
-		for _, s := range servers {
-			upstream += "server=" + s + "\n"
-		}
-	}
-	out.Add(RunDir+"/dns-unblock-upstream.conf", 0644, upstream)
 	if len(servers) == 0 {
 		return nil // WAN hooks will create it once a lease supplies DNS.
 	}
@@ -301,13 +290,19 @@ func dnsUnblockWriteUpstream(c *Config, servers []string, healthy bool) {
 	}
 	data := ""
 	if healthy {
-		data = fmt.Sprintf("server=127.0.0.1#%d\n", c.DNS.Unblock.Port)
+		data = "nameserver " + dnsUnblockListen + "\n"
 	} else {
 		for _, s := range servers {
-			data += "server=" + s + "\n"
+			host, _ := splitServer(s)
+			if net.ParseIP(host) != nil && !net.ParseIP(host).IsLoopback() {
+				data += "nameserver " + host + "\n"
+			}
 		}
 	}
-	path := RunDir + "/dns-unblock-upstream.conf"
+	if data == "" {
+		return
+	}
+	path := dnsUnblockRuntimeResolv
 	if readFile(path) == data {
 		return
 	}
@@ -315,20 +310,18 @@ func dnsUnblockWriteUpstream(c *Config, servers []string, healthy bool) {
 		logf("dns-unblock upstream: %v", err)
 		return
 	}
-	_, _ = run("rc-service", "dnsmasq", "restart")
-	if c.Proxy.Enabled {
-		_, _ = run("rc-service", "mr-proxy-dns", "restart")
-	}
 }
 
 func dnsUnblockPortHealthy(c *Config) bool {
 	if c == nil || c.DNS.Unblock == nil || !c.DNS.Unblock.Enabled {
 		return false
 	}
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(c.DNS.Unblock.Port))
-	rc, _, err := dnsQuery(addr, "example.com", dnsTypeA, dnsClassIN, 500*time.Millisecond)
+	addr := net.JoinHostPort(dnsUnblockListen, strconv.Itoa(dnsUnblockPort))
+	rc, _, err := dnsQuery(addr, "example.com", dnsTypeA, dnsClassIN, time.Second)
 	return err == nil && rc == 0
 }
+
+var dnsUnblockProbe = dnsUnblockPortHealthy
 
 var dnsUnblockRun = func(name string, args ...string) (string, error) { return run(name, args...) }
 
@@ -360,13 +353,10 @@ func dnsUnblockRefresh(c *Config, servers []string) {
 	if _, err := dnsUnblockRun("rc-service", "mr-dns-unblock", "restart"); err != nil {
 		_, _ = dnsUnblockRun("rc-service", "mr-dns-unblock", "start")
 	}
-	for i := 0; i < 10; i++ {
-		if dnsUnblockPortHealthy(c) {
-			dnsUnblockWriteUpstream(c, servers, true)
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	// Point dnsmasq at the helper immediately after its supervised restart. The monitor remains
+	// authoritative afterwards and moves to direct DNS after two failed probes if startup failed;
+	// starting with the helper avoids caching an ISP block-page answer during the normal race.
+	dnsUnblockWriteUpstream(c, dnsUnblockDirectServers(c), true)
 }
 
 func dnsUnblockServices(c *Config) []string {
@@ -437,9 +427,113 @@ func dnsUnblockDoctor(c *Config, _ *docEnv) []docFinding {
 			return []docFinding{{ID: "dns.unblock", Sev: "skip", Title: "DNS unblock", Detail: "waiting for an ISP DNS lease"}}
 		}
 	}
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(c.DNS.Unblock.Port))
+	addr := net.JoinHostPort(dnsUnblockListen, strconv.Itoa(dnsUnblockPort))
+	mode, since := dnsUnblockCurrentMode()
 	if err := dnsUnblockResolve(addr, "example.com"); err != nil {
-		return []docFinding{{ID: "dns.unblock.query", Sev: "risk", Title: "DNS unblock", Detail: fmt.Sprintf("%s does not resolve example.com: %s", addr, eventClean(err.Error(), 120)), Fix: "rc-service mr-dns-unblock status; mr dns query example.com  A " + addr}}
+		return []docFinding{{ID: "dns.unblock.query", Sev: "risk", Title: "DNS unblock", Detail: fmt.Sprintf("%s does not resolve example.com: %s; dnsmasq currently uses %s", addr, eventClean(err.Error(), 120), mode), Fix: "rc-service mr-dns-unblock status; mr dns query example.com A " + addr}}
 	}
-	return []docFinding{docOK("DNS unblock", "trusted DNS helper resolves example.com")}
+	if mode == "direct" && since > 0 && time.Since(time.Unix(since, 0)) > 30*time.Second {
+		return []docFinding{{ID: "dns.unblock.direct", Sev: "warn", Title: "DNS unblock", Detail: "dnsmasq has used ISP DNS directly for more than 30 seconds; helper is not healthy", Fix: "rc-service mr-dns-unblock status"}}
+	}
+	return []docFinding{docOK("DNS unblock", "trusted DNS helper resolves example.com; dnsmasq uses "+mode)}
+}
+
+func dnsUnblockDirectServers(c *Config) []string {
+	if c == nil || c.DNS.Unblock == nil || !c.DNS.Unblock.Enabled {
+		return nil
+	}
+	if c.DNS.Upstream == "manual" {
+		var out []string
+		for _, s := range c.DNS.Servers {
+			host, _ := splitServer(s)
+			ip := net.ParseIP(host)
+			if ip != nil && !ip.IsLoopback() {
+				out = append(out, host)
+			}
+		}
+		return out
+	}
+	var out []string
+	for _, line := range strings.Split(readFile(resolvConf), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 && f[0] == "nameserver" {
+			if ip := net.ParseIP(f[1]); ip != nil && !ip.IsLoopback() {
+				out = append(out, f[1])
+			}
+		}
+	}
+	if len(out) == 0 {
+		for _, s := range c.DNS.Fallback {
+			host, _ := splitServer(s)
+			if ip := net.ParseIP(host); ip != nil && !ip.IsLoopback() {
+				out = append(out, host)
+			}
+		}
+	}
+	return out
+}
+
+func dnsUnblockCurrentMode() (string, int64) {
+	mode := "direct"
+	for _, line := range strings.Split(readFile(dnsUnblockRuntimeResolv), "\n") {
+		if strings.TrimSpace(line) == "nameserver "+dnsUnblockListen {
+			mode = "helper"
+			break
+		}
+	}
+	var st struct {
+		Mode  string `json:"mode"`
+		Since int64  `json:"since"`
+	}
+	if b, err := os.ReadFile(dnsUnblockHealthState); err == nil {
+		_ = json.Unmarshal(b, &st)
+		if st.Mode == mode {
+			return mode, st.Since
+		}
+	}
+	return mode, 0
+}
+
+func dnsUnblockHealth(c *Config) {
+	if c == nil || c.DNS.Unblock == nil || !c.DNS.Unblock.Enabled {
+		return
+	}
+	var st struct {
+		Mode  string `json:"mode"`
+		Since int64  `json:"since"`
+		Good  int    `json:"good"`
+		Bad   int    `json:"bad"`
+	}
+	if b, err := os.ReadFile(dnsUnblockHealthState); err == nil {
+		_ = json.Unmarshal(b, &st)
+	}
+	if st.Mode == "" {
+		st.Mode = "direct"
+		st.Since = time.Now().Unix()
+	}
+	oldMode, _ := dnsUnblockCurrentMode()
+	_, runtimeErr := os.Stat(dnsUnblockRuntimeResolv)
+	if dnsUnblockProbe(c) {
+		st.Good++
+		st.Bad = 0
+		if st.Good >= 2 {
+			st.Mode = "helper"
+		}
+	} else {
+		st.Bad++
+		st.Good = 0
+		if st.Bad >= 2 {
+			st.Mode = "direct"
+		}
+	}
+	if st.Mode != "helper" && st.Mode != "direct" {
+		st.Mode = "direct"
+	}
+	if oldMode != st.Mode || (os.IsNotExist(runtimeErr) && st.Mode == "direct" && st.Bad >= 2) {
+		servers := dnsUnblockDirectServers(c)
+		dnsUnblockWriteUpstream(c, servers, st.Mode == "helper")
+		st.Since = time.Now().Unix()
+	}
+	b, _ := json.Marshal(st)
+	_ = writeAtomic(dnsUnblockHealthState, append(b, '\n'), 0644)
 }

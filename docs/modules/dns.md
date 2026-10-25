@@ -352,12 +352,18 @@ No handler builds a shell command; `rc-service dnsmasq restart` is the only exec
 全量加密，不允许再套这一层。
 
 可信服务器可选 Cloudflare、Google、Quad9 或自定义地址，协议可选 TLS（默认）、HTTPS、UDP。运营商会劫持明文
-53 端口时必须使用 TLS/HTTPS；UDP 适合没有劫持且追求延迟的线路。主 dnsmasq 使用 `strict-order`，把运营商
-服务器保留在 `127.0.0.1#5455` 后面；辅助服务崩溃或停止时，局域网 DNS 仍会直接访问运营商服务器。
+53 端口时必须使用 TLS/HTTPS；UDP 适合没有劫持且追求延迟的线路。helper 固定监听 `127.0.0.2:53`，由
+`mr-dns-unblock` 以非 root 用户运行并仅获得 `cap_net_bind_service`。
 
-WAN hooks 每次更新 `/run/mini-router/resolv.conf` 都会按健康顺序取前两个 DNS，运行 `sing-box check` 后原子替换
-配置并重启 `mr-dns-unblock`。没有 WAN DNS 且没有 `dns.fallback` 时保留上一份配置并等待下一次租约，不阻塞开机。
-启用前需要 sing-box 1.14.0 或更新版本（`evaluate` / `match_response`）。
+主 dnsmasq 使用运行时的 `/run/mini-router/resolv-lan.conf`：helper 健康时只有 `nameserver 127.0.0.2`，
+否则是运营商 DNS。这个文件不是生成文件，WAN hooks 和始终运行的 `mr-mon` 每约 5 秒探测 helper；连续两次
+失败切到运营商，连续两次成功切回 helper，文件只在内容变化时原子替换，约 10 秒内完成切换，不重启 dnsmasq。
+因此 helper 崩溃、挂起、重启或 `mr apply` 都会自动恢复；启动时文件尚不存在也不会阻止 dnsmasq 启动。没有 WAN DNS
+时使用 `dns.fallback`，再没有就保持上一份。
+
+启用前需要 sing-box 1.14.0 或更新版本（`evaluate` / `match_response`）。固件镜像自带兼容版本；Alpine 官方仓库
+目前仍是 1.13.x，请从 sing-box 官方 releases 下载 1.14+ 的对应架构二进制并安装到 `/usr/bin/sing-box`，然后执行
+`sing-box version` 确认。校验和服务启动检查都会明确提示 `sing-box >= 1.14.0 is required`，不会让旧版本接管 DNS。
 
 示例（泰国运营商的屏蔽页地址仅作为配置示例；不要把它当成全球清单）：
 
