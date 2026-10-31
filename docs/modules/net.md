@@ -216,6 +216,26 @@ relay 立即让位，PD 消失后下一次事件恢复。WAN 变化、关闭开�
 实现方案比较：Linux `proxy_ndp` 本身只提供逐地址的邻居代理，需要持续跟踪动态主机；按前缀响应的常驻代理会增加进程和运行时内存。这里采用现有 dhcpcd 钩子加 crond 的扫描，
 没有空闲常驻进程，默认也不启用 crond relay 行；这是小内存路由器的优先方案。扫描只在配置开启时生成 `mr net ipv6-relay --cron`。
 
+**LAN 后面的下游网段（同一个 `/64`，下游 NDP relay）**：运营商只委派一个 `/64` 时，不要把它再切小给下游做 SLAAC
+（SLAAC 只认 `/64`），也不用 NAT66。在 LAN 上放一台 relay（例如接在 LAN 和下游网段之间的独立 OpenWrt 虚拟机，跑 `odhcpd`：上游口和下游口的
+ra / ndp / dhcpv6 都设 `relay`，上游口再加 `master`；下游口默认是 `server`，不改成 `relay` 就转不过去），把路由器在 `br-lan` 上通告的前缀转到下游网段。路由器这边不用任何额外配置：
+`/64` 本来就按 on-link 通告，路由器对下游主机的地址照常在 `br-lan` 上发 NS，relay 用自己上游口的 MAC 应答并按 `/128` 主机路由转发。
+注意几点：
+- 公网入站用 `firewall.ipv6_allow`：它按接口标识（地址的低 64 位）匹配，与应答 NDP 的是哪台机器的 MAC 无关，前缀变化后仍然有效。
+  要接受入站的下游主机用 EUI-64 地址（`mac:` 填下游主机自己网卡的 MAC）或固定 token（如 `ip token set ::10`，写 `iid: "::10"`）；
+  stable-privacy 地址的接口标识随前缀变化，隐私（temporary）地址只用来出站。
+- 下游所有主机的 IPv6 流量在 `br-lan` 上的源 MAC 都是 relay 上游口的 MAC：设备列表、统计和按 MAC 的功能（`proxy.bypass`、
+  `policy_routes`、`firewall.access`）把整个下游网段当成这一台设备；要区分单台主机只能按地址或接口标识。负责下游 IPv6 出站的那条
+  策略（按 relay 的 MAC，或兜底的 `src: ::/0`）如果 `via` 的不是拥有该前缀的线路又开了 `nat6`，下游主机会被 NPT 成别的前缀，
+  公网入站失效；这种情况下给它关掉 `nat6`。
+- relay 会把 RA 转发到整个下游网段。下游网段里会接受 RA 的设备（例如开着 `accept-router-advertisements=yes` 的其它路由器，或
+  `accept_ra=2` 的宿主机网桥）会把它当成自己的默认路由；最好在下游网桥上做 RA guard（只放 relay 发给普通主机的 RA），
+  不要只依赖可能被别的脚本改回去的 sysctl。不该拿公网 IPv6 的主机，在下游网桥上过滤它的 IPv6 帧。relay 只处理 ND / RA / DHCPv6，
+  不做 L2 桥接，IPv4 和 DHCPv4 的隔离不受影响。
+- 路由器的 RA 默认不带 MTU，下游主机按 1500 发包，靠 PMTUD（ICMPv6 Packet Too Big 已放行，TCP 另有 MSS 钳制）。
+  WAN 是 PPPoE（1492）而下游有 UDP 大包（QUIC、WireGuard）时，可以设 `dhcp.ipv6.ra_mtu: 1492`，relay 会把它一起转发下去。
+- 前缀变化时，路由器照常通告新前缀并让旧前缀过期，relay 原样转发。
+
 没有任何开了 `ipv6` 的 DHCP / 静态 WAN 落在其上的 WAN 接口（`ipv6: false`，或只跑 PPPoE）不收 RA：`network.sh` 把它的
 `accept_ra` 设为 0，并清掉留在上面的全局 IPv6 地址和 RA 默认路由（dhcpcd 停止管理接口时不删自己的地址）。
 网页上删除 WAN、关闭它的 `ipv6` / `ipv6_pd` 时，会列出引用它、否则无法保存的设置（策略路由、多线路权重与拨号顺序、
