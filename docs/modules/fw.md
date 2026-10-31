@@ -104,6 +104,7 @@ firewall:
       desc: ""
 
   ipv6_allow:                # IPv6 inbound pinholes to LAN-side hosts (no NAT on IPv6)
+                             # matched by interface identifier, so hosts behind a downstream NDP relay work too (net.md)
     - name: nas-https
       iid: "::211:32ff:fe12:3456"   # interface identifier = low 64 bits of the address, or …
       # mac: "00:11:32:12:34:56"   # … derive the EUI-64 identifier from the MAC (exactly one of iid/mac)
