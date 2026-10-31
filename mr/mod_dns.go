@@ -61,7 +61,7 @@ type RA struct {
 	Interval int      `yaml:"ra_interval"` // seconds between unsolicited RAs (default 60)
 	Lifetime int      `yaml:"ra_lifetime"` // router lifetime in seconds (default 1800)
 	Priority string   `yaml:"ra_priority"` // "" (medium) | high | low
-	MTU      int      `yaml:"ra_mtu"`      // advertised MTU (0 = not advertised)
+	MTU      int      `yaml:"ra_mtu"`      // advertised MTU (0 = dnsmasq's default: the bridge's MTU)
 }
 
 type Host struct {
