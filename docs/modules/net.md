@@ -233,7 +233,7 @@ ra / ndp / dhcpv6 都设 `relay`，上游口再加 `master`；下游口默认是
   不要只依赖可能被别的脚本改回去的 sysctl。不该拿公网 IPv6 的主机，在下游网桥上过滤它的 IPv6 帧。relay 只处理 ND / RA / DHCPv6，
   不做 L2 桥接，IPv4 和 DHCPv4 的隔离不受影响。
 - 路由器的 RA 默认不带 MTU，下游主机按 1500 发包，靠 PMTUD（ICMPv6 Packet Too Big 已放行，TCP 另有 MSS 钳制）。
-  WAN 是 PPPoE（1492）而下游有 UDP 大包（QUIC、WireGuard）时，可以设 `lan.ra_mtu: 1492`，relay 会把它一起转发下去。
+  WAN 是 PPPoE（1492）而下游有 UDP 大包（QUIC、WireGuard）时，可以设 `dhcp.ipv6.ra_mtu: 1492`，relay 会把它一起转发下去。
 - 前缀变化时，路由器照常通告新前缀并让旧前缀过期，relay 原样转发。
 
 没有任何开了 `ipv6` 的 DHCP / 静态 WAN 落在其上的 WAN 接口（`ipv6: false`，或只跑 PPPoE）不收 RA：`network.sh` 把它的
