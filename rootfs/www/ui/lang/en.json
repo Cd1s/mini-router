@@ -491,7 +491,7 @@
 "高": "High",
 "低": "Low",
 "通告 MTU": "Advertised MTU",
-"0 = 不通告；PPPoE 可填 1492": "0 = not advertised; 1492 for PPPoE",
+"0 = 默认（网桥自己的 MTU）；PPPoE 可填 1492": "0 = default (the bridge MTU); 1492 for PPPoE",
 "地址池": "Pools",
 "静态分配": "Static leases",
 "DHCP 选项": "DHCP options",

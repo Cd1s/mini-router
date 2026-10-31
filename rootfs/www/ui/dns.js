@@ -216,7 +216,7 @@ const raTab = ()=>{
             ...field("RA 间隔（秒）", inNum(r,"ra_interval",{placeholder:"60"}), "0 = 默认 60；4-900"),
             ...field("路由器生存期（秒）", inNum(r,"ra_lifetime",{placeholder:"1800"}), "0 = 默认 1800；60-9000"),
             ...field("路由器优先级", inSel(r,"ra_priority",[["","中（默认）"],["high","高"],["low","低"]])),
-            ...field("通告 MTU", inNum(r,"ra_mtu"), "0 = 不通告；PPPoE 可填 1492")] : []));
+            ...field("通告 MTU", inNum(r,"ra_mtu"), "0 = 默认（网桥自己的 MTU）；PPPoE 可填 1492")] : []));
         return card(n.name+"（"+n.bridge+"）", onEdit(body, e=>{ if (!(e.target.closest&&e.target.closest("label.sw"))) attach(); }));
       }));
   };

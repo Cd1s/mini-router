@@ -118,7 +118,7 @@ the bridge has (`constructor:`), i.e. the prefix dhcpcd delegated.
 | `ra_interval` | 60 | seconds, 4–900 (dnsmasq keeps lifetimes ≥ 3 × the interval; the RFC 9096 cap is 2700 s) |
 | `ra_lifetime` | 1800 | router lifetime, 60–9000, ≥ interval |
 | `ra_priority` | medium | `high` / `low` |
-| `ra_mtu` | 0 | advertised MTU, 0 = not advertised (1280–9000) |
+| `ra_mtu` | 0 | advertised MTU (1280–9000); 0 = dnsmasq's default, the bridge's own MTU |
 
 The home config (`ipv6_ra: true`, no `ipv6` block) renders
 `dhcp-range=::,constructor:br-lan,ra-only,45m` + `ra-param=br-lan,60,1800`.
