@@ -32,6 +32,7 @@ check "cron probed the client's address: verdict free" verdict_is "$client_v6" f
 check "the client is proxied on the WAN" retry 70 proxied "$client_v6"
 info lab console "$ID" 'ip -6 route; ip -6 neigh show proxy; cat /run/mini-router/ipv6-relay.json; echo; cat /run/mini-router/ipv6-relay-probe.json'
 check "LAN client pings the ISP-side IPv6 endpoint" lab lan "$ID" exec "ping6 -c 2 -W 3 2001:db8:$ID:99::2"
+check "LAN client pings the ISP router inside the relayed /64" lab lan "$ID" exec "ping6 -c 2 -W 3 $P::1"
 # from the ISP's other /64: hosts of the relayed /64 itself are on-link for LAN clients (docs: limitation)
 check "the ISP side reaches the LAN client (echo through the proxy)" ip netns exec "$isp_ns" ping -6 -c 2 -W 3 -I "2001:db8:$ID:99::2" "$client_v6"
 

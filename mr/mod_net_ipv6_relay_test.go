@@ -563,3 +563,70 @@ func TestIPv6RelayCapKeepsExistingProxies(t *testing.T) {
 		t.Fatalf("cap %d, existing proxy kept: %v (%d proxies)", ipv6RelayMaxProxies, ipv6RelayHasProxy(st.Proxies, ipv6RelayProxy{Addr: last, Dev: "wan"}), len(st.Proxies))
 	}
 }
+
+func TestIPv6RelayProxiesUpstreamOnLAN(t *testing.T) {
+	wanNeigh := `[{"dst":"2001:db8:1::1","state":["REACHABLE"]},{"dst":"2001:db8:99::1","state":["STALE"]},{"dst":"fe80::1","state":["REACHABLE"]}]`
+	var calls []string
+	relayTestEnv(t, func(name string, args ...string) (string, error) {
+		line := name + " " + strings.Join(args, " ")
+		calls = append(calls, line)
+		switch {
+		case strings.Contains(line, "addr show dev wan"):
+			return `[{"addr_info":[{"family":"inet6","local":"2001:db8:1::10","prefixlen":64}]}]`, nil
+		case strings.Contains(line, "neigh show dev wan"):
+			return wanNeigh, nil
+		}
+		return "", nil
+	})
+	ipv6RelaySetProxyNDP = func(dev string, enabled bool) error {
+		calls = append(calls, "proxy_ndp "+dev+" "+fmt.Sprint(enabled))
+		return nil
+	}
+	c := relayConfig()
+	if err := ipv6RelaySync(c); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{"proxy_ndp br-lan true", "neigh replace proxy 2001:db8:1::1 dev br-lan", "neigh replace proxy 2001:db8:1::10 dev br-lan"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q:\n%s", want, joined)
+		}
+	}
+	for _, bad := range []string{"2001:db8:99::1", "fe80::1", "route replace 2001:db8:1::1/128"} {
+		if strings.Contains(joined, bad) {
+			t.Errorf("unexpected %q:\n%s", bad, joined)
+		}
+	}
+
+	// Upstream neighbour disappears: grace period keeps it, then removes it.
+	wanNeigh = `[]`
+	calls = nil
+	if err := ipv6RelaySync(c); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(calls, "\n"), "neigh del proxy 2001:db8:1::1 dev br-lan") {
+		t.Fatalf("upstream proxy removed before grace period:\n%s", strings.Join(calls, "\n"))
+	}
+	for i := 0; i < ipv6RelayProxyGrace; i++ {
+		calls = nil
+		if err := ipv6RelaySync(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !strings.Contains(strings.Join(calls, "\n"), "neigh del proxy 2001:db8:1::1 dev br-lan") {
+		t.Fatalf("missing upstream proxy was not removed after grace:\n%s", strings.Join(calls, "\n"))
+	}
+
+	// Disabling relay removes remaining LAN proxies and disables proxy_ndp on br-lan.
+	c.WAN[0].IPv6Relay = false
+	calls = nil
+	if err := ipv6RelaySync(c); err != nil {
+		t.Fatal(err)
+	}
+	joined = strings.Join(calls, "\n")
+	for _, want := range []string{"neigh del proxy 2001:db8:1::10 dev br-lan", "proxy_ndp br-lan false"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("disable missing %q:\n%s", want, joined)
+		}
+	}
+}
