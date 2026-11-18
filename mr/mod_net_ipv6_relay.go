@@ -52,11 +52,12 @@ type ipv6RelayRoute struct {
 }
 
 type ipv6RelayState struct {
-	Prefixes []ipv6RelayPrefix `json:"prefixes"`
-	Proxies  []ipv6RelayProxy  `json:"proxies"`
-	Routes   []ipv6RelayRoute  `json:"routes,omitempty"`
-	Misses   map[string]int    `json:"misses,omitempty"`
-	LANAddrs []string          `json:"lan_addrs"`
+	Prefixes   []ipv6RelayPrefix `json:"prefixes"`
+	Proxies    []ipv6RelayProxy  `json:"proxies"`
+	LANProxies []ipv6RelayProxy  `json:"lan_proxies,omitempty"`
+	Routes     []ipv6RelayRoute  `json:"routes,omitempty"`
+	Misses     map[string]int    `json:"misses,omitempty"`
+	LANAddrs   []string          `json:"lan_addrs"`
 }
 
 const (
@@ -513,12 +514,24 @@ func ipv6RelaySyncWait(c *Config, wait bool) error {
 	for _, ip := range ipv6RelayLocalAddrs(c.LAN.Bridge) {
 		local[ip.String()] = true
 	}
+	wanNeigh := map[string][]netip.Addr{}
+	wanLocal := map[string][]netip.Addr{}
 	wanSets := map[string]map[string]bool{}
 	oldProxy := map[ipv6RelayProxy]bool{}
 	for _, p := range old.Proxies {
 		oldProxy[p] = true
 	}
+	oldLANProxy := map[ipv6RelayProxy]bool{}
+	for _, p := range old.LANProxies {
+		oldLANProxy[p] = true
+	}
+	if len(cur.Prefixes) > 0 {
+		if err := ipv6RelaySetProxyNDP(c.LAN.Bridge, true); err != nil {
+			return fmt.Errorf("IPv6 relay proxy_ndp %s: %v", c.LAN.Bridge, err)
+		}
+	}
 	var eligible []ipv6RelayProxy
+	var lanEligible []ipv6RelayProxy
 	for _, p := range cur.Prefixes {
 		// The same /64 is connected on br-lan and the WAN. Prefer the WAN for destinations
 		// that are not proxied LAN hosts; the /128 LAN host routes below keep those on the bridge.
@@ -527,8 +540,13 @@ func ipv6RelaySyncWait(c *Config, wait bool) error {
 			return fmt.Errorf("IPv6 relay proxy_ndp %s: %v", p.Dev, err)
 		}
 		if wanSets[p.Dev] == nil {
+			wanNeigh[p.Dev] = ipv6RelayNeighbours(p.Dev)
+			wanLocal[p.Dev] = ipv6RelayLocalAddrs(p.Dev)
 			wanSets[p.Dev] = map[string]bool{}
-			for _, ip := range append(ipv6RelayNeighbours(p.Dev), ipv6RelayLocalAddrs(p.Dev)...) {
+			for _, ip := range wanNeigh[p.Dev] {
+				wanSets[p.Dev][ip.String()] = true
+			}
+			for _, ip := range wanLocal[p.Dev] {
 				wanSets[p.Dev][ip.String()] = true
 			}
 		}
@@ -540,12 +558,25 @@ func ipv6RelaySyncWait(c *Config, wait bool) error {
 			}
 			eligible = append(eligible, ipv6RelayProxy{Addr: addr, Dev: p.Dev})
 		}
+		for _, ip := range append(append([]netip.Addr(nil), wanNeigh[p.Dev]...), wanLocal[p.Dev]...) {
+			addr := ip.String()
+			if !prefix.Contains(ip) || addr == p.Addr || local[addr] {
+				continue
+			}
+			lanEligible = append(lanEligible, ipv6RelayProxy{Addr: addr, Dev: c.LAN.Bridge})
+		}
 	}
 	// the cap keeps entries that are already proxied first, so new addresses cannot push them out
 	sort.SliceStable(eligible, func(i, j int) bool { return oldProxy[eligible[i]] && !oldProxy[eligible[j]] })
 	for _, x := range eligible {
 		if len(cur.Proxies) < ipv6RelayMaxProxies && !ipv6RelayHasProxy(cur.Proxies, x) {
 			cur.Proxies = append(cur.Proxies, x)
+		}
+	}
+	sort.SliceStable(lanEligible, func(i, j int) bool { return oldLANProxy[lanEligible[i]] && !oldLANProxy[lanEligible[j]] })
+	for _, x := range lanEligible {
+		if len(cur.LANProxies) < ipv6RelayMaxProxies && !ipv6RelayHasProxy(cur.LANProxies, x) {
+			cur.LANProxies = append(cur.LANProxies, x)
 		}
 	}
 	// A proxied host that dropped out of the LAN neighbour table keeps its entry for a few scans
@@ -578,6 +609,40 @@ func ipv6RelaySyncWait(c *Config, wait bool) error {
 	}
 	sort.Slice(cur.Proxies, func(i, j int) bool {
 		return cur.Proxies[i].Dev+cur.Proxies[i].Addr < cur.Proxies[j].Dev+cur.Proxies[j].Addr
+	})
+	proxiedLANHost := map[string]bool{}
+	for _, p := range cur.Proxies {
+		proxiedLANHost[p.Addr] = true
+	}
+	inLANPrefix := func(x ipv6RelayProxy) bool {
+		if x.Dev != c.LAN.Bridge || local[x.Addr] || proxiedLANHost[x.Addr] {
+			return false
+		}
+		ip, err := netip.ParseAddr(x.Addr)
+		if err != nil {
+			return false
+		}
+		for _, p := range cur.Prefixes {
+			if netip.MustParsePrefix(p.Prefix).Contains(ip) && p.Addr != x.Addr {
+				return true
+			}
+		}
+		return false
+	}
+	for _, p := range old.LANProxies {
+		if ipv6RelayHasProxy(cur.LANProxies, p) {
+			continue
+		}
+		key := p.Dev + "\x00" + p.Addr
+		if inLANPrefix(p) && len(cur.LANProxies) < ipv6RelayMaxProxies && old.Misses[key] < ipv6RelayProxyGrace {
+			cur.LANProxies = append(cur.LANProxies, p)
+			cur.Misses[key] = old.Misses[key] + 1
+			continue
+		}
+		ipv6RelayRun("ip", "-6", "neigh", "del", "proxy", p.Addr, "dev", p.Dev)
+	}
+	sort.Slice(cur.LANProxies, func(i, j int) bool {
+		return cur.LANProxies[i].Dev+cur.LANProxies[i].Addr < cur.LANProxies[j].Dev+cur.LANProxies[j].Addr
 	})
 	for _, p := range cur.Proxies {
 		cur.Routes = append(cur.Routes, ipv6RelayRoute{Addr: p.Addr, Dev: c.LAN.Bridge})
@@ -624,8 +689,16 @@ func ipv6RelaySyncWait(c *Config, wait bool) error {
 			ipv6RelaySetProxyNDP(p.Dev, false)
 		}
 	}
+	if len(cur.Prefixes) == 0 && (len(old.Prefixes) > 0 || len(old.LANProxies) > 0) {
+		ipv6RelaySetProxyNDP(c.LAN.Bridge, false)
+	}
 	for _, p := range cur.Proxies {
 		if !oldProxy[p] {
+			ipv6RelayRun("ip", "-6", "neigh", "replace", "proxy", p.Addr, "dev", p.Dev)
+		}
+	}
+	for _, p := range cur.LANProxies {
+		if !oldLANProxy[p] {
 			ipv6RelayRun("ip", "-6", "neigh", "replace", "proxy", p.Addr, "dev", p.Dev)
 		}
 	}
