@@ -637,7 +637,7 @@ func TestSysFirmwareUpload(t *testing.T) {
 	if st := apiSysFw(apiReq{method: "GET"}).body.(map[string]any); st["sysupgrade"] != false {
 		t.Error("sysupgrade reported without the script")
 	}
-	os.WriteFile(fwSysupgrade, []byte("#!/bin/sh\necho \"refused: $1 is not an AX6000 image\" >&2\nexit 3\n"), 0755)
+	os.WriteFile(fwSysupgrade, []byte("#!/bin/sh\n[ \"$1\" = -y ] || { echo \"missing -y\" >&2; exit 2; }\necho \"refused: $2 is not an AX6000 image\" >&2\nexit 3\n"), 0755)
 	if r := post(apiSysFwUpload, chunk(0, 4000)); r.status != 0 {
 		t.Fatalf("first chunk: %v", r.body)
 	}
@@ -684,6 +684,20 @@ func TestSysFirmwareUpload(t *testing.T) {
 	}
 	if r := post(apiSysFactoryReset, map[string]any{"confirm": "RESET"}); r.status != 501 {
 		t.Errorf("factory reset without the script: %d", r.status)
+	}
+	os.WriteFile(fwFactoryReset, []byte("#!/bin/sh\n[ \"$1\" = -y ] || { echo \"missing -y\" >&2; exit 2; }\necho \"ok\"\n"), 0755)
+	if r := post(apiSysFactoryReset, map[string]any{"confirm": "RESET"}); r.status != 0 {
+		t.Fatalf("factory reset: %v", r.body)
+	}
+	for i := 0; i < 50; i++ {
+		st = fwRunStatus()
+		if st["state"] != "running" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if st["state"] != "done" || st["rc"] != 0 {
+		t.Errorf("factory reset run status: %v", st)
 	}
 	if r := post(apiSysFwUpload, map[string]any{"cancel": true}); r.status != 0 {
 		t.Error("cancel")

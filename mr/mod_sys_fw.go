@@ -3,9 +3,9 @@ package main
 // sys module: firmware upgrade and factory reset (web UI). The platform ships the scripts that do
 // the real work:
 //
-//	/usr/libexec/mr/sysupgrade IMAGE   checks and flashes IMAGE (a file in /tmp) and reboots;
-//	                                   exit code != 0 = refused, reason on stderr
-//	/usr/libexec/mr/factory-reset      wipes the configuration and reboots
+//	/usr/libexec/mr/sysupgrade -y IMAGE   checks and flashes IMAGE (a file in /tmp) and reboots;
+//	                                      exit code != 0 = refused, reason on stderr
+//	/usr/libexec/mr/factory-reset -y      wipes the configuration and reboots
 //
 // When a script is missing the web UI shows "当前构建不支持". The image is uploaded in chunks
 // (the API body limit is 4 MiB): each POST carries {offset, total, data (base64)} and must continue
@@ -255,7 +255,7 @@ func apiSysFwUpgrade(r apiReq) apiResp {
 	}
 	appendChangeLog("webui: firmware upgrade started (sha256 " + sum[:16] + "…)")
 	logf("webui: firmware upgrade, image sha256 %s", sum)
-	if err := fwStart("sysupgrade", fwSysupgrade, fwImage()); err != nil {
+	if err := fwStart("sysupgrade", fwSysupgrade, "-y", fwImage()); err != nil {
 		return errResp(500, "%v", err)
 	}
 	return apiResp{body: map[string]any{"ok": true, "sha256": sum}}
@@ -281,7 +281,7 @@ func apiSysFactoryReset(r apiReq) apiResp {
 	}
 	appendChangeLog("webui: factory reset")
 	logf("webui: factory reset")
-	if err := fwStart("factory-reset", fwFactoryReset); err != nil {
+	if err := fwStart("factory-reset", fwFactoryReset, "-y"); err != nil {
 		return errResp(500, "%v", err)
 	}
 	return apiResp{body: map[string]any{"ok": true}}
