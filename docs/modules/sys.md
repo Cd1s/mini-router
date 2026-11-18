@@ -615,8 +615,8 @@ ruleset uses conntrack), so there is no cost before the firewall. The mon module
 | `sys.restore` | POST | `{data (base64 tar.gz ≤ 2.9 MB), confirm: 60-600}` → starts the apply job; poll `job`, then `confirm` / `revert` as for any apply |
 | `sys.fw` | GET | `{sysupgrade, factory_reset (scripts present), tmp_free, max_image, max_chunk, upload {total, received}, run {state: "" \| running \| failed \| done \| stale, rc, message}}` |
 | `sys.fwupload` | POST | `{offset, total, data (base64 ≤ 2 MiB)}` → `{received}`; must continue exactly at the end of the file (409 + `received` otherwise, so a lost response can be resumed); `{cancel: true}` deletes it |
-| `sys.fwupgrade` | POST | `{sha256}` — must match the uploaded file, then `/usr/libexec/mr/sysupgrade <image>` runs detached |
-| `sys.factoryreset` | POST | `{confirm: "RESET"}` → `/usr/libexec/mr/factory-reset` runs detached |
+| `sys.fwupgrade` | POST | `{sha256}` — must match the uploaded file, then `/usr/libexec/mr/sysupgrade -y <image>` runs detached |
+| `sys.factoryreset` | POST | `{confirm: "RESET"}` → `/usr/libexec/mr/factory-reset -y` runs detached |
 
 Mutations are POST only. `sys.backup` returns secrets only when asked for (the user's own download),
 never the web UI password hash. The firmware image lives in `/tmp/mr-upgrade/` (created 0700 by root;
@@ -676,10 +676,10 @@ warn); issued and failed certificates are events of type `cert`.
 
 ## Platform interface
 
-* `/usr/libexec/mr/sysupgrade IMAGE` — IMAGE is `/tmp/mr-upgrade/firmware.img`; exit ≠ 0 = refused,
+* `/usr/libexec/mr/sysupgrade -y IMAGE` — IMAGE is `/tmp/mr-upgrade/firmware.img`; exit ≠ 0 = refused,
   reason on stderr (shown in the web UI); on success it flashes and reboots. `/tmp` must be a tmpfs
   with room for the image (+8 MiB).
-* `/usr/libexec/mr/factory-reset` — wipes the configuration and reboots.
+* `/usr/libexec/mr/factory-reset -y` — wipes the configuration and reboots.
 * Boot runlevel must contain `modules` and `sysctl` (build/m2 does).
 
 ## Changes to the real home output (examples/router.yaml)
