@@ -87,9 +87,10 @@ wifi:
 现象：中继器（如 RAX40，MAC 转换模式，下游设备都显示成中继器的 MAC）自己能上网，单播 ping 通，但它后面的
 设备只有 DHCPDISCOVER/OFFER，没有 REQUEST（或 REQUEST 收不到 ACK），`arping -b -I br-lan <中继器 IP>` 0 回复。
 
-原因：中继器没重启、只是重新关联（例如开机后约 30 秒它自己再关联一次），AP 给的还是它已有的那把 GTK，
-它的固件就不再收组播/广播帧（单播用的是每次新协商的 PTK，不受影响）。AP 重启或换了 GTK 后就好。所以重启路由器
-或 `rc-service mr-hostapd restart` 能“修好”，但下次中继器重新关联又会坏。和 AP 运行多久、AKM、beacon 保护无关。
+原因在中继器固件：它重启后会自己连续重新关联几次（间隔约 30 秒到 2 分钟），这期间及之后有时就不再收组播/广播帧
+（单播用每次新协商的 PTK，不受影响）。2026-11-18 的两次断电里，一次只断了约 2.5 分钟、第三次关联后自己好了，
+一次一直坏到 `rc-service mr-hostapd restart`（重新关联 + 新 GTK）。已排除：路由器镜像版本、AP 运行时长、AKM / PMF、
+beacon 保护、GTK 的 RSC；AP 主动踢掉中继器后它重连也正常。每 10 分钟换 GTK 等于定期做“新 GTK”这一半，不用断网。
 
 判断：
 
@@ -99,7 +100,7 @@ arping -b -I br-lan -c 2 -w 3 <中继器 IP>                                    
 grep -E 'group key handshake|<中继器 MAC>' /var/log/messages | tail             # 最近一次换 GTK、关联记录
 ```
 
-处理：等下一次换 GTK（最多 10 分钟）自己恢复；急用时 `rc-service mr-hostapd restart`（全部 Wi-Fi 断约 5 秒）。
+处理：先等几分钟（中继器刚开机时会自己恢复）和下一次换 GTK（最多 10 分钟）；还不好或急用时 `rc-service mr-hostapd restart`（全部 Wi-Fi 断约 5 秒）。
 不要用 `hostapd_cli reload`（会让 5G 终端因“不活动”被踢、连不上）；不要为此改 AKM / PMF。
 
 ### 客户端隔离

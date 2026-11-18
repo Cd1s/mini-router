@@ -117,8 +117,8 @@ func TestWifiLabRender(t *testing.T) {
 	if last := p1[strings.LastIndex(p1, "bss="):]; strings.Contains(last, "wpa=") {
 		t.Error("open SSID got WPA settings")
 	}
-	// every encrypted BSS rekeys its GTK every 10 min (a repeater that re-associates with a stale GTK
-	// loses broadcasts until the next one); the open BSS has no GTK
+	// every encrypted BSS rekeys its GTK every 10 min (a repeater that lost group frames after its own
+	// reboot only recovered with a new GTK); the open BSS has no GTK
 	for name, p := range map[string]string{"phy0": p0, "phy1": p1} {
 		if w, g := strings.Count(p, "wpa=2\n"), strings.Count(p, "wpa=2\nwpa_pairwise=CCMP\nokc=1\nwpa_group_rekey=600\n"); w == 0 || g != w {
 			t.Errorf("%s: %d encrypted BSSes, %d with wpa_group_rekey=600", name, w, g)
