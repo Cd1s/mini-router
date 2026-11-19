@@ -68,6 +68,7 @@ ap_isolate=0
 wpa=2
 wpa_pairwise=CCMP
 okc=1
+wpa_group_rekey=600
 wpa_key_mgmt=SAE WPA-PSK WPA-PSK-SHA256
 ieee80211w=1
 sae_require_mfp=1

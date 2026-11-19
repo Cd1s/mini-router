@@ -79,6 +79,30 @@ wifi:
 密码：8–63 个可打印 ASCII。WPA3 的密码不能包含 `|mac=`、`|vlanid=`、`|pk=`、`|id=`
 （hostapd 解析 `sae_password` 时会把它们当成参数截断，等于换了一个密码）。
 
+每个加密 SSID 都写 `wpa_group_rekey=600`：组密钥（GTK）每 10 分钟换一次（hostapd 2.10 起 CCMP 默认一天一次，
+2.10 之前默认就是 600）。换组密钥是逐个终端的 EAPOL 组密钥握手，终端不掉线。原因见下面的排查。
+
+#### 排查：中继器后面的有线设备拿不到 DHCP / 广播不通
+
+现象：中继器（如 RAX40，MAC 转换模式，下游设备都显示成中继器的 MAC）自己能上网，单播 ping 通，但它后面的
+设备只有 DHCPDISCOVER/OFFER，没有 REQUEST（或 REQUEST 收不到 ACK），`arping -b -I br-lan <中继器 IP>` 0 回复。
+
+原因在中继器固件：它重启后会自己连续重新关联几次（间隔约 30 秒到 2 分钟），这期间及之后有时就不再收组播/广播帧
+（单播用每次新协商的 PTK，不受影响）。2026-11-18 的两次断电里，一次只断了约 2.5 分钟、第三次关联后自己好了，
+一次一直坏到 `rc-service mr-hostapd restart`（重新关联 + 新 GTK）。已排除：路由器镜像版本、AP 运行时长、AKM / PMF、
+beacon 保护、GTK 的 RSC；AP 主动踢掉中继器后它重连也正常。每 10 分钟换 GTK 等于定期做“新 GTK”这一半，不用断网。
+
+判断：
+
+```sh
+hostapd_cli -i phy1-ap0 sta <中继器 MAC> | grep -E 'connected_time|AKMSuite'   # 关联多久了
+arping -b -I br-lan -c 2 -w 3 <中继器 IP>                                    # -b：只发广播；0 回复 = 收不到广播
+grep -E 'group key handshake|<中继器 MAC>' /var/log/messages | tail             # 最近一次换 GTK、关联记录
+```
+
+处理：先等几分钟（中继器刚开机时会自己恢复）和下一次换 GTK（最多 10 分钟）；还不好或急用时 `rc-service mr-hostapd restart`（全部 Wi-Fi 断约 5 秒）。
+不要用 `hostapd_cli reload`（会让 5G 终端因“不活动”被踢、连不上）；不要为此改 AKM / PMF。
+
 ### 客户端隔离
 
 `isolate: true` 做两件事：

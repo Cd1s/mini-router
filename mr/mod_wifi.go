@@ -240,7 +240,12 @@ func renderHostapd(c *Config, r Radio) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		b.WriteString("wpa=2\nwpa_pairwise=CCMP\nokc=1\n")
+		// wpa_group_rekey: hostapd's CCMP default is one GTK per day. A MAC-translating repeater (RAX40)
+		// has stopped receiving group-addressed frames after its own reboot and re-associations (its
+		// wired clients got no DHCP OFFER or broadcast ARP) until a hostapd restart gave it a fresh
+		// association and a new GTK. A new GTK every 10 min is the restart-free half of that remedy;
+		// stations stay associated. 600 s was hostapd's own default before 2.10.
+		b.WriteString("wpa=2\nwpa_pairwise=CCMP\nokc=1\nwpa_group_rekey=600\n")
 		w := ssidPMF(s)
 		switch s.Encryption {
 		case "psk2":
